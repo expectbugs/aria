@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+
+# Data & logs (personal data)
+data/
+logs/
+
+# TTS models (large binaries)
+tts_models/
+
+# Environment / secrets
+.env
+*.env
+config.py
+
+# Claude project files
+.claude/
+
+# Editor
+*.swp
+*.swo

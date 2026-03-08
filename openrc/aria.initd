@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+
+description="ARIA Voice Assistant Daemon"
+command="/home/user/aria/venv/bin/python"
+command_args="/home/user/aria/daemon.py"
+command_user="user:user"
+supervisor=supervise-daemon
+pidfile="/run/aria.pid"
+directory="/home/user/aria"
+output_log="/home/user/aria/logs/aria.log"
+error_log="/home/user/aria/logs/aria.err"
+respawn_delay=3
+respawn_max=10
+respawn_period=60
+
+depend() {
+    need net
+    after tailscale
+}
+
+start_pre() {
+    checkpath -d -m 0755 -o user:user /home/user/aria/logs
+    checkpath -d -m 0755 -o user:user /home/user/aria/data
+}
