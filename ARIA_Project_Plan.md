@@ -61,12 +61,81 @@ Triggered by saying "Good Morning" or pressing the wake button. Claude assembles
 
 ### Technical Implementation
 
-- **STT:** Android built-in speech recognition via Tasker HTTP POST
+- **STT:** Android built-in speech recognition via Tasker
   - Tasker: $4.99 on Google Play (by João Dias — not TaskRabbit or "Tasker for Engineers")
-- **Daemon:** FastAPI on PC, single `/ask` endpoint, receives transcribed text over Tailscale
-- **Claude:** invoked via `claude` CLI subprocess (Claude Code, authenticated via your Max subscription — no separate API billing)
-- **TTS:** Android built-in (Tasker) or Piper local TTS for better voice quality
-- **Response:** text returned to phone, spoken aloud
+- **Daemon:** FastAPI on PC, async endpoints over Tailscale
+  - `/ask/start` — accepts text, returns task_id for async polling
+  - `/ask/status/{task_id}` — lightweight JSON status check (processing/done/error)
+  - `/ask/result/{task_id}` — returns WAV audio when done
+  - `/health` — uptime and version check
+  - `/snippet/{name}` — serves JS snippets for easy phone copy-paste
+- **Claude:** persistent CLI subprocess via stream-json protocol, recycled every 200 requests
+- **TTS:** Kokoro (kokoro-onnx, `af_heart` voice), model cached at startup
+- **Response:** WAV audio returned to phone, played via Tasker Music Play
+
+### Tasker Setup — Exact Configuration
+
+#### Global Variables (VARIABLES tab)
+
+| Variable | Value |
+|----------|-------|
+| `ARIA_HOST_PRIMARY` | `http://100.107.139.121:8450` (beardos) |
+| `ARIA_HOST_FALLBACK` | `http://100.70.66.104:8450` (slappy) |
+| `ARIA_TOKEN` | `<your-auth-token>` |
+
+#### ARIA Ask Task (7 steps)
+
+```
+1. Get Voice
+2. Variable Set    %voice_result → %VOICE
+3. JavaScriptlet   Code: (from /snippet/aria_ask endpoint)
+                   Timeout: 3600
+4. IF              %ask_success ~ 1
+5. HTTP Request    Method: GET
+                   URL: %audio_url
+                   Headers: Authorization:Bearer <your-auth-token>
+                   File To Save With Output: ARIA/response.wav
+6. Music Play      File: ARIA/response.wav
+7. End If
+```
+
+**Trigger:** Profile → Event → UI → Assistance Request (long-press power button, Tasker set as default digital assistant)
+
+#### Health Check Task
+
+```
+1. JavaScriptlet   Code: (from /snippet/aria_health endpoint)
+```
+
+Sets `%ARIA_STATUS` global to `primary`, `fallback`, or `offline`.
+
+**Trigger:** Profile → Time → every 5 minutes, 12:00AM–11:59PM
+
+#### JavaScriptlet Critical Rules
+
+1. Use `wait(ms)` for delays — `java.lang.Thread.sleep()` crashes silently
+2. `writeFile()` is string-only — binary downloads must use Tasker HTTP Request action
+3. `exit()` kills the entire task, not just the script — never use it
+4. Export variables with bare assignment (`ask_success = "1"`, no `var`) AND `setLocal()` for safety
+5. Hardcode auth tokens in HTTP Request headers — variable substitution in headers is unreliable
+
+### Deployment Model
+
+One repo, one codebase, config-driven per-host differences. The repo represents ARIA the project — not any specific machine's install.
+
+- **`config.py`** is gitignored. Each machine keeps its own. See `config.example.py` for all options.
+- **`config.example.py`** is the tracked reference template with all available settings documented.
+- **Per-host differences** (IP, hostname, CLI path, GPU capabilities) live entirely in `config.py`.
+- **Feature gating** uses config flags: `ENABLE_GPU`, `ENABLE_IMAGE_GEN`, `IS_PRIMARY`, etc. Daemon code checks these at runtime — no code forks between machines.
+- **Deploy to any host:** `git pull`, copy `config.example.py` to `config.py`, edit for the host, restart service.
+- **Data sync:** rsync cron from primary → failover every 5 minutes. Data files (calendar, reminders) are gitignored.
+
+#### Current Hosts
+
+| Host | Role | Tailscale IP | GPU | Key Differences |
+|------|------|-------------|-----|-----------------|
+| beardos | Primary | 100.107.139.121 | RTX 3090 24GB | Full capabilities, auto-starts, image gen, LoRA training |
+| slappy | Failover | 100.70.66.104 | None (integrated) | TTS + Claude only, service installed but not in default runlevel |
 
 ### Billing Clarification
 
@@ -74,34 +143,29 @@ All voice commands that go through Claude Code use your existing Max subscriptio
 
 ---
 
-## Phase 2: Machine Control
-*SSH, PTY management, system commands, Claude Code integration*
+## Phase 2: Migration to Beardos & Failover — COMPLETE
+*Move primary backend to beardos, slappy becomes warm standby*
 
-### System Commands
+### Why Migrate
 
-- "Update my PC" / "Update my laptop" — runs `pacman -Syu`, reports results
-- "Check disk space on [machine]"
-- "What's running on my PC?"
-- "Start/Stop [service]"
-- "Reboot [machine]"
-- "Is [machine] online?" — Tailscale ping check
+Beardos is the main PC with significantly more compute power. Running ARIA on beardos provides better performance for Claude Code invocations, image generation (`imgen` alias available locally), and future GPU-dependent features (Whisper, Qdrant, LoRA). Slappy remains available as a fallback so ARIA is never fully offline.
 
-### Creative & AI Commands
+### Failover Architecture
 
-- "Generate an image of [prompt]" — runs `imgen` alias, returns result path to phone
-- "Write a note about [X] and save it"
+Tasker JavaScriptlet handles failover at the request level:
 
-### Claude Code Voice Permission System
+- Tries beardos first via `/ask/start` POST
+- If connection fails, announces "Beardos is offline — running from slappy" and retries against slappy
+- If both down, queues request locally and announces it
+- Adaptive polling: 3s intervals for first minute, 10s for 1–5 min, 30s for 5–60 min
+- Slappy's ARIA service stays installed but not in default runlevel — starts on boot only if manually added
 
-Claude Code in interactive mode requests confirmation before executing actions. The PTY manager handles this via voice:
+### Data Synchronization
 
-- Claude Code runs inside a pseudo-terminal (PTY) managed by the daemon
-- Permission requests are read aloud: "I'm about to run `pacman -Syu`. Proceed?"
-- You respond: **yes, no, skip,** or **yes to all**
-- Daemon injects the appropriate keypress into the PTY
-- **Trust list:** pre-authorized safe commands skip confirmation entirely
-  - Auto-approved: system updates, calendar reads, weather, disk checks, service status
-  - Always confirm: file deletion, stopping critical services, network changes
+- rsync cron on beardos pushes `data/` to slappy every 5 minutes over SSH (port 80)
+- During failover, slappy operates on last-synced data — brief staleness is acceptable
+- After a failover period, manually sync slappy's data back to beardos before resuming
+- Future upgrade path: Syncthing or SQLite on shared storage for real-time sync
 
 ---
 
@@ -409,16 +473,95 @@ The core principle: every failure mode must produce a spoken response. Silence i
 
 ---
 
+## Phase 6: Personalized Model
+*LoRA fine-tuning, Neo4j relational memory, fully individualized AI*
+
+### Memory Architecture — Four Layers
+
+ARIA's long-term intelligence is built on four distinct memory layers, each serving a different purpose:
+
+**Layer 1: Qdrant Vector Memory + Neo4j Relational Graph**
+- Based on the proven `buddy` project (github.com/expectbugs/buddy) — confirmed working, all known bugs resolved
+- Qdrant provides semantic similarity search across all stored knowledge
+- Neo4j knowledge graph provides relational reasoning — nodes and edges connecting people, events, commitments, and relationships
+- Enables queries like "what do I know about Heidi?" via graph traversal rather than similarity search alone
+- Both services already running on beardos and battle-tested
+
+**Layer 2: Automated LoRA Retraining**
+- Periodic LoRA fine-tuning on beardos RTX 3090 (weekly or monthly schedule)
+- Training data: mix of real ARIA interactions and synthetic task completions
+- Primary goal: teach ARIA what tools and capabilities she actually has, eliminating false "I can't do that" responses when she can
+- Secondary goal: tune communication style, vocabulary, and priorities to one person
+- Over time ARIA becomes specifically tuned — not a general assistant
+
+**Layer 3: Multi-Agent Orchestration**
+- Based on the proven `agents` project (github.com/expectbugs/agents) — LangGraph multi-agent system, confirmed working
+- Complex tasks decomposed and routed to specialized sub-agents
+- Persistent memory across agent workflows
+
+**Layer 4: Full-Context Interaction Logs**
+- Complete verbatim logs of every ARIA interaction — no summarization, no lossy compression
+- ARIA can reference exact quotes from past conversations
+- Feeds the LoRA retraining pipeline (Layer 2) with real interaction data
+- Enables "what exactly did I say about X last Tuesday?" with word-for-word accuracy
+- Complements Qdrant semantic search (Layer 1) — search finds it, logs provide the full original context
+
+### Outcome
+
+At Phase 6 completion, ARIA is a genuinely unique AI — self-hosted, fully private, trained on one person's life, with relational memory spanning years of interactions. Not a general assistant shared with millions of users, but something built around exactly one person.
+
+---
+
+## Phase 7: Embodiment
+*Raspberry Pi sensor and control nodes, physical environment integration*
+
+### Voice-Controlled Physical Devices
+
+- Raspberry Pi Zero nodes embedded in physical devices, communicating back to slappy over Tailscale
+- Each node runs a lightweight listener that accepts commands from the ARIA daemon
+- Examples:
+  - **Roomba / robot vacuum** — "Clean the living room" triggers a cleaning cycle
+  - **HVAC** — voice control for thermostat, scheduling, and status
+  - **Door locks / security** — arm, disarm, check status by voice
+  - **Lights** — full smart lighting control without a third-party cloud
+
+### Vehicle Integration — Xterra
+
+- Pi with OBD-II adapter provides live vehicle diagnostics over Tailscale
+- "What's my oil life?" / "Any fault codes?" answered in real time
+- Feeds directly into the Phase 3 vehicle maintenance log
+- Mileage, fuel, and service tracking fully automated
+
+### Presence Detection & Ambient Automation
+
+- Pi-based presence detection on the home network
+- ARIA knows when you're home vs. away and arms/disarms automations automatically
+- No voice trigger required — state changes happen on arrival and departure
+
+### Always-On Whisper Node
+
+- Dedicated Pi running Whisper for real-time ambient transcription (Phase 5 companion)
+- Offloads transcription from slappy, keeping latency low even during heavy use
+- Feeds the Total Recall pipeline continuously without taxing the main machine
+
+### Outcome
+
+Phase 7 gives ARIA a physical presence — not just software on a laptop but a distributed network of ears, eyes, and hands throughout your environment. Voice commands cross the boundary from digital to physical seamlessly.
+
+---
+
 ## Phase Summary
 
 | Phase | Title | Key Deliverable |
 |-------|-------|-----------------|
-| Phase 1 | Core Loop | Morning brief, weather, calendar, basic voice commands. End-to-end pipeline proven. |
-| Phase 2 | Machine Control | SSH/PTY management, system commands, Claude Code with voice permission handling. |
+| Phase 1 | Core Loop | **COMPLETE.** Morning brief, weather, calendar, basic voice commands. End-to-end pipeline proven. |
+| Phase 2 | Migration & Failover | **COMPLETE.** Beardos primary, slappy warm standby, automatic failover via Tasker, rsync data sync. |
 | Phase 3 | Memory & Intelligence | Brain dump, Good Night debrief, proactive nudges, legal/vehicle/health logs. |
 | Phase 4 | Deep Integrations | Smartwatch, context-aware reminders, GPS triggers, full communications control (SMS, email, calls, voicemail). |
 | Phase 5 | Total Recall | All-day ambient recording, Whisper transcription, Qdrant recall, promise tracker, person profiles. |
+| Phase 6 | Personalized Model | LoRA fine-tuning on interaction history, Neo4j relational graph memory, fully individualized AI. |
+| Phase 7 | Embodiment | Raspberry Pi nodes for physical device control, vehicle OBD-II integration, presence detection, always-on Whisper node. |
 
 ---
 
-*Next Step: Spec and build Phase 1 — FastAPI daemon, Tasker integration, and the morning briefing pipeline.*
+*Next Step: Spec and build Phase 3 — Memory & Proactive Intelligence.*

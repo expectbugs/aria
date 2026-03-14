@@ -142,12 +142,17 @@ def build_system_prompt() -> str:
     NOTE: This is set once when the persistent Claude process spawns.
     The current date/time is injected per-request in the context instead.
     """
+    host = config.HOST_NAME
     return """You are ARIA (Ambient Reasoning & Intelligence Assistant), a personal voice assistant.
 You are speaking to your user through voice — keep responses concise, natural, and conversational.
 Respond as if speaking aloud. No markdown, no bullet points, no code blocks unless explicitly asked.
 Do NOT end your responses with questions like "would you like me to do that?" or "anything else?" — you maintain conversation context, so the user can just tell you if they need more.
 
-You run on a self-hosted stack: FastAPI daemon on a Gentoo Linux laptop, Claude via CLI for reasoning, and Kokoro TTS (af_heart voice) for speech synthesis. Your user built you.
+You run on a self-hosted stack: FastAPI daemon on """ + host + """ (Gentoo Linux), Claude via CLI for reasoning, and Kokoro TTS (af_heart voice) for speech synthesis. Your user built you. Your primary host is beardos; if running on slappy, you are in failover mode.
+
+You have full console access to the machine you are running on, with passwordless sudo. You can and SHOULD run any shell commands needed to answer questions — check disk space, system specs, network status, service status, file contents, package info, etc. Never say you can't check something or don't have access. If the user asks about the system, USE your tools to look it up and give a real answer.
+
+IMPORTANT: Read-only commands (ls, df, free, top, cat, uname, etc.) are always fine to run without asking. But for anything that MODIFIES the system — deleting files, stopping services, installing/removing packages, changing configs, killing processes, writing files — you MUST describe what you're about to do and ask for explicit confirmation before running it. Never run destructive or state-changing commands without permission.
 
 The current date and time is provided at the start of each message.
 
@@ -155,6 +160,7 @@ You have access to the following tools via function results provided in the cont
 - Calendar: view, add, modify, delete events
 - Reminders: view, add, complete, delete reminders
 - Weather: current conditions, forecast, alerts
+- Shell: full command-line access with sudo (use for system queries, file operations, service management, etc.)
 
 When the user wants to add a calendar event, extract the title, date (YYYY-MM-DD), and time (HH:MM, 24h).
 When the user wants a reminder, extract the text and optional due date.
@@ -544,7 +550,7 @@ async def ask_start(req: AskRequest, request: Request):
         raise HTTPException(status_code=400, detail="Empty input")
 
     task_id = str(uuid.uuid4())[:8]
-    _tasks[task_id] = {"status": "processing"}
+    _tasks[task_id] = {"status": "processing", "created": time.time()}
     asyncio.create_task(_process_task(task_id, req, request))
     return {"task_id": task_id}
 
@@ -554,9 +560,9 @@ async def ask_result(task_id: str, request: Request):
     """Poll for async task result. Returns 202 if processing, 200 with audio if done."""
     verify_auth(request)
 
-    # Clean up expired tasks (older than 5 minutes)
+    # Clean up expired tasks (older than 2 hours — allows hour-long tasks like image gen)
     now = time.time()
-    expired = [k for k, v in _tasks.items() if now - v.get("created", now) > 300]
+    expired = [k for k, v in _tasks.items() if now - v.get("created", now) > 7200]
     for k in expired:
         del _tasks[k]
 
@@ -573,6 +579,26 @@ async def ask_result(task_id: str, request: Request):
     else:
         audio = task["audio"]
         return Response(content=audio, media_type="audio/wav")
+
+
+@app.get("/ask/status/{task_id}")
+async def ask_status(task_id: str, request: Request):
+    """Lightweight status check — returns JSON only, no audio body.
+
+    Used by Tasker JavaScriptlet polling (can't handle binary).
+    The actual audio is fetched separately via /ask/result/{task_id}.
+    """
+    verify_auth(request)
+    task = _tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Unknown task")
+
+    if task["status"] == "processing":
+        return JSONResponse(status_code=202, content={"status": "processing"})
+    elif task["status"] == "error":
+        return JSONResponse(status_code=500, content={"status": "error", "error": task.get("error", "Unknown")})
+    else:
+        return JSONResponse(status_code=200, content={"status": "done"})
 
 
 @app.get("/snippet/{name}")
