@@ -21,9 +21,10 @@ The system is designed to be entirely self-hosted with no dependency on third-pa
 ### Hardware Stack
 
 - **PC (primary brain):** Gentoo Linux, OpenRC, Claude Code, Qdrant, Whisper
-- **Laptop:** Gentoo Linux, OpenRC, Claude Code, imgen alias, secondary compute
-- **Phone:** Android (Motorola), Termux, Termius, Tasker, STT/TTS layer
-- **Smartwatch:** WearOS voice trigger, relays to phone
+- **Laptop:** Gentoo Linux, OpenRC, Claude Code, secondary compute
+- **Phone:** Pixel 10a, Tasker, STT/TTS layer
+- **Smartwatch:** Pixel Watch 4, custom WearOS app for hold-to-talk via side button
+- **Mic:** DJI Mic 3, clip-on wireless mic for ambient recording (purchased, on hand)
 - **Tailscale:** secure mesh network binding all devices
 
 ---
@@ -170,21 +171,14 @@ Tasker JavaScriptlet handles failover at the request level:
 ---
 
 ## Phase 3: Memory & Proactive Intelligence
-*Conversation logging, project briefs, nudges, and pattern awareness*
-
-### Brain Dump Command
-
-Say "brain dump" and speak freely for up to a minute. Claude:
-
-- Transcribes everything
-- Extracts action items and adds them to reminders/calendar automatically
-- Saves the remainder as a timestamped note
-- Confirms extracted items aloud before saving
+*Good Night debrief, proactive nudges, specialist logs, image generation, and pattern awareness*
 
 ### Daily Debrief — Good Night
 
 Mirror of the morning brief. Triggered by "Good night" or a button press:
 
+- Summary of useful information gathered throughout the day
+- Comparisons between extracted information and verbatim logs — lets you verify ARIA understood everything correctly
 - Summary of what was completed today
 - Pending items carried forward
 - Prep reminders for tomorrow
@@ -201,6 +195,29 @@ Claude reviews your conversation and note history and surfaces follow-ups:
 ### Project Status Briefs
 
 Custom voice commands per project. Each brief reads a structured notes file and summarizes current status, open questions, and next steps. You define what each project brief contains.
+
+### Image Generation & Visual Output
+
+ARIA can generate and push images to the phone, displayed via Tasker HTTP Server + Display Image.
+
+**Generation Methods — Claude chooses based on context:**
+- **FLUX.2** (`~/imgen/generate.py`) — photorealistic and artistic AI-generated images. "Show me a sunset over Lake Geneva" or "Generate a sci-fi landscape"
+- **SUPIR** (`~/upscale/upscale4k.sh`) — upscale any generated or existing image to 4K
+- **Matplotlib** — charts, graphs, data visualizations. "Graph my Xterra maintenance history" or "Show me my back pain pattern this month"
+- **Graphviz** — diagrams, flowcharts, dependency graphs. "Draw a diagram of the ARIA architecture" or "Map out the project timeline"
+- **SVG** — clean vector graphics, icons, simple illustrations. "Make me a floor plan" or "Draw a network diagram"
+
+**Delivery Pipeline:**
+- ARIA generates the image on beardos using whichever method fits the request
+- Pushes the image to the phone via Tasker's HTTP Server
+- Tasker receives and displays the image using Display Image action
+- Voice response accompanies the image: "Here's that chart — take a look"
+
+**Integration with Specialist Modules:**
+- Vehicle maintenance timeline visualization
+- Health pattern graphs (sleep, symptoms over time)
+- Legal case timeline / relationship diagrams
+- Project status visual overviews
 
 ### Specialist Modules
 
@@ -226,12 +243,25 @@ Custom voice commands per project. Each brief reads a structured notes file and 
 ## Phase 4: Deep Integrations & Wearable Support
 *Smartwatch, context-aware reminders, full communications control*
 
-### Smartwatch Integration
+### Smartwatch Integration — Pixel Watch 4
 
-- WearOS voice trigger fires and hands off to phone
+Custom WearOS app on the Pixel Watch 4 using the side button (`KEYCODE_STEM_1`) as a hold-to-talk trigger. The crown button (`KEYCODE_POWER`) is system-reserved and cannot be remapped.
+
+- **Hold side button** → starts recording from watch mic
+- **Release side button** → stops recording, ships audio to beardos via Tailscale
+- **Whisper on beardos** (RTX 3090) transcribes the audio, feeds text into existing ARIA pipeline
+- Bypasses Android STT entirely — no more premature cutoff on pauses, full control over recording duration
 - Short responses displayed as watch notification + haptic
 - Longer responses play through phone speaker
-- Quick-action tiles: Morning Brief, Brain Dump, Add Reminder, Good Night
+- Quick-action tiles: Morning Brief, Add Reminder, Good Night
+
+#### Why Not Android STT
+
+Android's built-in speech recognizer has a fixed silence detection timeout that cannot be configured. Even a brief pause to take a breath triggers end-of-recording. Whisper on the 3090 transcribes the full audio clip regardless of pauses, adding only ~1-2s of latency for short commands.
+
+#### Why Not WearOS STT APIs
+
+WearOS on the Pixel Watch 4 has severe limitations for third-party voice input — previously attempted and abandoned. The side button + audio upload approach bypasses all WearOS STT restrictions.
 
 ### Context-Aware Reminders
 
@@ -319,17 +349,18 @@ Full two-way voice control of texts, email, calls, and voicemail.
 ---
 
 ## Phase 5: Total Recall — Ambient Logging & AI Memory
-*All-day audio capture, Whisper transcription, vector search, promise tracking*
+*All-day audio capture via DJI Mic 3, Whisper transcription, vector search, promise tracking*
 
-Phase 5 transforms ARIA from a reactive assistant into a passive life-logging system. Everything you say throughout the day is captured, transcribed, and made searchable — so you can perfectly recall any conversation, extract commitments made or received, and let Claude surface things you forgot to explicitly log.
+Phase 5 transforms ARIA from a reactive assistant into a passive life-logging system. Everything you say throughout the day is captured, transcribed, and made searchable — so you can perfectly recall any conversation, extract commitments made or received, and let Claude surface things you forgot to explicitly log. This also absorbs "brain dump" functionality — no need for a dedicated voice command when ARIA is already listening and extracting everything continuously.
 
-### Hardware Options for Ambient Recording
+### Recording Hardware — DJI Mic 3
 
-- **Phone (primary):** screen-off background recording via Termux or dedicated recorder app. Battery is the main constraint — keep charger handy.
-- **Clip-on Bluetooth mic:** always hot, streams to phone. Good for factory environment.
-- **Dedicated always-on device:** rooted cheap Android or Raspberry Pi Zero W in pocket with small mic. Ugly but reliable.
-- **Purpose-built wearable:** Limitless AI pendant or Plaud Note. Purpose-built for this — Limitless does AI transcription and recall out of the box. Worth evaluating even if building custom.
-- **Smartwatch mic:** useful for targeted captures, not ideal for all-day passive recording.
+The DJI Mic 3 is a clip-on wireless microphone (purchased, on hand) that serves as the primary ambient recording device.
+
+- Clips to clothing, records all-day audio
+- Audio syncs to phone, which relays to beardos over Tailscale for processing
+- High-quality directional mic designed for voice — better capture than phone or watch mic
+- Long battery life designed for all-day professional use
 
 ### Processing Pipeline
 
@@ -556,9 +587,9 @@ Phase 7 gives ARIA a physical presence — not just software on a laptop but a d
 |-------|-------|-----------------|
 | Phase 1 | Core Loop | **COMPLETE.** Morning brief, weather, calendar, basic voice commands. End-to-end pipeline proven. |
 | Phase 2 | Migration & Failover | **COMPLETE.** Beardos primary, slappy warm standby, automatic failover via Tasker, rsync data sync. |
-| Phase 3 | Memory & Intelligence | Brain dump, Good Night debrief, proactive nudges, legal/vehicle/health logs. |
-| Phase 4 | Deep Integrations | Smartwatch, context-aware reminders, GPS triggers, full communications control (SMS, email, calls, voicemail). |
-| Phase 5 | Total Recall | All-day ambient recording, Whisper transcription, Qdrant recall, promise tracker, person profiles. |
+| Phase 3 | Memory & Intelligence | Good Night debrief, proactive nudges, image generation & push-to-phone, legal/vehicle/health logs. |
+| Phase 4 | Deep Integrations | Pixel Watch 4 hold-to-talk (Whisper STT), context-aware reminders, GPS triggers, full communications control. |
+| Phase 5 | Total Recall | DJI Mic 3 ambient recording, Whisper transcription, brain dump via continuous extraction, Qdrant recall, promise tracker, person profiles. |
 | Phase 6 | Personalized Model | LoRA fine-tuning on interaction history, Neo4j relational graph memory, fully individualized AI. |
 | Phase 7 | Embodiment | Raspberry Pi nodes for physical device control, vehicle OBD-II integration, presence detection, always-on Whisper node. |
 

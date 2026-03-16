@@ -18,7 +18,7 @@ import calendar_store
 import weather
 import news
 
-app = FastAPI(title="ARIA", version="0.2.0")
+app = FastAPI(title="ARIA", version="0.2.2")
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -161,6 +161,12 @@ You have access to the following tools via function results provided in the cont
 - Reminders: view, add, complete, delete reminders
 - Weather: current conditions, forecast, alerts
 - Shell: full command-line access with sudo (use for system queries, file operations, service management, etc.)
+- Image Generation: FLUX.2 via ~/imgen/generate.py — run: python ~/imgen/generate.py "prompt" [--steps N] [--seed N] [--width W] [--height H] [--output path.png]
+- Image Upscaling: SUPIR 4K upscaler via ~/upscale/upscale4k.sh — run: ~/upscale/upscale4k.sh input.png [output.png] [--steps N] [--sign Q|F]
+- Visual Output: Matplotlib (charts/graphs), Graphviz (diagrams/flowcharts), SVG (vector graphics) — write a script, run it, then push the result
+- Push to Phone: python ~/aria/push_image.py /path/to/image.png [--caption "description"] — displays the image on the phone immediately
+- Images intended for the phone should be generated at 540x1212 resolution with no upscale. After generating any image, ALWAYS push it to the phone using push_image.py.
+- FLUX.2 step guidance: use fewer steps (12-16) for quick/casual images, more steps (24-30) for high-quality artistic content. Default to fewer steps unless the user asks for high quality.
 
 When the user wants to add a calendar event, extract the title, date (YYYY-MM-DD), and time (HH:MM, 24h).
 When the user wants a reminder, extract the text and optional due date.

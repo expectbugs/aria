@@ -24,7 +24,7 @@ PORT = 8450
 
 # --- Claude ---
 CLAUDE_CLI = "/usr/bin/claude"  # or /home/user/.local/bin/claude
-CLAUDE_TIMEOUT = 120            # seconds per CLI invocation
+CLAUDE_TIMEOUT = 600            # seconds per CLI invocation (10 min — image gen can take a while)
 
 # --- Auth ---
 AUTH_TOKEN = "your-token-here"  # Tasker sends this as Bearer token
@@ -52,6 +52,11 @@ NEWS_FEEDS = {
     "wisconsin": "https://www.jsonline.com/rss/",
     "manufacturing": "https://www.industryweek.com/rss.xml",
 }
+
+# --- Phone (Tasker HTTP Server for image push) ---
+PHONE_IP = "100.x.x.x"         # phone's Tailscale IP
+PHONE_PORT = 8451               # Tasker HTTP Server port
+PHONE_IMAGE_DIR = "ARIA"        # directory on phone for pushed images (relative to internal storage)
 
 # --- Hardware capabilities ---
 # Set based on what this machine can do. Daemon checks these at runtime.

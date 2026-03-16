@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.2.2] — 2026-03-16
+
+### Image Push to Phone
+
+ARIA can now generate images and push them to the phone for display via Tasker.
+
+### Added
+
+- **`push_image.py`** — script to POST images to the phone's Tasker HTTP Server with optional caption; handles content type detection and connection errors
+- **Tasker image receiver (`snippets/aria_image_server.js`)** — JavaScriptlet for Tasker HTTP Server that receives images and displays them via Text/Image Dialog
+- **Visual output tools in system prompt** — ARIA now knows about Matplotlib (charts/graphs), Graphviz (diagrams/flowcharts), and SVG (vector graphics) as generation options
+- **Push-to-phone in system prompt** — ARIA always pushes generated images to the phone after creation
+- **FLUX.2 step guidance in system prompt** — fewer steps (12-16) for quick images, more (24-30) for high quality
+- **Phone config** — `PHONE_IP` and `PHONE_PORT` settings in config for Tasker HTTP Server target
+
+### Changed
+
+- **Claude timeout increased** — from 120s to 600s (10 minutes) to accommodate image generation
+- **Phone image resolution** — images for phone generated at 540x1212 with no upscale
+
+---
+
+## [0.2.1] — 2026-03-16
+
+### Image Generation & Upscaling
+
+Added FLUX.2 and SUPIR to ARIA's system prompt so she can generate and upscale images on demand.
+
+### Added
+
+- **FLUX.2 in system prompt** — ARIA knows how to invoke `~/imgen/generate.py` with all options (prompt, steps, seed, width, height, output)
+- **SUPIR in system prompt** — ARIA knows how to invoke `~/upscale/upscale4k.sh` for 4K upscaling
+
+---
+
 ## [0.2.0] — 2026-03-14
 
 ### Phase 2: Migration to Beardos & Failover
