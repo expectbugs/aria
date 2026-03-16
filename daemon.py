@@ -18,7 +18,7 @@ import calendar_store
 import weather
 import news
 
-app = FastAPI(title="ARIA", version="0.2.2")
+app = FastAPI(title="ARIA", version="0.2.3")
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}

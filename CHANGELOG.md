@@ -6,6 +6,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.2.3] — 2026-03-16
+
+### Visual Output Dependencies
+
+Install Matplotlib and Graphviz so ARIA can actually generate charts, graphs, and diagrams.
+
+### Added
+
+- **Matplotlib** — installed in ARIA venv for charts, graphs, and data visualizations
+- **Graphviz** — installed system-wide (`dot` command) for diagrams, flowcharts, and dependency graphs
+- SVG generation requires no additional dependencies (Claude writes SVG directly as text)
+
+### Changed
+
+- **`requirements.txt`** — updated with matplotlib and its dependencies (pillow, contourpy, cycler, fonttools, kiwisolver)
+
+---
+
 ## [0.2.2] — 2026-03-16
 
 ### Image Push to Phone
@@ -15,7 +33,7 @@ ARIA can now generate images and push them to the phone for display via Tasker.
 ### Added
 
 - **`push_image.py`** — script to POST images to the phone's Tasker HTTP Server with optional caption; handles content type detection and connection errors
-- **Tasker image receiver (`snippets/aria_image_server.js`)** — JavaScriptlet for Tasker HTTP Server that receives images and displays them via Text/Image Dialog
+- **Tasker image receiver (`snippets/aria_image_server.js`)** — documents exact Tasker setup: HTTP Request event profile + Copy File + HTTP Response + Text/Image Dialog
 - **Visual output tools in system prompt** — ARIA now knows about Matplotlib (charts/graphs), Graphviz (diagrams/flowcharts), and SVG (vector graphics) as generation options
 - **Push-to-phone in system prompt** — ARIA always pushes generated images to the phone after creation
 - **FLUX.2 step guidance in system prompt** — fewer steps (12-16) for quick images, more (24-30) for high quality
