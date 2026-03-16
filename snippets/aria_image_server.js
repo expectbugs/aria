@@ -1,57 +1,41 @@
-// === ARIA Image Server — Tasker HTTP Server Handler ===
+// === ARIA Image Receiver — Tasker Setup ===
 //
-// Runs when Tasker HTTP Server receives a POST to /image.
-// Saves the uploaded image and sets variables for the
-// Display Image action that follows this JavaScriptlet step.
+// No JavaScriptlet needed — this is pure Tasker actions.
+// This file documents the exact setup for reference.
 //
-// === TASKER SETUP ===
+// === HTTP REQUEST PROFILE ===
 //
-// 1. Create task "ARIA Image Display" with these steps:
+// PROFILES tab → + → Event → Net → HTTP Request
+//   Port: 8451
+//   Method: POST
+//   Path: /image
+//   Quick Response: (leave blank — task sends response via HTTP Response action)
+//   Timeout: 30
+//   Link to task: "ARIA Image Display"
 //
-//    Step 1: JavaScriptlet
-//            Code: (paste this script)
+// === ARIA IMAGE DISPLAY TASK (3 steps) ===
 //
-//    Step 2: IF %img_ready ~ 1
+// Step 1: File → Copy File
+//         From: %http_request_multipart_values(1)
+//         To: ARIA/latest_image.png
 //
-//    Step 3: Alert → Text/Image Dialog
-//            Title: %img_caption
-//            Image: %img_path
+// Step 2: Net → HTTP Response
+//         Request ID: %http_request_id
+//         Response Code: 200
+//         Body: OK
 //
-//    Step 4: End If
+// Step 3: Input → Text/Image Dialog
+//         Title: %http_request_multipart_values(2)
+//         Image: ARIA/latest_image.png
+//         Button 1: OK
+//         Close After: 300
 //
-// 2. Go to Preferences → HTTP Server
-//    - Enable HTTP Server on port 8451
-//    - Bind to Tailscale interface only (100.113.243.91)
-//    - Add route: POST /image → run task "ARIA Image Display"
+// === VARIABLES ===
 //
-// === END SETUP ===
-
-var filePath = local("http_request_file");
-var caption = local("http_request_param_caption") || "ARIA";
-
-img_ready = "0";
-img_path = "";
-img_caption = "";
-
-if (!filePath) {
-  setLocal("http_response_code", "400");
-  setLocal("http_response", "No image received");
-} else {
-  var destDir = "ARIA/images";
-  var timestamp = new Date().getTime();
-  var destFile = destDir + "/image_" + timestamp + ".png";
-
-  createDir(destDir, false);
-  copyFile(filePath, destFile, false);
-
-  img_ready = "1";
-  img_path = destFile;
-  img_caption = caption;
-
-  setLocal("http_response_code", "200");
-  setLocal("http_response", "OK");
-}
-
-setLocal("img_ready", img_ready);
-setLocal("img_path", img_path);
-setLocal("img_caption", img_caption);
+// Tasker exposes these from the HTTP Request event:
+//   %http_request_multipart_names()   — field names array (image, caption)
+//   %http_request_multipart_values()  — field values array (cache file path, caption text)
+//   %http_request_id                  — request ID for HTTP Response action
+//
+// The HTTP Response MUST come before the Text/Image Dialog,
+// otherwise the dialog blocks the task and the sender times out.
