@@ -170,33 +170,12 @@ Tasker JavaScriptlet handles failover at the request level:
 
 ---
 
-## Phase 3: Memory & Proactive Intelligence
-*Good Night debrief, proactive nudges, specialist logs, image generation, and pattern awareness*
+## Phase 3: Self-Contained Features — PARTIALLY COMPLETE
+*Specialist logs, basic debrief & nudges, geofencing, image generation (done), and pattern awareness*
 
-### Daily Debrief — Good Night
+All remaining Phase 3 features are self-contained — they require no external service integrations, no new hardware pipelines, and no dependencies on later phases. Ship these first before tackling the keystones.
 
-Mirror of the morning brief. Triggered by "Good night" or a button press:
-
-- Summary of useful information gathered throughout the day
-- Comparisons between extracted information and verbatim logs — lets you verify ARIA understood everything correctly
-- Summary of what was completed today
-- Pending items carried forward
-- Prep reminders for tomorrow
-- Option to set next-morning alarm
-
-### Proactive Nudges
-
-Claude reviews your conversation and note history and surfaces follow-ups:
-
-- "You mentioned calling the insurance company last Tuesday — still pending"
-- "You haven't logged your Xterra mileage in 3 weeks"
-- Pattern-based nudges require conversation logging (Phase 5 accelerates this)
-
-### Project Status Briefs
-
-Custom voice commands per project. Each brief reads a structured notes file and summarizes current status, open questions, and next steps. You define what each project brief contains.
-
-### Image Generation & Visual Output
+### Image Generation & Visual Output — COMPLETE
 
 ARIA can generate and push images to the phone, displayed via Tasker HTTP Server + Display Image.
 
@@ -238,10 +217,90 @@ ARIA can generate and push images to the phone, displayed via Tasker HTTP Server
 - Claude tracks patterns over time
 - Surfaces in morning brief if threshold crossed: "Back pain 4 of last 7 days"
 
+### Project Status Briefs
+
+Custom voice commands per project. Each brief reads a structured notes file and summarizes current status, open questions, and next steps. You define what each project brief contains.
+
+### Daily Debrief — Good Night (Basic Version)
+
+Basic version triggered by "Good night" or a button press, using only ARIA's conversation history and local data (no transcript pipeline yet):
+
+- Summary of what was completed today
+- Pending items carried forward
+- Prep reminders for tomorrow
+- Option to set next-morning alarm
+
+*Upgrades automatically in Phase 6 when the ambient transcript pipeline exists — adds full day-of-conversation parsing, extracted commitments, and verbatim log comparison.*
+
+### Proactive Nudges (Basic Version)
+
+Basic version — Claude reviews conversation history and local data stores to surface follow-ups:
+
+- "You mentioned calling the insurance company last Tuesday — still pending"
+- "You haven't logged your Xterra mileage in 3 weeks"
+
+*Upgrades automatically in Phase 6 when ambient transcripts provide richer source data for pattern-based nudges.*
+
+### Context-Aware Reminders — Geofencing
+
+Location-based reminders using phone GPS via Tasker — self-contained, no dependency on Whisper or conversation logging:
+
+- "Remind me when I get home to [X]" — uses phone GPS geofencing
+- Tasker monitors location, triggers reminder when entering/leaving a defined area
+- Stored as location-triggered entries in the reminder system
+
 ---
 
-## Phase 4: Deep Integrations & Wearable Support
-*Smartwatch, context-aware reminders, full communications control*
+## Phase 4: The Keystones
+*Whisper STT and Google Calendar/Gmail integration — the foundations that unlock everything downstream*
+
+Phase 4 has two major workstreams that can be built in parallel. Whisper is the true keystone — it gates the watch app, voicemail transcription, and the entire ambient recording pipeline. Calendar/Gmail integration is a high-value parallel workstream that delivers immediate daily utility (email triage, appointment extraction) but does not block Phase 5 if it takes longer.
+
+### Whisper STT on Beardos — KEYSTONE
+
+Local speech-to-text on the RTX 3090, replacing Android's broken built-in speech recognizer.
+
+- GPU-accelerated Whisper transcription with ~1-2s latency for short commands
+- Accepts audio uploads over Tailscale, returns text to the ARIA pipeline
+- Bypasses Android STT entirely — no more premature cutoff on pauses
+- **Gates downstream:** Watch app (Phase 5), voicemail transcription (Phase 5), ambient recording pipeline (Phase 6), debrief upgrade (Phase 6)
+
+#### Why Not Android STT
+
+Android's built-in speech recognizer has a fixed silence detection timeout that cannot be configured. Even a brief pause to take a breath triggers end-of-recording. Whisper on the 3090 transcribes the full audio clip regardless of pauses.
+
+### Google Calendar + Gmail Integration
+
+Read/write Google Calendar access and IMAP email monitoring — high-value daily utility.
+
+- **Calendar:** Sync with Google Calendar for real appointments, two-way read/write
+- **Email:** IMAP polling on the daemon side, Claude summarizes and triages incoming mail
+- New emails announced with sender, subject, and a one-sentence Claude summary
+- "You have 3 new emails — one from your doctor's office, two from mailing lists"
+- Morning brief includes overnight important emails; mailing lists suppressed by default
+- Auto-extract appointments and deadlines from emails into calendar
+
+### Smart Alarm Integration
+
+Falls naturally out of calendar integration:
+
+- "Wake me at [time] with a briefing" — sets alarm AND queues morning brief
+- Alarm dismissal triggers the brief automatically
+
+### Incoming SMS Announced + Summarized
+
+Pairs cleanly with email monitoring — low lift once the notification pipeline exists:
+
+- ARIA announces new texts aloud: "Text from Mike — he says he'll be 10 minutes late"
+- Tasker monitors incoming SMS and POSTs to the ARIA daemon for summarization
+- Configurable interrupt rules — suppress during sleep/focus hours
+
+---
+
+## Phase 5: Communications Stack & Wearable
+*Smartwatch app, full two-way comms control, smart filtering*
+
+Phase 5 builds the full communications layer and the watch interface. The watch app requires Whisper (Phase 4) to be useful. The comms features build on the SMS and email foundations laid in Phase 4.
 
 ### Smartwatch Integration — Pixel Watch 4
 
@@ -250,93 +309,57 @@ Custom WearOS app on the Pixel Watch 4 using the side button (`KEYCODE_STEM_1`) 
 - **Hold side button** → starts recording from watch mic
 - **Release side button** → stops recording, ships audio to beardos via Tailscale
 - **Whisper on beardos** (RTX 3090) transcribes the audio, feeds text into existing ARIA pipeline
-- Bypasses Android STT entirely — no more premature cutoff on pauses, full control over recording duration
 - Short responses displayed as watch notification + haptic
 - Longer responses play through phone speaker
 - Quick-action tiles: Morning Brief, Add Reminder, Good Night
-
-#### Why Not Android STT
-
-Android's built-in speech recognizer has a fixed silence detection timeout that cannot be configured. Even a brief pause to take a breath triggers end-of-recording. Whisper on the 3090 transcribes the full audio clip regardless of pauses, adding only ~1-2s of latency for short commands.
 
 #### Why Not WearOS STT APIs
 
 WearOS on the Pixel Watch 4 has severe limitations for third-party voice input — previously attempted and abandoned. The side button + audio upload approach bypasses all WearOS STT restrictions.
 
-### Context-Aware Reminders
+### Outgoing SMS by Voice
 
-Not just time-based — situation-based reminders:
-
-- "Remind me when I get home to [X]" — uses phone GPS geofencing
-- "Remind me next time I talk to [person]" — stored as fuzzy context trigger
-- "Remind me if I mention [topic]" — Claude checks against conversation context
-
-### Smart Alarm Integration
-
-- "Wake me at [time] with a briefing" — sets alarm AND queues morning brief
-- Alarm dismissal triggers the brief automatically
-
-### Communications Module
-
-Full two-way voice control of texts, email, calls, and voicemail.
-
-#### Incoming Notifications — ARIA Tells You
-
-**SMS/Texts**
-- ARIA announces new texts aloud: "Text from Mike — he says he'll be 10 minutes late"
-- Tasker monitors incoming SMS and POSTs to the ARIA daemon for summarization
-- Configurable interrupt rules — suppress during sleep/focus hours
-
-**Email**
-- ARIA monitors inbox via IMAP on the daemon side
-- New emails announced with sender, subject, and a one-sentence Claude summary
-- "You have 3 new emails — one from your doctor's office, two from mailing lists"
-- Morning brief includes overnight important emails; mailing lists suppressed by default
-
-**Calls**
-- Incoming call announced by name: "Call coming in from Dad"
-- Respond by voice: "answer" or "ignore"
-- Missed call alert surfaced immediately or at next brief depending on priority rules
-
-**Voicemail**
-- New voicemail transcribed locally via Whisper
-- ARIA reads the transcription aloud
-- "You have a voicemail from an unknown number — they said [transcript]"
-- Original audio retained locally if you need to replay it
-
-#### Outgoing Control — You Tell ARIA
-
-**Texts**
 - "Text [person] — tell them [X]"
 - ARIA drafts the message, reads it back for confirmation
 - "Send it" / "change it to [X]" / "cancel"
 - Sent via Tasker SMS automation
 
-**Email**
+### Outgoing Email by Voice
+
 - "Send an email to [person] about [X]"
 - Claude drafts the full email, reads subject and body back to you
 - Approve, edit by voice, or cancel before sending
 - Sent via SMTP on the daemon side
 
-**Calls**
-- "Call [person]" — initiates via Tasker
-- "Call [person] back" — returns missed call
+### Incoming Call Handling
 
-#### Voice Query Commands
+- Incoming call announced by name: "Call coming in from Dad"
+- Respond by voice: "answer" or "ignore"
+- Missed call alert surfaced immediately or at next brief depending on priority rules
+- "Call [person]" / "Call [person] back" — initiates via Tasker
 
-- "Read me my emails from today"
-- "Any texts from [person] this week?"
-- "Did [person] call while I was at work?"
-- "What did [person]'s voicemail say?"
-- "Do I have any unread messages?"
+### Voicemail Transcription
 
-#### Smart Filtering & Priority Rules
+- New voicemail transcribed locally via Whisper (requires Phase 4 keystone)
+- ARIA reads the transcription aloud
+- "You have a voicemail from an unknown number — they said [transcript]"
+- Original audio retained locally if you need to replay it
+
+### Smart Filtering & Priority Rules
 
 - Configurable quiet hours — no interruptions except allowlisted contacts
 - "Only interrupt me for calls from [person] right now"
 - VIP list: contacts who always break through regardless of mode
 - Low-priority senders (mailing lists, spam) batched into morning/evening brief only
 - Morning brief includes: overnight missed calls, voicemail transcripts, important emails
+
+### Voice Query Commands
+
+- "Read me my emails from today"
+- "Any texts from [person] this week?"
+- "Did [person] call while I was at work?"
+- "What did [person]'s voicemail say?"
+- "Do I have any unread messages?"
 
 #### Implementation Notes
 
@@ -348,10 +371,12 @@ Full two-way voice control of texts, email, calls, and voicemail.
 
 ---
 
-## Phase 5: Total Recall — Ambient Logging & AI Memory
-*All-day audio capture via DJI Mic 3, Whisper transcription, vector search, promise tracking*
+## Phase 6: Total Recall — Ambient Logging & AI Memory
+*All-day audio capture via DJI Mic 3, Whisper transcription, vector search, promise tracking, upgraded debrief*
 
-Phase 5 transforms ARIA from a reactive assistant into a passive life-logging system. Everything you say throughout the day is captured, transcribed, and made searchable — so you can perfectly recall any conversation, extract commitments made or received, and let Claude surface things you forgot to explicitly log. This also absorbs "brain dump" functionality — no need for a dedicated voice command when ARIA is already listening and extracting everything continuously.
+Phase 6 transforms ARIA from a reactive assistant into a passive life-logging system. Everything you say throughout the day is captured, transcribed, and made searchable — so you can perfectly recall any conversation, extract commitments made or received, and let Claude surface things you forgot to explicitly log. This also absorbs "brain dump" functionality — no need for a dedicated voice command when ARIA is already listening and extracting everything continuously.
+
+This phase also upgrades the basic Good Night debrief and proactive nudges from Phase 3 to use full transcript data, and adds person-based and topic-based context-aware reminders that depend on conversation logging.
 
 ### Recording Hardware — DJI Mic 3
 
@@ -387,14 +412,6 @@ The DJI Mic 3 is a clip-on wireless microphone (purchased, on hand) that serves 
 - Anything that sounds like it should be a reminder
 - Emotional tone flags (optional): stress, frustration, fatigue markers
 
-### Evening Debrief Integration
-
-Extracted items surface in your Good Night debrief:
-
-- "You told someone you'd call back Thursday — add as reminder?"
-- "Dave said he'd have the part ready by Friday — want me to track that?"
-- You confirm or dismiss each item by voice
-
 ### Voice Recall Queries
 
 Natural language queries against your full log archive via Qdrant semantic search:
@@ -405,6 +422,13 @@ Natural language queries against your full log archive via Qdrant semantic searc
 - "What did the doctor say at my last appointment?"
 - "What have I said about [topic] in the last 30 days?"
 
+### Promise Tracker
+
+- Dedicated view of open commitments — yours and others'
+- Automatically marked complete when you mention the task is done
+- Escalates in morning brief if overdue
+- "What promises am I tracking?" gives full rundown
+
 ### Person Profiles
 
 Claude auto-builds a contact profile for anyone who appears frequently in your logs:
@@ -412,13 +436,6 @@ Claude auto-builds a contact profile for anyone who appears frequently in your l
 - "Who is Dave?" → "Dave appears in 12 conversations since October. Works with you at the factory. You've discussed the crane twice and he owes you $40 from November."
 - Profiles update automatically as new conversations are processed
 - Queryable by voice at any time
-
-### Promise Tracker
-
-- Dedicated view of open commitments — yours and others'
-- Automatically marked complete when you mention the task is done
-- Escalates in morning brief if overdue
-- "What promises am I tracking?" gives full rundown
 
 ### Conversation Summaries
 
@@ -433,6 +450,34 @@ Claude tracks tone and stress patterns across your logs:
 - "You've seemed frustrated at work 4 of the last 5 days" — surfaced in morning brief
 - Sleep quality correlations if you voice-log sleep
 - Physical symptom patterns cross-referenced with work schedule
+
+### Evening Debrief — Upgraded
+
+Replaces the basic Phase 3 Good Night debrief. Now parses actual full transcript logs:
+
+- Summary of useful information gathered throughout the day
+- Comparisons between extracted information and verbatim logs — lets you verify ARIA understood everything correctly
+- Summary of what was completed today
+- Pending items carried forward
+- Extracted commitments surfaced for confirm/dismiss: "You told someone you'd call back Thursday — add as reminder?"
+- Prep reminders for tomorrow
+- Option to set next-morning alarm
+
+### Context-Aware Reminders — Person & Topic Based
+
+These require conversation logging to work well, so they live here rather than earlier:
+
+- "Remind me next time I talk to [person]" — stored as fuzzy context trigger, matched against transcript data
+- "Remind me if I mention [topic]" — Claude checks against ongoing conversation context
+
+### Always-On Whisper Pi Node
+
+*Pulled forward from Embodiment phase — this is a Phase 6 companion feature.*
+
+- Dedicated Pi running Whisper for real-time ambient transcription
+- Offloads transcription from the RTX 3090, freeing it for image gen and other GPU tasks
+- Feeds the Total Recall pipeline continuously without taxing beardos
+- Only needed once ambient recording is running continuously and creating GPU contention
 
 ### Privacy Architecture
 
@@ -504,8 +549,10 @@ The core principle: every failure mode must produce a spoken response. Silence i
 
 ---
 
-## Phase 6: Personalized Model
+## Phase 7: Personalized Model
 *LoRA fine-tuning, Neo4j relational memory, fully individualized AI*
+
+**IMPORTANT: Do not build before Phase 6 generates real transcript data.** Fine-tuning on thin data produces poor results. This phase requires months of accumulated interaction logs and ambient transcripts to be effective.
 
 ### Memory Architecture — Four Layers
 
@@ -539,16 +586,18 @@ ARIA's long-term intelligence is built on four distinct memory layers, each serv
 
 ### Outcome
 
-At Phase 6 completion, ARIA is a genuinely unique AI — self-hosted, fully private, trained on one person's life, with relational memory spanning years of interactions. Not a general assistant shared with millions of users, but something built around exactly one person.
+At Phase 7 completion, ARIA is a genuinely unique AI — self-hosted, fully private, trained on one person's life, with relational memory spanning years of interactions. Not a general assistant shared with millions of users, but something built around exactly one person.
 
 ---
 
-## Phase 7: Embodiment
+## Phase 8: Embodiment
 *Raspberry Pi sensor and control nodes, physical environment integration*
+
+**NOTE: Relatively independent of the AI stack. Can be parallelized with Phase 7 if desired.** The Always-On Whisper Pi Node has been pulled forward to Phase 6 where it's actually needed.
 
 ### Voice-Controlled Physical Devices
 
-- Raspberry Pi Zero nodes embedded in physical devices, communicating back to slappy over Tailscale
+- Raspberry Pi Zero nodes embedded in physical devices, communicating back to beardos over Tailscale
 - Each node runs a lightweight listener that accepts commands from the ARIA daemon
 - Examples:
   - **Roomba / robot vacuum** — "Clean the living room" triggers a cleaning cycle
@@ -569,15 +618,9 @@ At Phase 6 completion, ARIA is a genuinely unique AI — self-hosted, fully priv
 - ARIA knows when you're home vs. away and arms/disarms automations automatically
 - No voice trigger required — state changes happen on arrival and departure
 
-### Always-On Whisper Node
-
-- Dedicated Pi running Whisper for real-time ambient transcription (Phase 5 companion)
-- Offloads transcription from slappy, keeping latency low even during heavy use
-- Feeds the Total Recall pipeline continuously without taxing the main machine
-
 ### Outcome
 
-Phase 7 gives ARIA a physical presence — not just software on a laptop but a distributed network of ears, eyes, and hands throughout your environment. Voice commands cross the boundary from digital to physical seamlessly.
+Phase 8 gives ARIA a physical presence — not just software on a laptop but a distributed network of ears, eyes, and hands throughout your environment. Voice commands cross the boundary from digital to physical seamlessly.
 
 ---
 
@@ -587,12 +630,13 @@ Phase 7 gives ARIA a physical presence — not just software on a laptop but a d
 |-------|-------|-----------------|
 | Phase 1 | Core Loop | **COMPLETE.** Morning brief, weather, calendar, basic voice commands. End-to-end pipeline proven. |
 | Phase 2 | Migration & Failover | **COMPLETE.** Beardos primary, slappy warm standby, automatic failover via Tasker, rsync data sync. |
-| Phase 3 | Memory & Intelligence | Good Night debrief, proactive nudges, image generation & push-to-phone, legal/vehicle/health logs. |
-| Phase 4 | Deep Integrations | Pixel Watch 4 hold-to-talk (Whisper STT), context-aware reminders, GPS triggers, full communications control. |
-| Phase 5 | Total Recall | DJI Mic 3 ambient recording, Whisper transcription, brain dump via continuous extraction, Qdrant recall, promise tracker, person profiles. |
-| Phase 6 | Personalized Model | LoRA fine-tuning on interaction history, Neo4j relational graph memory, fully individualized AI. |
-| Phase 7 | Embodiment | Raspberry Pi nodes for physical device control, vehicle OBD-II integration, presence detection, always-on Whisper node. |
+| Phase 3 | Self-Contained Features | **PARTIAL.** Image gen done. Remaining: specialist logs (legal/vehicle/health), project briefs, basic debrief & nudges, geofencing reminders. |
+| Phase 4 | The Keystones | Whisper STT (keystone — gates Phases 5-6). Google Calendar + Gmail integration (parallel, high daily value). Smart alarm. Incoming SMS. |
+| Phase 5 | Comms & Wearable | Pixel Watch 4 hold-to-talk, full two-way comms (SMS, email, calls, voicemail), smart filtering & quiet hours. |
+| Phase 6 | Total Recall | DJI Mic 3 ambient recording, Whisper transcription pipeline, Qdrant recall, promise tracker, person profiles, upgraded debrief, person/topic-based reminders, Whisper Pi node. |
+| Phase 7 | Personalized Model | LoRA fine-tuning on interaction history, Neo4j relational graph memory, multi-agent orchestration. Requires Phase 6 data. |
+| Phase 8 | Embodiment | Raspberry Pi nodes for physical device control, vehicle OBD-II integration, presence detection. Can parallelize with Phase 7. |
 
 ---
 
-*Next Step: Spec and build Phase 3 — Memory & Proactive Intelligence.*
+*Next Step: Finish Phase 3 — specialist modules, basic debrief, basic nudges, geofencing reminders.*
