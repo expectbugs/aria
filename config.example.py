@@ -63,6 +63,16 @@ PHONE_IP = "100.x.x.x"         # phone's Tailscale IP
 PHONE_PORT = 8451               # Tasker HTTP Server port
 PHONE_IMAGE_DIR = "ARIA"        # directory on phone for pushed images (relative to internal storage)
 
+# --- Twilio (SMS/MMS/Voice) ---
+TWILIO_ACCOUNT_SID = "your-twilio-account-sid"       # Basic Auth user for REST API
+TWILIO_AUTH_TOKEN = "your-twilio-auth-token"          # Basic Auth password for REST API
+TWILIO_API_SID = "your-twilio-api-sid"                # Revocable API key SID (alt auth user)
+TWILIO_API_KEY = "your-twilio-api-key"                # Revocable API key secret (alt auth password)
+TWILIO_MESSAGING_SID = "your-messaging-service-sid"   # Messaging Service for SMS/MMS
+TWILIO_PHONE_NUMBER = "+1XXXXXXXXXX"                  # ARIA's phone number
+TWILIO_WEBHOOK_URL = "https://host.tail.ts.net/webhook/sms"  # Public funnel URL for signature validation
+OWNER_PHONE_NUMBER = "+1XXXXXXXXXX"                   # Your personal phone number
+
 # --- Hardware capabilities ---
 # Set based on what this machine can do. Daemon checks these at runtime.
 ENABLE_GPU = False              # True if NVIDIA GPU available (for Whisper, LoRA, etc.)

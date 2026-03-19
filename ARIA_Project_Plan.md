@@ -265,13 +265,19 @@ Basic version — Claude reviews conversation history and local data stores to s
 
 *Upgrades automatically in Phase 6 when ambient transcripts provide richer source data for pattern-based nudges.*
 
-### Context-Aware Reminders — Geofencing
+### SMS/MMS Input — COMPLETE
 
-Location-based reminders using phone GPS via Tasker — self-contained, no dependency on Whisper or conversation logging:
+ARIA has a Twilio phone number (+1 262-475-1990) for receiving SMS and MMS messages. Incoming messages are processed through the same Claude pipeline as voice and file input, with full context injection. MMS attachments (photos, files) are downloaded, saved to `data/inbox/`, and analyzed.
 
-- "Remind me when I get home to [X]" — uses phone GPS geofencing
-- Tasker monitors location, triggers reminder when entering/leaving a defined area
-- Stored as location-triggered entries in the reminder system
+- `POST /sms` webhook receives messages from Twilio, validates signatures, handles A2P compliance (STOP/HELP)
+- Exposed to the internet via Tailscale Funnel at `https://beardos.tail847be6.ts.net/webhook/sms`
+- Outbound replies via Twilio REST API (pending A2P 10DLC verification as of March 2026)
+- Same phone number will support voice calls in Phase 5 when Whisper STT is ready
+- Privacy policy and terms of service hosted via GitHub Pages for compliance
+
+### Context-Aware Reminders — Geofencing — MOVED TO PHASE 5
+
+*Deferred to Phase 5 — fits naturally with the Tasker-heavy wearable and communications work (watch app, SMS automation, call handling). The geofencing profiles and GPS monitoring are primarily Tasker-side work that pairs better with that phase.*
 
 ---
 
@@ -376,6 +382,15 @@ WearOS on the Pixel Watch 4 has severe limitations for third-party voice input �
 - VIP list: contacts who always break through regardless of mode
 - Low-priority senders (mailing lists, spam) batched into morning/evening brief only
 - Morning brief includes: overnight missed calls, voicemail transcripts, important emails
+
+### Context-Aware Reminders — Geofencing
+
+Location-based reminders using phone GPS via Tasker — moved here from Phase 3 since it's primarily Tasker-side work:
+
+- "Remind me when I get home to [X]" — uses phone GPS geofencing
+- Tasker monitors location, triggers reminder when entering/leaving a defined area
+- Stored as location-triggered entries in the reminder system
+- Predefined locations (home, work) in config, with voice-addable custom ones
 
 ### Voice Query Commands
 
@@ -654,13 +669,13 @@ Phase 8 gives ARIA a physical presence — not just software on a laptop but a d
 |-------|-------|-----------------|
 | Phase 1 | Core Loop | **COMPLETE.** Morning brief, weather, calendar, basic voice commands. End-to-end pipeline proven. |
 | Phase 2 | Migration & Failover | **COMPLETE.** Beardos primary, slappy warm standby, automatic failover via Tasker, rsync data sync. |
-| Phase 3 | Self-Contained Features | **PARTIAL.** Image gen, specialist logs (vehicle/health/legal), diet/nutrition tracking, project briefs, daily debrief, file input done. Remaining: geofencing reminders, proactive nudges. |
+| Phase 3 | Self-Contained Features | **PARTIAL.** Image gen, specialist logs (vehicle/health/legal), diet/nutrition tracking, project briefs, daily debrief, file input, SMS/MMS done. Remaining: proactive nudges. Geofencing moved to Phase 5. |
 | Phase 4 | The Keystones | Whisper STT (keystone — gates Phases 5-6). Google Calendar + Gmail integration (parallel, high daily value). Smart alarm. Incoming SMS. |
-| Phase 5 | Comms & Wearable | Pixel Watch 4 hold-to-talk, full two-way comms (SMS, email, calls, voicemail), smart filtering & quiet hours. |
+| Phase 5 | Comms & Wearable | Pixel Watch 4 hold-to-talk, full two-way comms (SMS, email, calls, voicemail), smart filtering & quiet hours, geofencing reminders. |
 | Phase 6 | Total Recall | DJI Mic 3 ambient recording, Whisper transcription pipeline, Qdrant recall, promise tracker, person profiles, upgraded debrief, person/topic-based reminders, Whisper Pi node. |
 | Phase 7 | Personalized Model | LoRA fine-tuning on interaction history, Neo4j relational graph memory, multi-agent orchestration. Requires Phase 6 data. |
 | Phase 8 | Embodiment | Raspberry Pi nodes for physical device control, vehicle OBD-II integration, presence detection. Can parallelize with Phase 7. |
 
 ---
 
-*Next Step: Finish Phase 3 — geofencing reminders, proactive nudges.*
+*Next Step: Finish Phase 3 — proactive nudges. Then Phase 4 keystones.*

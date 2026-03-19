@@ -21,10 +21,11 @@ import vehicle_store
 import health_store
 import legal_store
 import projects
+import sms
 import weather
 import news
 
-app = FastAPI(title="ARIA", version="0.2.4")
+app = FastAPI(title="ARIA", version="0.2.5")
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -324,6 +325,7 @@ You have access to the following tools via function results provided in the cont
 - Visual Output: Matplotlib (charts/graphs), Graphviz (diagrams/flowcharts), SVG (vector graphics) — write a script, run it, then push the result. ALL output must be PNG format for phone compatibility: use savefig("output.png") for Matplotlib, dot -Tpng for Graphviz, and convert SVG to PNG (e.g. via cairosvg or Inkscape) before pushing.
 - Push to Phone: python ~/aria/push_image.py /path/to/image.png [--caption "description"] — displays the image on the phone immediately
 - File Input: The user can send you files (photos, screenshots, PDFs, text files) from their phone. These arrive as content blocks in the message. Analyze the file and respond conversationally. For food photos, check against the diet reference if available in context.
+- Twilio: All Twilio credentials are in config.py. Two auth methods available: (1) TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN for primary REST API Basic Auth (user=AccountSID, password=AuthToken), (2) TWILIO_API_SID + TWILIO_API_KEY for revocable API key Basic Auth (user=API SID, password=API Key). Prefer the API key pair for routine operations. Access via `import config`.
 - Images intended for the phone should be generated at 540x1212 resolution with no upscale. After generating any image, ALWAYS push it to the phone using push_image.py.
 - FLUX.2 step guidance: use fewer steps (12-16) for quick/casual images, more steps (24-30) for high-quality artistic content. Default to fewer steps unless the user asks for high quality.
 
@@ -1078,6 +1080,153 @@ async def ask_status(task_id: str, request: Request):
         return JSONResponse(status_code=200, content={"status": "done"})
 
 
+# --- SMS/MMS Webhook ---
+
+async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, str]]):
+    """Background worker for incoming SMS/MMS processing."""
+    try:
+        start = time.time()
+        file_blocks = []
+
+        # Download and process any MMS media attachments
+        for media_url, content_type in media_urls:
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(media_url, follow_redirects=True,
+                                            auth=(config.TWILIO_ACCOUNT_SID,
+                                                  config.TWILIO_AUTH_TOKEN))
+                    if resp.status_code == 200:
+                        # Extract filename from URL or use a default
+                        filename = media_url.split("/")[-1] or "attachment"
+                        if "." not in filename:
+                            ext = mimetypes.guess_extension(content_type) or ""
+                            filename += ext
+
+                        # Save to inbox
+                        inbox = config.DATA_DIR / "inbox"
+                        inbox.mkdir(parents=True, exist_ok=True)
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        saved_path = inbox / f"{ts}_sms_{filename}"
+                        saved_path.write_bytes(resp.content)
+
+                        file_blocks.extend(
+                            build_file_content(resp.content, filename, content_type)
+                        )
+            except Exception as e:
+                log.error("Failed to download MMS media: %s", e)
+
+        # Build context — same keyword-triggered injection as /ask
+        user_text = body if body else "The user sent a file via SMS."
+        ctx_parts = []
+        text_lower = user_text.lower()
+
+        # Nutrition context
+        nutrition_keywords = ["diet", "food", "eat", "ate", "meal",
+                              "lunch", "dinner", "breakfast", "snack",
+                              "nutrition", "calories", "factor", "nafld",
+                              "liver", "healthy", "ingredient"]
+        if any(kw in text_lower for kw in nutrition_keywords):
+            diet_ref = config.DATA_DIR / "diet_reference.md"
+            if diet_ref.exists():
+                ctx_parts.append("Diet reference:\n" + diet_ref.read_text())
+
+        # Always include calendar/reminder context
+        today = datetime.now().strftime("%Y-%m-%d")
+        events = calendar_store.get_events(start=today, end=today)
+        reminders = calendar_store.get_reminders()
+        if events:
+            ctx_parts.append("Today's events: " + "; ".join(
+                f"[id={e['id']}] {e['title']}" + (f" at {e['time']}" if e.get('time') else "")
+                for e in events
+            ))
+        if reminders:
+            ctx_parts.append("Active reminders: " + "; ".join(
+                f"[id={r['id']}] {r['text']}" + (f" (due {r['due']})" if r.get('due') else "")
+                for r in reminders
+            ))
+
+        extra_context = "\n".join(ctx_parts) if ctx_parts else ""
+
+        # Add note about SMS channel
+        sms_note = f"This message arrived via SMS from {from_number}. Respond concisely — SMS has character limits. Do not use markdown or special formatting."
+        if extra_context:
+            extra_context = sms_note + "\n" + extra_context
+        else:
+            extra_context = sms_note
+
+        response = await ask_claude(user_text, extra_context,
+                                    file_blocks if file_blocks else None)
+        response = process_actions(response)
+
+        # Split long responses into multiple SMS messages (160 char limit per segment,
+        # but Twilio handles concatenation up to 1600 chars)
+        if len(response) > 1600:
+            response = response[:1597] + "..."
+
+        sms.send_sms(from_number, response)
+
+        duration = time.time() - start
+        log_request(f"[sms:{from_number}] {user_text}", "ok",
+                    response=response, duration=duration)
+
+    except Exception as e:
+        log.exception("SMS processing error")
+        log_request(f"[sms:{from_number}] {body}", "error", error=str(e))
+        try:
+            sms.send_sms(from_number, "Sorry, something went wrong processing your message.")
+        except Exception:
+            pass
+
+
+@app.post("/sms")
+async def webhook_sms(request: Request):
+    """Twilio SMS/MMS webhook — receives incoming messages and responds via SMS."""
+    form = await request.form()
+    params = dict(form)
+
+    # Validate the request is from Twilio
+    # Use the configured public webhook URL (not request.url which is the local proxy address)
+    signature = request.headers.get("X-Twilio-Signature", "")
+    url = config.TWILIO_WEBHOOK_URL
+    if not sms.validate_request(url, params, signature):
+        log.warning("Invalid Twilio signature on SMS webhook")
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    from_number = params.get("From", "")
+    body = params.get("Body", "").strip()
+    num_media = int(params.get("NumMedia", "0"))
+
+    # Collect media URLs and types
+    media_urls = []
+    for i in range(num_media):
+        media_url = params.get(f"MediaUrl{i}", "")
+        content_type = params.get(f"MediaContentType{i}", "")
+        if media_url:
+            media_urls.append((media_url, content_type))
+
+    # Handle STOP/HELP keywords (required by A2P compliance)
+    if body.upper() == "STOP":
+        return Response(content="<Response></Response>", media_type="application/xml")
+    if body.upper() == "HELP":
+        help_text = ("ARIA — personal AI assistant. "
+                     "Text any message to interact. "
+                     "Reply STOP to unsubscribe.")
+        return Response(
+            content=f'<Response><Message>{help_text}</Message></Response>',
+            media_type="application/xml",
+        )
+
+    if not body and not media_urls:
+        return Response(content="<Response></Response>", media_type="application/xml")
+
+    # Process asynchronously — return empty TwiML immediately,
+    # then send the response as a new outbound message
+    asyncio.create_task(_process_sms(from_number, body, media_urls))
+
+    return Response(content="<Response></Response>", media_type="application/xml")
+
+
 @app.get("/snippet/{name}")
 async def get_snippet(name: str):
     """Serve a text snippet for easy copy-paste on phone."""
@@ -1091,4 +1240,4 @@ async def get_snippet(name: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=config.TAILSCALE_IP, port=config.PORT)
+    uvicorn.run(app, host="0.0.0.0", port=config.PORT)

@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.2.5] — 2026-03-19
+
+### SMS/MMS via Twilio & Tailscale Funnel
+
+ARIA now has a phone number (+1 262-475-1990) and can receive SMS and MMS messages. Outbound replies pending A2P 10DLC verification.
+
+### Added
+
+- **`sms.py`** — Twilio client wrapper with `send_sms()`, `send_to_owner()`, and webhook signature validation via `RequestValidator`
+- **`POST /sms` endpoint** — Twilio webhook for incoming SMS/MMS; validates signature, handles STOP/HELP compliance keywords, downloads MMS attachments to `data/inbox/`, processes through Claude with context injection, responds via outbound SMS
+- **Tailscale Funnel** — exposes `/webhook/*` at `https://beardos.tail847be6.ts.net/webhook/` to the public internet for Twilio webhooks; started with `tailscale funnel --bg --set-path /webhook 8450`
+- **Twilio credentials in config** — Account SID, Auth Token, API SID, API Key, Messaging Service SID, phone number, webhook URL, owner phone number
+- **GitHub Pages** — privacy policy and terms & conditions at `expectbugs.github.io/aria/` for A2P 10DLC compliance (`docs/privacy-policy.md`, `docs/terms-and-conditions.md`)
+- **`twilio` Python SDK** (v9.10.3) added to dependencies
+
+### Changed
+
+- **Daemon bind address** — changed from Tailscale IP only to `0.0.0.0` so Tailscale Funnel's localhost proxy can reach the daemon
+- **SMS context** — incoming SMS messages get calendar/reminder context and nutrition keyword detection (diet reference injection), same as voice and file input channels
+
+---
+
 ## [0.2.4] — 2026-03-18
 
 ### Specialist Modules, Debrief, File Input & Nutrition Tracking
