@@ -6,6 +6,105 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.3.7] — 2026-03-19
+
+### Unified Context Architecture
+
+Eliminated context injection gaps across all request paths. Every endpoint now uses the same `build_request_context()` function, ensuring ARIA has identical data availability regardless of whether a request arrives via voice, file upload, or SMS.
+
+### Fixed
+
+- `/ask/file` and `/sms` had incomplete context — missing weather, vehicle, timers, location, legal, projects, and Fitbit data depending on endpoint
+- SMS "good morning" / "good night" didn't trigger briefings or debriefs
+- MMS photos through SMS lacked health/nutrition context
+- Cross-domain queries (e.g. "calories burned vs eaten") could miss data when keywords only triggered one context silo
+
+### Added
+
+- `build_request_context()` — single unified async context builder used by all request paths
+- `gather_health_context()` — compact unified health snapshot (meals, nutrition, Fitbit, patterns, calorie balance)
+- Briefing/debrief detection in SMS handler
+- Incomplete tracking warning — flags when meals exist in diary without structured nutrition data
+
+---
+
+## [0.3.6] — 2026-03-19
+
+### Integrity & Reliability
+
+System prompt overhaul and code-level validation to ensure ARIA never claims actions she didn't take, never presents guesses as facts, and never hallucinations.
+
+### Fixed
+
+- ARIA claimed "logged!" for 15 nutrition label photos without emitting any ACTION blocks — data was never stored
+- Double audio response on file uploads — Claude ran `push_audio.py` AND the pipeline generated TTS
+- Fitbit `sedentaryMinutes` returned as string from API — crashed nudge evaluation with TypeError
+
+### Added
+
+- **ABSOLUTE RULES — INTEGRITY** section at top of system prompt: never lie, never guess-as-fact, never hallucinate, never claim unperformed actions
+- ACTION blocks explicitly marked MANDATORY for all data storage — conversation memory is NOT persistent
+- Claim-without-action detection in `process_actions()` — appends system note if response says "logged/stored/saved" but 0 actions found
+- Nutrition-specific claim detection — flags responses mentioning 3+ nutrient terms without a `log_nutrition` ACTION block
+- Per-request instruction on file uploads: "(Audio response is generated automatically — do NOT use push_audio.py)"
+- `push_audio.py` usage clarified in system prompt: only for SMS voice delivery, never for file uploads or voice requests
+
+---
+
+## [0.3.5] — 2026-03-19
+
+### Nutrition Tracking from Label Photos
+
+Structured per-item nutrition logging with daily totals, limit checking, and net calorie balance against Fitbit burn data.
+
+### Added
+
+- `nutrition_store.py` — 16 nutrient fields per item (FDA label format + omega-3), serving size tracking, daily totals, limit checking
+- `log_nutrition` / `delete_nutrition_entry` ACTION blocks in system prompt and `process_actions()`
+- `get_daily_totals()` — sums all items × servings for a day
+- `get_net_calories()` — intake minus Fitbit burn = net surplus/deficit
+- `check_limits()` — warns on approaching NAFLD limits (added sugar 36g, saturated fat 15g, sodium 1800mg)
+- `get_context()` — running daily totals with alerts for ARIA context injection
+- `get_weekly_summary()` — weekly averages for morning briefings
+- Nutrition context in morning briefings and evening debriefs
+- Nutrition nudge conditions in tick.py: sugar approaching limit, sodium high, evening calorie surplus
+- `NUTRITION_DB` path in config.py
+
+---
+
+## [0.3.4] — 2026-03-19
+
+### Fitbit Integration
+
+Pixel Watch 4 + Pixel 10a health data pulled into ARIA via Fitbit Web API. Exercise coaching with real-time heart rate monitoring.
+
+### Added
+
+- `fitbit.py` — Fitbit Web API client with auto token refresh, all data type fetchers, intraday HR, subscription management
+- `fitbit_store.py` — JSON-backed daily snapshots, sleep/HR/HRV/SpO2/activity summaries, exercise mode with Karvonen HR zones, coaching context
+- `fitbit_auth.py` — one-time OAuth2 PKCE authorization flow
+- Data types: HR (resting + 1-sec intraday), HRV (RMSSD), SpO2, sleep stages, activity/steps/calories, breathing rate, skin temp, VO2 Max
+- Exercise coaching mode — explicit activation via ACTION block, 1-min HR polling, voice coaching nudges every 5 min, milestone nudges, safety alerts, 90-min auto-expire
+- Fitbit tick polling — 15-min full snapshots during waking hours via `process_fitbit_poll()`
+- Fitbit-aware nudges: poor sleep (<5h), resting HR anomaly (10+ bpm above 7-day avg), sedentary (2h+), afternoon activity encouragement (<3k steps)
+- Daemon endpoints: `POST /fitbit/sync`, `POST /fitbit/subscribe`, `POST /fitbit/exercise-hr`, `GET/POST /webhook/fitbit`
+- Fitbit data in morning briefings, evening debriefs, and health-keyword queries
+- `start_exercise` / `end_exercise` ACTION blocks
+- Fitbit config: `FITBIT_CLIENT_ID`, `FITBIT_CLIENT_SECRET`, `FITBIT_REDIRECT_URI`, `FITBIT_TOKEN_FILE`, `FITBIT_DB_DIR`, `FITBIT_WEBHOOK_VERIFY`, `FITBIT_SCOPES`, `FITBIT_EXERCISE_FILE`
+
+---
+
+## [0.3.3] — 2026-03-19
+
+### Outbound SMS Logging & Image Generation
+
+### Added
+
+- Every outbound SMS logged to `data/sms_outbound.jsonl` with timestamp, recipient, exact body text, media URL, and Twilio SID
+- 4K image workflow in system prompt: generate at 1920x1080 then upscale, not stretch phone resolution
+
+---
+
 ## [0.3.2] — 2026-03-19
 
 ### System Prompt Optimization & Missing Functionality

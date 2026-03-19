@@ -50,6 +50,7 @@ REMINDERS_DB = DATA_DIR / "reminders.json"
 VEHICLE_DB = DATA_DIR / "vehicle.json"
 HEALTH_DB = DATA_DIR / "health.json"
 LEGAL_DB = DATA_DIR / "legal.json"
+NUTRITION_DB = DATA_DIR / "nutrition.json"
 
 # --- Weather (NWS API, free, no key needed) ---
 WEATHER_LAT = 42.58
@@ -97,6 +98,19 @@ TWILIO_MESSAGING_SID = "your-messaging-service-sid"   # Messaging Service for SM
 TWILIO_PHONE_NUMBER = "+1XXXXXXXXXX"                  # ARIA's phone number
 TWILIO_WEBHOOK_URL = "https://host.tail.ts.net/webhook/sms"  # Public funnel URL for signature validation
 OWNER_PHONE_NUMBER = "+1XXXXXXXXXX"                   # Your personal phone number
+
+# --- Fitbit (Web API — Personal app, register at dev.fitbit.com) ---
+FITBIT_CLIENT_ID = "your-client-id"               # OAuth 2.0 Client ID
+FITBIT_CLIENT_SECRET = "your-client-secret"         # Client Secret
+FITBIT_REDIRECT_URI = "https://localhost:8000/callback"
+FITBIT_TOKEN_FILE = DATA_DIR / "fitbit_tokens.json"  # auto-managed OAuth tokens
+FITBIT_DB_DIR = DATA_DIR / "fitbit"                   # daily JSON files per data type
+FITBIT_WEBHOOK_VERIFY = "aria-fitbit-verify"          # subscriber verification code
+FITBIT_EXERCISE_FILE = DATA_DIR / "fitbit_exercise.json"  # exercise mode state
+FITBIT_SCOPES = [                                     # data types to request access to
+    "activity", "heartrate", "sleep", "oxygen_saturation",
+    "respiratory_rate", "temperature", "weight", "profile",
+]
 
 # --- Hardware capabilities ---
 # Set based on what this machine can do. Daemon checks these at runtime.

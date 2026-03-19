@@ -1,8 +1,10 @@
 """Twilio SMS/MMS integration for ARIA."""
 
+import json
 import logging
 import shutil
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from twilio.rest import Client
@@ -62,6 +64,22 @@ def send_sms(to: str, body: str, media_url: str | None = None) -> str:
 
     message = client.messages.create(**kwargs)
     log.info("SMS sent to %s (sid=%s)", to, message.sid)
+
+    # Log every outbound message with its exact text
+    outbound_log = config.DATA_DIR / "sms_outbound.jsonl"
+    try:
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "to": to,
+            "body": body,
+            "media_url": media_url,
+            "sid": message.sid,
+        }
+        with open(outbound_log, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        log.error("Failed to log outbound SMS: %s", e)
+
     return message.sid
 
 

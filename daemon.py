@@ -26,8 +26,11 @@ import projects
 import sms
 import weather
 import news
+import fitbit
+import fitbit_store
+import nutrition_store
 
-app = FastAPI(title="ARIA", version="0.3.2")
+app = FastAPI(title="ARIA", version="0.3.7")
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -83,6 +86,261 @@ def _get_today_requests() -> list[dict]:
         except json.JSONDecodeError:
             continue
     return entries
+
+
+async def build_request_context(text: str, is_image: bool = False) -> str:
+    """Build keyword-triggered context for ANY ARIA request.
+
+    This is the single unified context builder. Called from /ask, /ask/file,
+    and /sms to ensure identical behavior regardless of input channel.
+    Handles briefings, debriefs, and all keyword-triggered data injection.
+
+    Returns (context_string, is_briefing_or_debrief).
+    """
+    text_lower = text.lower()
+    ctx_parts = []
+
+    # --- Weather ---
+    weather_keywords = ["weather", "temperature", "forecast", "rain",
+                        "snow", "storm", "wind", "cold", "hot", "warm",
+                        "outside", "umbrella"]
+    if any(kw in text_lower for kw in weather_keywords):
+        try:
+            current = await weather.get_current_conditions()
+            forecast = await weather.get_forecast()
+            alerts = await weather.get_alerts()
+            ctx_parts.append(
+                f"Current weather: {current['description']}, "
+                f"{current['temperature_f']}°F, "
+                f"humidity {current['humidity']:.0f}%, "
+                f"wind {current['wind_mph']} mph"
+            )
+            ctx_parts.append("Forecast: " + "; ".join(
+                f"{p['name']}: {p['temperature']}°{p['unit']} {p['summary']}"
+                for p in forecast
+            ))
+            if alerts:
+                ctx_parts.append("Alerts: " + "; ".join(
+                    f"{a['event']}: {a['headline']}" for a in alerts
+                ))
+        except Exception as e:
+            ctx_parts.append(f"Weather data unavailable: {e}")
+
+    # --- Calendar & Reminders (always injected) ---
+    today = datetime.now().strftime("%Y-%m-%d")
+    week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+    calendar_keywords = ["calendar", "schedule", "week", "appointment",
+                         "event", "plan", "busy"]
+    if any(kw in text_lower for kw in calendar_keywords):
+        events = calendar_store.get_events(start=today, end=week_end)
+    else:
+        events = calendar_store.get_events(start=today, end=today)
+
+    reminders = calendar_store.get_reminders()
+    if events:
+        ctx_parts.append("Events: " + "; ".join(
+            f"[id={e['id']}] {e['date']} {e['title']}"
+            + (f" at {e['time']}" if e.get('time') else "")
+            for e in events
+        ))
+    if reminders:
+        ctx_parts.append("Active reminders: " + "; ".join(
+            f"[id={r['id']}] {r['text']}"
+            + (f" (due {r['due']})" if r.get('due') else "")
+            for r in reminders
+        ))
+
+    # --- Vehicle ---
+    vehicle_keywords = ["xterra", "vehicle", "car", "truck", "oil",
+                        "maintenance", "mileage", "tire", "brake"]
+    if any(kw in text_lower for kw in vehicle_keywords):
+        v_entries = vehicle_store.get_entries(limit=10)
+        if v_entries:
+            ctx_parts.append("Vehicle log: " + "; ".join(
+                f"[id={v['id']}] {v['date']} {v['event_type']}: {v['description']}"
+                + (f" ({v['mileage']} mi)" if v.get("mileage") else "")
+                for v in v_entries
+            ))
+        latest = vehicle_store.get_latest_by_type()
+        if latest:
+            ctx_parts.append("Latest per service type: " + "; ".join(
+                f"{t}: {e['date']}" + (f" at {e['mileage']} mi" if e.get("mileage") else "")
+                for t, e in latest.items()
+            ))
+
+    # --- Health + Nutrition + Fitness (unified) ---
+    health_nutrition_keywords = [
+        "health", "body", "pain", "sleep", "slept", "exercise",
+        "symptom", "headache", "back", "sore", "body log", "medication",
+        "heart rate", "heart", "hrv", "spo2", "oxygen", "steps",
+        "active", "fitbit", "vo2", "cardio", "resting", "workout",
+        "diet", "food", "eat", "ate", "meal", "lunch", "dinner",
+        "breakfast", "snack", "smoothie", "nutrition", "calories",
+        "factor", "nafld", "liver", "sugar", "protein", "fiber",
+        "sodium", "fat", "carb", "vitamin", "omega", "label",
+        "weight", "deficit", "surplus", "burn",
+    ]
+    if is_image or any(kw in text_lower for kw in health_nutrition_keywords):
+        health_ctx = gather_health_context()
+        if health_ctx:
+            ctx_parts.append(health_ctx)
+
+        diet_ref = config.DATA_DIR / "diet_reference.md"
+        if diet_ref.exists():
+            ctx_parts.append("Diet reference:\n" + diet_ref.read_text())
+
+        h_entries = health_store.get_entries(days=14)
+        if h_entries:
+            ctx_parts.append("Health log (last 14 days): " + "; ".join(
+                f"[id={h['id']}] {h['date']} {h['category']}: {h['description']}"
+                + (f" (severity {h['severity']}/10)" if h.get("severity") else "")
+                + (f" ({h['sleep_hours']}h sleep)" if h.get("sleep_hours") else "")
+                for h in h_entries
+            ))
+
+        fitbit_trend = fitbit_store.get_trend(days=7)
+        if fitbit_trend:
+            ctx_parts.append(fitbit_trend)
+
+    # --- Projects ---
+    project_keywords = ["project update", "project status", "project brief",
+                        "status of", "update on"]
+    if any(kw in text_lower for kw in project_keywords):
+        available = projects.list_projects()
+        if available:
+            match = projects.find_project(text)
+            if match:
+                name, contents = match
+                ctx_parts.append(f"Project brief for '{name}':\n{contents}")
+            else:
+                ctx_parts.append("Available project briefs: " + ", ".join(available))
+        else:
+            ctx_parts.append("No project briefs found in data/projects/. "
+                             "Create one by writing a markdown file there.")
+
+    # --- Timers ---
+    timer_keywords = ["timer", "alarm", "remind me in", "tell me when",
+                      "set a timer", "cancel timer", "wake me",
+                      "how long", "minutes", "countdown"]
+    if any(kw in text_lower for kw in timer_keywords):
+        active_timers = timer_store.get_active()
+        if active_timers:
+            ctx_parts.append("Active timers: " + "; ".join(
+                f"[id={t['id']}] {t['label']} — fires at {t['fire_at'][11:16]}"
+                f" ({t['delivery']})"
+                for t in active_timers
+            ))
+
+    # --- Location ---
+    location_keywords = ["where am i", "where i am", "location",
+                         "how far", "near me", "close to",
+                         "my location", "where are you"]
+    if any(kw in text_lower for kw in location_keywords):
+        loc = location_store.get_latest()
+        if loc:
+            loc_name = loc.get("location", f"{loc['lat']:.4f}, {loc['lon']:.4f}")
+            ctx_parts.append(
+                f"User's last known location: {loc_name}"
+                f" ({loc['lat']:.4f}, {loc['lon']:.4f})"
+                f" (as of {loc['timestamp'][11:16]})"
+            )
+            if loc.get("battery_pct") is not None:
+                ctx_parts.append(f"Phone battery: {loc['battery_pct']}%")
+            history = location_store.get_history(hours=4)
+            if len(history) > 1:
+                def _loc_label(h):
+                    name = h.get("location")
+                    return name if name else f"{h['lat']:.4f},{h['lon']:.4f}"
+                ctx_parts.append("Recent movement (last 4 hours): " + "; ".join(
+                    f"{h['timestamp'][11:16]} → {_loc_label(h)}"
+                    for h in history[-12:]
+                ))
+
+    # --- Legal ---
+    legal_keywords = ["case", "legal", "court", "lawyer", "attorney",
+                      "walworth", "filing", "case update"]
+    if any(kw in text_lower for kw in legal_keywords):
+        l_entries = legal_store.get_entries(limit=10)
+        if l_entries:
+            ctx_parts.append("Legal case log: " + "; ".join(
+                f"[id={l['id']}] {l['date']} {l['entry_type']}: {l['description']}"
+                for l in l_entries
+            ))
+        upcoming = legal_store.get_upcoming_dates()
+        if upcoming:
+            ctx_parts.append("Upcoming legal dates: " + "; ".join(
+                f"{u['date']}: {u['description']}" for u in upcoming
+            ))
+
+    return "\n".join(ctx_parts) if ctx_parts else ""
+
+
+def gather_health_context() -> str:
+    """Build a compact, unified health snapshot for any health/nutrition query.
+
+    This is the single source of truth for ARIA's health awareness. Used across
+    all request paths (voice, file upload, SMS) to ensure consistent, complete
+    context regardless of how a request arrives.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    parts = []
+
+    # Today's meal diary (health_store — what's been eaten)
+    meals_today = [m for m in health_store.get_entries(days=1, category="meal")
+                   if m.get("date") == today]
+    if meals_today:
+        parts.append("Meals consumed today: " + "; ".join(
+            f"{m['meal_type']}: {m['description']}" for m in meals_today
+        ))
+
+    # Structured nutrition tracking (nutrition_store — numeric data)
+    nutrition_ctx = nutrition_store.get_context(today)
+    if nutrition_ctx:
+        parts.append(nutrition_ctx)
+
+    # Flag incomplete tracking: meals in diary without structured nutrition data
+    nutrition_items = nutrition_store.get_items(day=today)
+    diary_count = len(meals_today)
+    nutrition_count = len([n for n in nutrition_items
+                          if n.get("notes", "").upper().find("PANTRY") == -1])
+    if diary_count > 0 and nutrition_count < diary_count:
+        parts.append(f"Note: {diary_count} meal(s) in diary but only {nutrition_count} "
+                     f"have structured nutrition data — calorie totals may be incomplete.")
+
+    # Fitbit data — today's vitals and activity
+    fitbit_ctx = fitbit_store.get_briefing_context(today)
+    if fitbit_ctx:
+        parts.append(fitbit_ctx)
+
+    # Net calorie balance (needs both nutrition intake and Fitbit burn)
+    net = nutrition_store.get_net_calories(today)
+    if net["consumed"] > 0 and net["burned"] > 0:
+        parts.append(
+            f"Calorie balance: {net['consumed']} consumed - {net['burned']} burned "
+            f"= {net['net']} net (target deficit: 500-1,000)"
+        )
+
+    # Health patterns (last 7 days)
+    patterns = health_store.get_patterns(days=7)
+    if patterns:
+        parts.append("Health patterns (7d): " + "; ".join(patterns))
+
+    # Diet day counter
+    diet_start = date(2026, 3, 17)
+    diet_day = (datetime.now().date() - diet_start).days + 1
+    if diet_day > 0:
+        parts.append(f"Diet day {diet_day}")
+
+    # Exercise mode
+    exercise = fitbit_store.get_exercise_state()
+    if exercise:
+        parts.append(fitbit_store.get_exercise_coaching_context())
+
+    if not parts:
+        return ""
+
+    return "\n".join(parts)
 
 
 async def gather_debrief_context() -> str:
@@ -152,21 +410,31 @@ async def gather_debrief_context() -> str:
         for p in health_patterns:
             parts.append(f"  - {p}")
 
-    # Meals logged today
-    meals_today = [m for m in health_store.get_entries(days=1, category="meal")
-                   if m.get("date") == today]
-    if meals_today:
-        parts.append("\nMeals logged today:")
-        for m in meals_today:
-            parts.append(f"  - {m['description']}")
+    # Nutrition tracking — structured daily totals
+    nutrition_ctx = nutrition_store.get_context(today)
+    if nutrition_ctx:
+        parts.append(f"\n{nutrition_ctx}")
     else:
-        parts.append("\nNo meals logged today.")
+        # Fall back to health_store meal diary
+        meals_today = [m for m in health_store.get_entries(days=1, category="meal")
+                       if m.get("date") == today]
+        if meals_today:
+            parts.append("\nMeals logged today:")
+            for m in meals_today:
+                parts.append(f"  - {m['description']}")
+        else:
+            parts.append("\nNo meals logged today.")
 
     # Diet day counter
     diet_start = date(2026, 3, 17)
     diet_day = (now.date() - diet_start).days + 1
     if diet_day > 0:
         parts.append(f"\nDiet day {diet_day}")
+
+    # Fitbit — today's activity and health data
+    fitbit_ctx = fitbit_store.get_briefing_context(today)
+    if fitbit_ctx:
+        parts.append(f"\n{fitbit_ctx}")
 
     legal_today = [l for l in legal_store.get_entries()
                    if l.get("date") == today]
@@ -279,11 +547,24 @@ async def gather_briefing_context() -> str:
         for p in health_patterns:
             parts.append(f"  - {p}")
 
+    # Nutrition — weekly summary for briefing
+    weekly_nutrition = nutrition_store.get_weekly_summary()
+    if weekly_nutrition:
+        parts.append(f"\n{weekly_nutrition}")
+
     # Diet — day count since diet start (March 17, 2026)
     diet_start = date(2026, 3, 17)
     diet_day = (now.date() - diet_start).days + 1
     if diet_day > 0:
         parts.append(f"\nDiet day {diet_day} (started March 17, 2026)")
+
+    # Fitbit health data
+    fitbit_ctx = fitbit_store.get_briefing_context(today)
+    if fitbit_ctx:
+        parts.append(f"\n{fitbit_ctx}")
+    fitbit_trend = fitbit_store.get_trend(days=7)
+    if fitbit_trend:
+        parts.append(f"\n{fitbit_trend}")
 
     # Location — latest known position
     loc = location_store.get_latest()
@@ -321,6 +602,13 @@ def build_system_prompt() -> str:
     return f"""You are ARIA (Ambient Reasoning & Intelligence Assistant), a personal voice assistant for {name}.
 You are warm, natural, and conversational — like a trusted friend who happens to be brilliant. Use contractions, casual phrasing, natural rhythm. No markdown, no bullet points, no code blocks unless asked. Don't end responses with "would you like me to..." or "anything else?"
 
+ABSOLUTE RULES — INTEGRITY:
+1. NEVER claim you did something unless you actually did it. If you say "logged" or "stored" or "saved," it MUST mean you emitted an ACTION block in this response. Your conversation memory is NOT persistent storage — it is lost between sessions. The ONLY way to persistently store data is via ACTION blocks.
+2. NEVER present a guess as fact. If you are not certain, say "I think" or "I'm not sure but." If you cannot verify, say so. DO NOT fill gaps with plausible-sounding but unverified information.
+3. NEVER hallucinate facts, data, numbers, or capabilities. If you don't know, say "I don't know." If you can't do something, say so. Wrong information is worse than no information.
+4. If something failed or you couldn't complete a task, say so clearly. Do not downplay or hide failures.
+These rules are non-negotiable. {name} depends on ARIA for life decisions — health, legal, financial. Inaccurate information is dangerous.
+
 IMPORTANT: If {name} asks a question, ONLY answer it. Do NOT take action unless explicitly told to. "Can you do X?" gets an answer, not the action. "Do X" gets the action.
 Exception: when {name} describes eating something specific ("I had the salmon for lunch"), log it as a meal without asking.
 
@@ -344,16 +632,17 @@ Channels: requests arrive via voice (Tasker), file share (AutoShare), or SMS/MMS
 Tools:
 - Image Gen: `python ~/imgen/generate.py "prompt" [--steps N] [--seed N] [--width W] [--height H] [--output path.png]` (12-16 steps quick, 24-30 high quality)
 - Upscale: `~/upscale/upscale4k.sh input.png [output.png]`
+- 4K workflow: when user asks for a 4K image, generate at 1920x1080 (--width 1920 --height 1080) then upscale. Do NOT generate at phone resolution and upscale — that just stretches a small image.
 - Visual: Matplotlib, Graphviz, SVG — output must be PNG for phone
 - Push Image: `python ~/aria/push_image.py /path/to/image.png [--caption "..."]`
-- Push Audio: `python ~/aria/push_audio.py /path/to/audio.wav` (only when user explicitly requests voice delivery)
+- Push Audio: `python ~/aria/push_audio.py /path/to/audio.wav` (only for SMS conversations when user requests voice. NEVER use push_audio for file uploads or voice requests — those pipelines generate and deliver audio automatically)
 - SMS: `python -c "import sms; sms.send_to_owner('text')"` — MMS: `python -c "import sms; sms.send_mms(config.OWNER_PHONE_NUMBER, 'caption', '/path/to/image.png')"`
 - Phone images: 540x1212 resolution, no upscale.
 - File Input: photos, PDFs, text files arrive as content blocks. For food photos, check against diet reference.
 - Location: GPS every 5 min with reverse geocoding. Position and history injected on location keywords.
 - Project briefs: markdown in data/projects/. Summarize conversationally. Create/update via shell.
 
-ACTION blocks — place at the END of your response. Use ONLY exact IDs from context (e.g. [id=a3f8b2c1]). Never guess an ID. If you can't find the ID, tell """ + name + """.
+ACTION blocks — MANDATORY for any data storage. Place at the END of your response. Without an ACTION block, data is NOT saved — no exceptions. Do NOT use shell commands, file writes, or conversation memory as a substitute for ACTION blocks. Use ONLY exact IDs from context (e.g. [id=a3f8b2c1]). Never guess an ID. If you can't find the ID, tell """ + name + """.
 """ + """
 Calendar:
 <!--ACTION::{"action": "add_event", "title": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}-->
@@ -375,6 +664,10 @@ Health — severity (1-10) for pain/symptoms, sleep_hours for sleep, meal_type f
 <!--ACTION::{"action": "log_health", "date": "YYYY-MM-DD", "category": "pain|sleep|exercise|symptom|medication|meal|nutrition|general", "description": "...", "severity": 7, "sleep_hours": 6.5, "meal_type": "breakfast|lunch|dinner|snack"}-->
 <!--ACTION::{"action": "delete_health_entry", "id": "..."}-->
 
+Nutrition — ALWAYS log when """ + name + """ sends a nutrition label photo or describes eating something. Extract ALL nutrients from the label. Use null for values not on the label, not 0. Store values PER SERVING as printed. Ask about servings consumed if ambiguous (but for Factor/CookUnity single-container meals, assume 1 serving = whole container). After logging, report the running daily totals and any limit warnings. Also log a brief health_store meal entry for the food diary.
+<!--ACTION::{"action": "log_nutrition", "food_name": "...", "meal_type": "breakfast|lunch|dinner|snack", "servings": 1.0, "serving_size": "1 container (283g)", "source": "label_photo|manual|estimate", "nutrients": {"calories": 450, "total_fat_g": 18, "saturated_fat_g": 5, "trans_fat_g": 0, "cholesterol_mg": 95, "sodium_mg": 680, "total_carb_g": 32, "dietary_fiber_g": 6, "total_sugars_g": 8, "added_sugars_g": 2, "protein_g": 38, "vitamin_d_mcg": null, "calcium_mg": null, "iron_mg": null, "potassium_mg": null, "omega3_mg": null}, "notes": ""}-->
+<!--ACTION::{"action": "delete_nutrition_entry", "id": "..."}-->
+
 Legal — SENSITIVE. Never reference unless """ + name + """ brings it up:
 <!--ACTION::{"action": "log_legal", "date": "YYYY-MM-DD", "entry_type": "development|filing|contact|note|court_date|deadline", "description": "...", "contacts": ["name"]}-->
 <!--ACTION::{"action": "delete_legal_entry", "id": "..."}-->
@@ -384,6 +677,13 @@ Timers — "minutes" for relative, "time" (HH:MM 24h) for absolute today. Delive
 <!--ACTION::{"action": "set_timer", "label": "...", "time": "14:30", "delivery": "sms", "message": "..."}-->
 <!--ACTION::{"action": "cancel_timer", "id": "..."}-->
 When setting a timer, confirm the exact fire time and delivery method.
+
+Exercise — ONLY activate when """ + name + """ explicitly says he's going to exercise or asks for coaching. NEVER auto-detect:
+<!--ACTION::{"action": "start_exercise", "exercise_type": "stationary_bike|walking|general"}-->
+<!--ACTION::{"action": "end_exercise"}-->
+When exercise starts, confirm activation and the target heart rate zones. During exercise mode, ARIA polls HR every minute and sends coaching nudges via voice. Mode auto-expires after 90 minutes.
+
+Fitbit health data is available in context for health-related queries. """ + name + """'s target HR zones are computed from resting HR and age using the Karvonen formula. When discussing fitness data, be encouraging and contextualize against his NAFLD recovery and spinal health goals.
 
 "Good morning" → full morning briefing from context. Be warm, cover everything, acknowledge diet day milestones.
 "Good night" → evening debrief: today's summary, meals logged, pending items, tomorrow's prep, offer to set alarm. Keep it warm — this is a wind-down.
@@ -600,20 +900,26 @@ async def ask_claude(user_text: str, extra_context: str = "",
 
 # --- Action Processing ---
 
-def process_actions(response_text: str) -> str:
+def process_actions(response_text: str, expect_actions: list[str] | None = None) -> str:
     """Extract and execute ACTION blocks from Claude's response.
 
     Returns the cleaned response, replacing it with an error message
     if any actions failed so the user isn't told something worked when it didn't.
+
+    expect_actions: optional list of action types that SHOULD be present
+                    (e.g. ["log_nutrition"] for nutrition label photos).
+                    If expected actions are missing, a warning is appended.
     """
     import re
     actions = re.findall(r'<!--ACTION::(\{.*?\})-->', response_text)
     failures = []
+    action_types_found = []
 
     for action_json in actions:
         try:
             action = json.loads(action_json)
             act = action.get("action")
+            action_types_found.append(act)
 
             if act == "add_event":
                 calendar_store.add_event(
@@ -702,6 +1008,26 @@ def process_actions(response_text: str) -> str:
             elif act == "cancel_timer":
                 if not timer_store.cancel_timer(action["id"]):
                     failures.append("Couldn't cancel timer — no active timer found with that ID.")
+            elif act == "log_nutrition":
+                nutrition_store.add_item(
+                    food_name=action["food_name"],
+                    meal_type=action.get("meal_type", "snack"),
+                    nutrients=action.get("nutrients", {}),
+                    servings=action.get("servings", 1.0),
+                    serving_size=action.get("serving_size", ""),
+                    source=action.get("source", "label_photo"),
+                    notes=action.get("notes", ""),
+                    entry_date=action.get("date"),
+                    entry_time=action.get("time"),
+                )
+            elif act == "delete_nutrition_entry":
+                if not nutrition_store.delete_item(action["id"]):
+                    failures.append("Couldn't delete nutrition entry — no entry found with that ID.")
+            elif act == "start_exercise":
+                exercise_type = action.get("exercise_type", "general")
+                fitbit_store.start_exercise(exercise_type)
+            elif act == "end_exercise":
+                fitbit_store.end_exercise("user ended")
         except Exception as e:
             failures.append(f"Action failed: {e}")
             log_request("ACTION", "error", error=str(e))
@@ -712,6 +1038,41 @@ def process_actions(response_text: str) -> str:
     if failures:
         log_request("ACTION", "error", error="; ".join(failures))
         clean_response = "Sorry, something went wrong. " + " ".join(failures) + " Please try again."
+
+    # Validate: if specific actions were expected but not found, warn
+    if expect_actions:
+        missing = [a for a in expect_actions if a not in action_types_found]
+        if missing:
+            warning = (
+                "WARNING: I expected to store data but no ACTION blocks were emitted. "
+                "The data was NOT actually saved. Missing actions: "
+                + ", ".join(missing) + ". Please try again."
+            )
+            log_request("ACTION_MISSING", "error",
+                        error=f"Expected {missing}, got {action_types_found}")
+            clean_response = warning
+
+    # Detect claim-without-action: response says data was stored but no actions found
+    if not actions:
+        claim_words = re.findall(
+            r'\b(logged|stored|saved|recorded|added to|tracked|captured|noted and logged)\b',
+            clean_response, re.IGNORECASE
+        )
+        # Also detect nutrition-specific claims: mentions 3+ nutrient terms
+        # without a log_nutrition action (Claude extracted data but didn't store it)
+        nutrient_terms = re.findall(
+            r'\b(calories|protein|carb|fat|sodium|fiber|sugar|cholesterol|potassium)\b',
+            clean_response, re.IGNORECASE
+        )
+        if len(set(t.lower() for t in nutrient_terms)) >= 3:
+            claim_words.append("nutrition_data_extracted")
+        if claim_words:
+            clean_response += (
+                "\n\n(System note: ARIA claimed to store data but no ACTION blocks "
+                "were emitted. The data may not have been saved. Please verify or retry.)"
+            )
+            log_request("CLAIM_WITHOUT_ACTION", "warning",
+                        error=f"Response claims '{claim_words}' but 0 actions found")
 
     return clean_response
 
@@ -755,6 +1116,75 @@ async def update_location(loc: LocationUpdate, request: Request):
             "location": entry.get("location", "")}
 
 
+# --- Fitbit Webhook ---
+
+@app.post("/fitbit/subscribe")
+async def fitbit_subscribe(request: Request):
+    """Register Fitbit webhook subscription. Run once after auth."""
+    verify_auth(request)
+    client = fitbit.get_client()
+    result = await client.create_subscription()
+    subs = await client.list_subscriptions()
+    return {"result": result, "active_subscriptions": subs}
+
+
+@app.post("/fitbit/exercise-hr")
+async def fitbit_exercise_hr(request: Request):
+    """Fetch recent intraday HR for exercise coaching. Used by tick.py."""
+    verify_auth(request)
+    client = fitbit.get_client()
+    readings = await client.get_recent_heart_rate(minutes=2)
+    return {"readings": readings}
+
+
+@app.get("/webhook/fitbit")
+async def fitbit_webhook_verify(verify: str = ""):
+    """Fitbit subscription verification — responds to GET with the verification code."""
+    if verify == config.FITBIT_WEBHOOK_VERIFY:
+        return Response(content=verify, media_type="text/plain")
+    raise HTTPException(status_code=404, detail="Invalid verification code")
+
+
+@app.post("/fitbit/sync")
+async def fitbit_sync(request: Request):
+    """Manually trigger a Fitbit data fetch. Useful for initial pull and testing."""
+    verify_auth(request)
+    client = fitbit.get_client()
+    today = datetime.now().strftime("%Y-%m-%d")
+    snapshot = await client.fetch_daily_snapshot(today)
+    fitbit_store.save_snapshot(snapshot)
+    return {"status": "ok", "date": today, "keys": [k for k in snapshot if snapshot[k]]}
+
+
+@app.post("/webhook/fitbit")
+async def fitbit_webhook(request: Request):
+    """Fitbit subscription notification — data changed, fetch updates."""
+    body = await request.json()
+    log.info("Fitbit webhook: %s", json.dumps(body)[:200])
+
+    # Fitbit sends a list of notifications like:
+    # [{"collectionType": "activities", "date": "2026-03-19", "ownerId": "...", ...}]
+    # Fetch fresh data for each unique date mentioned
+    dates = set()
+    for notification in body:
+        d = notification.get("date")
+        if d:
+            dates.add(d)
+
+    if not dates:
+        dates.add("today")
+
+    client = fitbit.get_client()
+    for day in dates:
+        try:
+            snapshot = await client.fetch_daily_snapshot(day)
+            fitbit_store.save_snapshot(snapshot)
+        except Exception as e:
+            log.error("Fitbit fetch failed for %s: %s", day, e)
+
+    return Response(status_code=204)
+
+
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest, request: Request):
     start = time.time()
@@ -781,187 +1211,7 @@ async def ask(req: AskRequest, request: Request):
         elif is_debrief:
             extra_context = await gather_debrief_context()
         else:
-            ctx_parts = []
-
-            # Check if this is a weather-related query
-            weather_keywords = ["weather", "temperature", "forecast", "rain",
-                                "snow", "storm", "wind", "cold", "hot", "warm",
-                                "outside", "umbrella"]
-            if any(kw in text.lower() for kw in weather_keywords):
-                try:
-                    current = await weather.get_current_conditions()
-                    forecast = await weather.get_forecast()
-                    alerts = await weather.get_alerts()
-                    ctx_parts.append(
-                        f"Current weather: {current['description']}, "
-                        f"{current['temperature_f']}°F, "
-                        f"humidity {current['humidity']:.0f}%, "
-                        f"wind {current['wind_mph']} mph"
-                    )
-                    ctx_parts.append("Forecast: " + "; ".join(
-                        f"{p['name']}: {p['temperature']}°{p['unit']} {p['summary']}"
-                        for p in forecast
-                    ))
-                    if alerts:
-                        ctx_parts.append("Alerts: " + "; ".join(
-                            f"{a['event']}: {a['headline']}" for a in alerts
-                        ))
-                except Exception as e:
-                    ctx_parts.append(f"Weather data unavailable: {e}")
-
-            # Always provide calendar/reminder context
-            today = datetime.now().strftime("%Y-%m-%d")
-            week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
-
-            # Check if this is a calendar query for a broader range
-            calendar_keywords = ["calendar", "schedule", "week", "appointment",
-                                 "event", "plan", "busy"]
-            if any(kw in text.lower() for kw in calendar_keywords):
-                events = calendar_store.get_events(start=today, end=week_end)
-            else:
-                events = calendar_store.get_events(start=today, end=today)
-
-            reminders = calendar_store.get_reminders()
-            if events:
-                ctx_parts.append("Events: " + "; ".join(
-                    f"[id={e['id']}] {e['date']} {e['title']}" + (f" at {e['time']}" if e.get('time') else "")
-                    for e in events
-                ))
-            if reminders:
-                ctx_parts.append("Active reminders: " + "; ".join(
-                    f"[id={r['id']}] {r['text']}" + (f" (due {r['due']})" if r.get('due') else "")
-                    for r in reminders
-                ))
-
-            # Vehicle maintenance context
-            vehicle_keywords = ["xterra", "vehicle", "car", "truck", "oil",
-                                "maintenance", "mileage", "tire", "brake"]
-            if any(kw in text.lower() for kw in vehicle_keywords):
-                v_entries = vehicle_store.get_entries(limit=10)
-                if v_entries:
-                    ctx_parts.append("Vehicle log: " + "; ".join(
-                        f"[id={v['id']}] {v['date']} {v['event_type']}: {v['description']}"
-                        + (f" ({v['mileage']} mi)" if v.get("mileage") else "")
-                        for v in v_entries
-                    ))
-                latest = vehicle_store.get_latest_by_type()
-                if latest:
-                    ctx_parts.append("Latest per service type: " + "; ".join(
-                        f"{t}: {e['date']}" + (f" at {e['mileage']} mi" if e.get("mileage") else "")
-                        for t, e in latest.items()
-                    ))
-
-            # Health context
-            health_keywords = ["health", "body", "pain", "sleep", "slept",
-                               "exercise", "symptom", "headache", "back",
-                               "sore", "body log", "medication"]
-            if any(kw in text.lower() for kw in health_keywords):
-                h_entries = health_store.get_entries(days=14)
-                if h_entries:
-                    ctx_parts.append("Health log (last 14 days): " + "; ".join(
-                        f"[id={h['id']}] {h['date']} {h['category']}: {h['description']}"
-                        + (f" (severity {h['severity']}/10)" if h.get("severity") else "")
-                        + (f" ({h['sleep_hours']}h sleep)" if h.get("sleep_hours") else "")
-                        for h in h_entries
-                    ))
-                patterns = health_store.get_patterns(days=7)
-                if patterns:
-                    ctx_parts.append("Health patterns: " + "; ".join(patterns))
-
-            # Nutrition / diet context — inject diet reference
-            nutrition_keywords = ["diet", "food", "eat", "ate", "meal",
-                                  "lunch", "dinner", "breakfast", "snack",
-                                  "smoothie", "nutrition", "calories",
-                                  "factor", "nafld", "liver"]
-            if any(kw in text.lower() for kw in nutrition_keywords):
-                diet_ref = config.DATA_DIR / "diet_reference.md"
-                if diet_ref.exists():
-                    ctx_parts.append("Diet reference:\n" + diet_ref.read_text())
-                # Also include recent meal logs
-                meal_entries = health_store.get_entries(days=7, category="meal")
-                if meal_entries:
-                    ctx_parts.append("Recent meals logged: " + "; ".join(
-                        f"[id={m['id']}] {m['date']}: {m['description']}"
-                        for m in meal_entries
-                    ))
-
-            # Project status briefs
-            project_keywords = ["project update", "project status", "project brief",
-                                "status of", "update on"]
-            if any(kw in text.lower() for kw in project_keywords):
-                available = projects.list_projects()
-                if available:
-                    # Try to find a specific project match
-                    match = projects.find_project(text)
-                    if match:
-                        name, contents = match
-                        ctx_parts.append(f"Project brief for '{name}':\n{contents}")
-                    else:
-                        ctx_parts.append("Available project briefs: " + ", ".join(available))
-                else:
-                    ctx_parts.append("No project briefs found in data/projects/. "
-                                     "Create one by writing a markdown file there.")
-
-            # Location context
-            # Timer context
-            timer_keywords = ["timer", "alarm", "remind me in", "tell me when",
-                              "set a timer", "cancel timer", "wake me",
-                              "how long", "minutes", "countdown"]
-            if any(kw in text.lower() for kw in timer_keywords):
-                active_timers = timer_store.get_active()
-                if active_timers:
-                    ctx_parts.append("Active timers: " + "; ".join(
-                        f"[id={t['id']}] {t['label']} — fires at {t['fire_at'][11:16]}"
-                        f" ({t['delivery']})"
-                        for t in active_timers
-                    ))
-
-            location_keywords = ["where am i", "where i am", "location",
-                                 "how far", "near me", "close to",
-                                 "my location", "where are you"]
-            if any(kw in text.lower() for kw in location_keywords):
-                loc = location_store.get_latest()
-                if loc:
-                    loc_name = loc.get("location", f"{loc['lat']:.4f}, {loc['lon']:.4f}")
-                    ctx_parts.append(
-                        f"User's last known location: {loc_name}"
-                        f" ({loc['lat']:.4f}, {loc['lon']:.4f})"
-                        f" (as of {loc['timestamp'][11:16]})"
-                    )
-                    if loc.get("battery_pct") is not None:
-                        ctx_parts.append(f"Phone battery: {loc['battery_pct']}%")
-                # Include recent movement if they're asking about location
-                history = location_store.get_history(hours=4)
-                if len(history) > 1:
-                    def _loc_label(h):
-                        name = h.get("location")
-                        if name:
-                            return name
-                        return f"{h['lat']:.4f},{h['lon']:.4f}"
-
-                    ctx_parts.append("Recent movement (last 4 hours): " + "; ".join(
-                        f"{h['timestamp'][11:16]} → {_loc_label(h)}"
-                        for h in history[-12:]
-                    ))
-
-            # Legal context
-            legal_keywords = ["case", "legal", "court", "lawyer", "attorney",
-                              "walworth", "filing", "case update"]
-            if any(kw in text.lower() for kw in legal_keywords):
-                l_entries = legal_store.get_entries(limit=10)
-                if l_entries:
-                    ctx_parts.append("Legal case log: " + "; ".join(
-                        f"[id={l['id']}] {l['date']} {l['entry_type']}: {l['description']}"
-                        for l in l_entries
-                    ))
-                upcoming = legal_store.get_upcoming_dates()
-                if upcoming:
-                    ctx_parts.append("Upcoming legal dates: " + "; ".join(
-                        f"{u['date']}: {u['description']}" for u in upcoming
-                    ))
-
-            if ctx_parts:
-                extra_context = "\n".join(ctx_parts)
+            extra_context = await build_request_context(text)
 
         response = await ask_claude(text, extra_context)
         response = process_actions(response)
@@ -1060,20 +1310,16 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         if saved_path:
             user_text += f"\n(File saved to {saved_path} for future reference)"
 
-        # Build context — inject diet reference for food-related queries
-        ctx_parts = []
-        text_lower = user_text.lower()
+        # Note: audio is generated automatically by this pipeline — tell Claude
+        # not to push audio separately, which would cause a double response
+        user_text += "\n(Audio response is generated automatically — do NOT use push_audio.py for this request.)"
 
-        nutrition_keywords = ["diet", "food", "eat", "ate", "meal",
-                              "lunch", "dinner", "breakfast", "snack",
-                              "nutrition", "calories", "factor", "nafld",
-                              "liver", "healthy", "ingredient"]
-        if any(kw in text_lower for kw in nutrition_keywords):
-            diet_ref = config.DATA_DIR / "diet_reference.md"
-            if diet_ref.exists():
-                ctx_parts.append("Diet reference:\n" + diet_ref.read_text())
-
-        extra_context = "\n".join(ctx_parts) if ctx_parts else ""
+        # Build context — same unified context as voice/SMS, plus is_image flag
+        # so health/nutrition context is always available for label photos
+        is_image = mime_type and mime_type.startswith("image/")
+        extra_context = await build_request_context(
+            caption or filename, is_image=is_image
+        )
 
         response = await ask_claude(user_text, extra_context, file_blocks)
         response = process_actions(response)
@@ -1234,39 +1480,31 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
             except Exception as e:
                 log.error("Failed to download MMS media: %s", e)
 
-        # Build context — same keyword-triggered injection as /ask
+        # Build context — same unified context as voice/file, plus SMS channel note
         user_text = body if body else "The user sent a file via SMS."
-        ctx_parts = []
-        text_lower = user_text.lower()
+        has_media = bool(file_blocks)
 
-        # Nutrition context
-        nutrition_keywords = ["diet", "food", "eat", "ate", "meal",
-                              "lunch", "dinner", "breakfast", "snack",
-                              "nutrition", "calories", "factor", "nafld",
-                              "liver", "healthy", "ingredient"]
-        if any(kw in text_lower for kw in nutrition_keywords):
-            diet_ref = config.DATA_DIR / "diet_reference.md"
-            if diet_ref.exists():
-                ctx_parts.append("Diet reference:\n" + diet_ref.read_text())
+        # Detect briefing/debrief via SMS
+        is_briefing = any(
+            user_text.lower().startswith(p)
+            for p in ["good morning", "morning brief", "briefing", "start my day"]
+        )
+        is_debrief = any(
+            user_text.lower().startswith(p)
+            for p in ["good night", "end my day", "nightly debrief",
+                       "evening debrief", "wrap up my day"]
+        )
 
-        # Always include calendar/reminder context
-        today = datetime.now().strftime("%Y-%m-%d")
-        events = calendar_store.get_events(start=today, end=today)
-        reminders = calendar_store.get_reminders()
-        if events:
-            ctx_parts.append("Today's events: " + "; ".join(
-                f"[id={e['id']}] {e['title']}" + (f" at {e['time']}" if e.get('time') else "")
-                for e in events
-            ))
-        if reminders:
-            ctx_parts.append("Active reminders: " + "; ".join(
-                f"[id={r['id']}] {r['text']}" + (f" (due {r['due']})" if r.get('due') else "")
-                for r in reminders
-            ))
+        if is_briefing:
+            extra_context = await gather_briefing_context()
+        elif is_debrief:
+            extra_context = await gather_debrief_context()
+        else:
+            extra_context = await build_request_context(
+                user_text, is_image=has_media
+            )
 
-        extra_context = "\n".join(ctx_parts) if ctx_parts else ""
-
-        # Add note about SMS channel
+        # SMS channel note — affects RESPONSE FORMAT only, not available context
         sms_note = f"This message arrived via SMS from {from_number}. Respond concisely — SMS has character limits. Do not use markdown or special formatting."
         if extra_context:
             extra_context = sms_note + "\n" + extra_context

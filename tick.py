@@ -26,6 +26,8 @@ import health_store
 import vehicle_store
 import legal_store
 import location_store
+import fitbit_store
+import nutrition_store
 import sms
 
 logging.basicConfig(
@@ -194,6 +196,13 @@ NUDGE_COOLDOWNS = {
     "legal_deadline": 24,
     "battery_low": 2,
     "location_aware": 4,
+    "fitbit_sleep": 24,
+    "fitbit_hr_anomaly": 12,
+    "fitbit_sedentary": 2,
+    "fitbit_activity_goal": 4,
+    "nutrition_sugar_warn": 4,
+    "nutrition_sodium_warn": 4,
+    "nutrition_calorie_surplus": 8,
 }
 
 
@@ -283,6 +292,70 @@ def evaluate_nudges() -> list[tuple[str, str]]:
             triggers.append(("battery_low",
                              f"Phone battery at {loc['battery_pct']}%"))
 
+    # --- Fitbit: sleep quality ---
+    sleep = fitbit_store.get_sleep_summary()
+    if sleep and sleep.get("duration_hours"):
+        if sleep["duration_hours"] < 5:
+            triggers.append(("fitbit_sleep",
+                             f"Only {sleep['duration_hours']}h sleep last night "
+                             f"(deep: {sleep['deep_minutes']}min, REM: {sleep['rem_minutes']}min)"))
+
+    # --- Fitbit: resting HR anomaly ---
+    hr = fitbit_store.get_heart_summary()
+    trend = fitbit_store.get_trend(days=7)
+    if hr and hr.get("resting_hr"):
+        # Check against 7-day trend for anomaly
+        resting_hrs = []
+        for i in range(1, 8):
+            day = (now.date() - timedelta(days=i)).isoformat()
+            prev_hr = fitbit_store.get_heart_summary(day)
+            if prev_hr and prev_hr.get("resting_hr"):
+                resting_hrs.append(prev_hr["resting_hr"])
+        if resting_hrs:
+            avg = sum(resting_hrs) / len(resting_hrs)
+            current = hr["resting_hr"]
+            if current > avg + 10:
+                triggers.append(("fitbit_hr_anomaly",
+                                 f"Resting HR {current} bpm — {current - avg:.0f} bpm above "
+                                 f"your 7-day average of {avg:.0f}"))
+
+    # --- Fitbit: sedentary (2+ hours no steps, waking hours only) ---
+    if 9 <= now.hour <= 21:
+        activity = fitbit_store.get_activity_summary()
+        if activity:
+            sed = int(activity.get("sedentary_minutes", 0))
+            if sed > 120:
+                triggers.append(("fitbit_sedentary",
+                                 f"You've been sedentary for a while — {activity['steps']:,} steps today so far"))
+
+    # --- Fitbit: afternoon activity encouragement ---
+    if 14 <= now.hour <= 17:
+        activity = fitbit_store.get_activity_summary()
+        if activity and int(activity.get("steps", 0)) < 3000:
+            triggers.append(("fitbit_activity_goal",
+                             f"Only {activity['steps']:,} steps so far today — "
+                             f"a short walk would help"))
+
+    # --- Nutrition: added sugar approaching limit ---
+    totals = nutrition_store.get_daily_totals()
+    if totals["item_count"] > 0:
+        if totals.get("added_sugars_g", 0) >= 25:
+            triggers.append(("nutrition_sugar_warn",
+                             f"Added sugar at {totals['added_sugars_g']:.0f}g — "
+                             f"approaching the 36g hard limit for NAFLD"))
+        if totals.get("sodium_mg", 0) >= 1600:
+            triggers.append(("nutrition_sodium_warn",
+                             f"Sodium at {totals['sodium_mg']:.0f}mg — "
+                             f"approaching the 1,800mg daily max"))
+        # Calorie surplus check (evening)
+        if now.hour >= 19:
+            net = nutrition_store.get_net_calories()
+            if net["burned"] > 0 and net["net"] > 0:
+                triggers.append(("nutrition_calorie_surplus",
+                                 f"Calorie surplus today: {net['consumed']} consumed - "
+                                 f"{net['burned']} burned = +{net['net']} net "
+                                 f"(target: deficit of 500-1,000)"))
+
     return triggers
 
 
@@ -331,17 +404,186 @@ def run_nudge_evaluation():
         log.error("Nudge evaluation failed: %s", e)
 
 
+# --- Fitbit Polling ---
+
+def fetch_fitbit_snapshot():
+    """Fetch a full Fitbit daily snapshot via the daemon."""
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{DAEMON_URL}/fitbit/sync",
+            headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            log.info("Fitbit snapshot synced: %s", resp.json().get("keys", []))
+        else:
+            log.error("Fitbit sync returned %s", resp.status_code)
+    except Exception as e:
+        log.error("Fitbit sync failed: %s", e)
+
+
+def fetch_exercise_hr():
+    """Fetch recent intraday HR for exercise coaching via the daemon.
+
+    Uses a lightweight endpoint that only fetches 1-2 minutes of HR data.
+    """
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{DAEMON_URL}/fitbit/exercise-hr",
+            headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        else:
+            log.error("Exercise HR fetch returned %s", resp.status_code)
+    except Exception as e:
+        log.error("Exercise HR fetch failed: %s", e)
+    return None
+
+
+def send_exercise_nudge(triggers: list[str], context: str):
+    """Send an exercise coaching nudge via VOICE (not SMS)."""
+    try:
+        import httpx
+        # Get Claude to compose the coaching message
+        resp = httpx.post(
+            f"{DAEMON_URL}/nudge",
+            json={"triggers": triggers, "context": context},
+            headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            message = resp.json().get("message", "")
+            if message:
+                # Generate TTS and push voice to phone
+                tts_resp = httpx.post(
+                    f"{DAEMON_URL}/ask/audio",
+                    json={"text": message},
+                    headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+                    timeout=60,
+                )
+                if tts_resp.status_code == 200:
+                    wav_path = config.DATA_DIR / "exercise_audio.wav"
+                    wav_path.write_bytes(tts_resp.content)
+                    import push_audio
+                    if push_audio.push_audio(str(wav_path)):
+                        log.info("Exercise coaching (voice): %s", triggers)
+                    else:
+                        # Fall back to SMS if voice push fails
+                        sms.send_to_owner(message)
+                        log.info("Exercise coaching (SMS fallback): %s", triggers)
+                else:
+                    sms.send_to_owner(message)
+                    log.info("Exercise coaching (SMS, TTS failed): %s", triggers)
+    except Exception as e:
+        log.error("Exercise nudge failed: %s", e)
+
+
+def process_exercise_tick():
+    """Every-minute exercise coaching when exercise mode is active."""
+    exercise = fitbit_store.get_exercise_state()
+    if not exercise:
+        return
+
+    started = datetime.fromisoformat(exercise["started_at"])
+    elapsed_min = int((datetime.now() - started).total_seconds() / 60)
+    zones = exercise.get("target_zones", {})
+    nudge_count = exercise.get("nudge_count", 0)
+
+    # Fetch latest HR
+    hr_data = fetch_exercise_hr()
+    if not hr_data or not hr_data.get("readings"):
+        return
+
+    readings = hr_data["readings"]
+    fitbit_store.record_exercise_hr(readings)
+
+    if not readings:
+        return
+
+    # Get current HR (latest reading)
+    current_hr = readings[-1].get("value", 0)
+    if not current_hr:
+        return
+
+    fat_burn = zones.get("fat_burn", {})
+    cardio = zones.get("cardio", {})
+    peak = zones.get("peak", {})
+    warm_up = zones.get("warm_up", {})
+
+    # Determine coaching triggers
+    triggers = []
+    coaching_ctx = fitbit_store.get_exercise_coaching_context()
+
+    # Nudge every 5 minutes with a status update
+    if elapsed_min > 0 and elapsed_min % 5 == 0:
+        if current_hr < warm_up.get("min", 100):
+            triggers.append(f"{elapsed_min} min in — HR is {current_hr} bpm, below warm-up zone. Pick up the pace!")
+        elif current_hr < fat_burn.get("min", 112):
+            triggers.append(f"{elapsed_min} min in — HR is {current_hr} bpm. Push a little harder to hit fat burn zone ({fat_burn.get('min', '?')}+ bpm)")
+        elif current_hr <= fat_burn.get("max", 140):
+            triggers.append(f"{elapsed_min} min in — HR is {current_hr} bpm. Perfect fat burn zone, keep this pace!")
+        elif current_hr <= cardio.get("max", 155):
+            triggers.append(f"{elapsed_min} min in — HR is {current_hr} bpm. Solid cardio zone!")
+        elif current_hr > peak.get("min", 155):
+            triggers.append(f"{elapsed_min} min in — HR is {current_hr} bpm. That's peak zone — ease off a bit unless you're doing intervals")
+
+    # Milestone nudges
+    if elapsed_min == 30 and nudge_count < 10:
+        triggers.append(f"30 minutes done! HR is {current_hr} bpm. Great work — aim for 10-15 more if you're feeling good")
+    elif elapsed_min == 45 and nudge_count < 15:
+        triggers.append(f"45 minutes! That's your target. HR is {current_hr} bpm. Cool down when you're ready")
+
+    # Safety: HR too high for sustained period
+    all_readings = exercise.get("hr_readings", [])
+    recent_3 = [r["hr"] for r in all_readings[-3:] if r.get("hr")]
+    if recent_3 and all(hr > peak.get("min", 155) for hr in recent_3):
+        triggers.append(f"HR has been above {peak.get('min', 155)} bpm for 3+ minutes — consider slowing down")
+
+    if triggers:
+        send_exercise_nudge(triggers, coaching_ctx)
+        # Update nudge count
+        if config.FITBIT_EXERCISE_FILE.exists():
+            state = json.loads(config.FITBIT_EXERCISE_FILE.read_text())
+            state["nudge_count"] = nudge_count + 1
+            config.FITBIT_EXERCISE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def process_fitbit_poll():
+    """Fitbit data polling on appropriate cadence."""
+    if is_quiet_hours():
+        return  # No polling during sleep
+
+    state = load_state()
+    last_fitbit = state.get("last_fitbit_sync", "")
+    cutoff = (datetime.now() - timedelta(minutes=15)).isoformat()
+
+    if not last_fitbit or last_fitbit < cutoff:
+        fetch_fitbit_snapshot()
+        state["last_fitbit_sync"] = datetime.now().isoformat()
+        save_state(state)
+
+
 # --- Main ---
 
 def main():
-    """Single tick — check timers, location reminders, and maybe nudges."""
+    """Single tick — check timers, location reminders, exercise, fitbit, and maybe nudges."""
     # Job 1: Always check timers
     process_timers()
 
     # Job 2: Always check location-based reminders
     check_location_reminders()
 
-    # Job 2: Nudge evaluation on its own cadence
+    # Job 3: Exercise coaching (every tick when active)
+    process_exercise_tick()
+
+    # Job 4: Fitbit data polling (every 15 min during waking hours)
+    process_fitbit_poll()
+
+    # Job 5: Nudge evaluation on its own cadence
     state = load_state()
     last_nudge = state.get("last_nudge_check", "")
     cutoff = (datetime.now() - timedelta(minutes=config.NUDGE_INTERVAL_MIN)).isoformat()

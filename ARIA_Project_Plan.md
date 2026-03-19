@@ -315,48 +315,118 @@ Originally deferred to Phase 5, but rendered unnecessary by the combination of G
 ---
 
 ## Phase 4: The Keystones
-*Whisper STT and Google Calendar/Gmail integration — the foundations that unlock everything downstream*
+*Fitbit health data, nutrition tracking, Whisper STT, Google Calendar/Gmail — foundations that unlock everything downstream*
 
-Phase 4 has two major workstreams that can be built in parallel. Whisper is the true keystone — it gates the watch app, voicemail transcription, and the entire ambient recording pipeline. Calendar/Gmail integration is a high-value parallel workstream that delivers immediate daily utility (email triage, appointment extraction) but does not block Phase 5 if it takes longer.
+Phase 4 has six deliverables built in sequence. Fitbit integration comes first to establish a health baseline before the April 6 exercise start date. Nutrition label tracking formalizes the existing food photo workflow. Whisper is the keystone that gates the watch app, voicemail, and ambient recording. Calendar/Gmail delivers high daily utility. Smart alarm and SMS announce fall out naturally from the infrastructure.
 
-### Whisper STT on Beardos — KEYSTONE
+### 1. Fitbit Integration — BUILD FIRST
 
-Local speech-to-text on the RTX 3090, replacing Android's broken built-in speech recognizer.
+Pixel Watch 4 + Pixel 10a Fitbit data pulled into ARIA via the Fitbit Web API. Establishes pre-exercise health baseline.
 
-- GPU-accelerated Whisper transcription with ~1-2s latency for short commands
-- Accepts audio uploads over Tailscale, returns text to the ARIA pipeline
-- Bypasses Android STT entirely — no more premature cutoff on pauses
-- **Gates downstream:** Watch app (Phase 5), voicemail transcription (Phase 5), ambient recording pipeline (Phase 6), debrief upgrade (Phase 6)
+- **Data available (all free, no Premium needed):** heart rate (resting + 1-sec intraday), HRV (RMSSD, LF, HF at 5-min intervals), SpO2, sleep stages (light/deep/REM/wake with timestamps), steps/distance/floors/calories burned, Active Zone Minutes, exercise sessions, breathing rate (per sleep stage), skin temperature variation, VO2 Max (cardio fitness), ECG
+- **Computed scores (Readiness, Stress, Sleep Score) have no API endpoints** — but all underlying raw data is available, so ARIA computes her own equivalents contextualized against the full health profile (NAFLD, spinal injury, diet)
+- Register a "Personal" app at dev.fitbit.com — grants full intraday access to own data at no cost
+- OAuth2 PKCE flow, one-time browser auth, tokens stored in config.py
+- Subscription API webhooks: Fitbit notifies `beardos:8450/webhook/fitbit` when the watch syncs (~every 15 min), ARIA fetches updated data via Web API
+- Rate limit: 150 requests/hour (webhook-driven fetches use ~10-20 per sync, plenty of headroom)
+- Fitbit Premium ($9.99/mo) is NOT needed — it only affects the in-app experience (guided workouts, coaching, sleep profiles), not API data access. Pixel Watch 4 includes 6-month free trial regardless.
 
-#### Why Not Android STT
+#### Architecture
 
-Android's built-in speech recognizer has a fixed silence detection timeout that cannot be configured. Even a brief pause to take a breath triggers end-of-recording. Whisper on the 3090 transcribes the full audio clip regardless of pauses.
+```
+Pixel Watch 4 → Bluetooth → Fitbit App on Pixel 10a → Fitbit Cloud
+                                                          │
+         Subscription webhook ──► beardos:8450/webhook/fitbit
+                                                          │
+                                    Fetch via Fitbit Web API
+                                                          │
+                                    fitbit_store.py (JSON-backed)
+```
 
-### Google Calendar + Gmail Integration
+#### New Files
+- `fitbit.py` — API client (httpx), token auto-refresh, data type fetchers
+- `fitbit_store.py` — JSON-backed store for daily summaries and intraday snapshots
 
-Read/write Google Calendar access and IMAP email monitoring — high-value daily utility.
+#### Integration Points
+- Morning briefing: last night's sleep stages, resting HR, HRV trend, VO2 Max
+- Evening debrief: daily activity summary, calories burned, Active Zone Minutes
+- Health keyword context injection: Fitbit data alongside existing health_store entries
+- ARIA computes Readiness/Stress/Sleep scores from raw data with full health context
+- Nudge conditions: abnormal resting HR, poor sleep quality, inactivity alerts
 
-- **Calendar:** Sync with Google Calendar for real appointments, two-way read/write
-- **Email:** IMAP polling on the daemon side, Claude summarizes and triages incoming mail
-- New emails announced with sender, subject, and a one-sentence Claude summary
-- "You have 3 new emails — one from your doctor's office, two from mailing lists"
-- Morning brief includes overnight important emails; mailing lists suppressed by default
-- Auto-extract appointments and deadlines from emails into calendar
+### 2. Nutrition Tracking from Label Photos
 
-### Smart Alarm Integration
+Formalize the existing food photo workflow into structured per-item nutrition logging with daily totals and limit checking.
 
-Falls naturally out of calendar integration:
+- New `nutrition_store.py` — structured entries with full nutrient breakdown (calories, protein, fat, carbs, fiber, sugar, sodium, omega-3, etc.), serving size tracking, daily totals computation
+- New ACTION block: `log_nutrition` — Claude extracts all values from nutrition label photos and logs structured entries
+- `get_daily_totals(date)` sums entries, `check_limits()` compares against diet_reference targets
+- **Claude vision handles OCR** — nutrition labels are high-contrast standardized text, ideal for vision models. No Tesseract/OCR pipeline needed.
+- Serving size handling: store per-serving values as printed, `servings` field for how much was actually consumed, multiply at query time
+- Factor/CookUnity meal cache: photograph label once, subsequent orders match by name
+- For foods without labels: USDA FoodData Central API (free, 380k+ foods) for ingredient lookups (smoothie components, fresh produce). Restaurant meals estimated by Claude and flagged as estimates.
+- Running daily totals injected into context so Claude can say "That puts you at 1,450 calories for the day"
+- Alerts when approaching limits (especially added sugar <36g, saturated fat <15g for NAFLD)
 
-- "Wake me at [time] with a briefing" — sets alarm AND queues morning brief
-- Alarm dismissal triggers the brief automatically
+#### Data Structure (per-item)
+```json
+{
+    "id": "a3f8b2c1",
+    "date": "2026-03-19",
+    "time": "12:30",
+    "meal_type": "lunch",
+    "food_name": "Factor Grilled Chicken with Roasted Vegetables",
+    "source": "label_photo",
+    "servings": 1.0,
+    "serving_size": "1 container (283g)",
+    "nutrients": {
+        "calories": 450, "protein_g": 38, "total_fat_g": 18,
+        "saturated_fat_g": 5, "total_carb_g": 32, "dietary_fiber_g": 6,
+        "total_sugars_g": 8, "added_sugars_g": 2, "sodium_mg": 680,
+        "omega3_mg": null
+    },
+    "notes": ""
+}
+```
 
-### Incoming SMS Announced + Summarized
+### 3. Whisper STT on Beardos — KEYSTONE
 
-Pairs cleanly with email monitoring — low lift once the notification pipeline exists:
+Local speech-to-text on the RTX 3090 using `faster-whisper` with the `large-v3` model. faster-whisper is NOT a lower-quality model — it runs identical Whisper weights on an optimized CTranslate2 runtime, producing the same output ~4x faster with ~3x less VRAM.
 
-- ARIA announces new texts aloud: "Text from Mike — he says he'll be 10 minutes late"
-- Tasker monitors incoming SMS and POSTs to the ARIA daemon for summarization
-- Configurable interrupt rules — suppress during sleep/focus hours
+- New endpoint: `POST /ask/stt` — accepts audio upload (WAV/WEBM/OGG), returns transcribed text
+- Sub-second latency for short voice commands on the 3090 (~0.5-1s for a 10-second clip)
+- ~3GB VRAM (plenty of headroom alongside Kokoro TTS and FLUX image gen)
+- **Does NOT replace Android STT on the phone** — Pixel 10a's on-device Google STT is fast and accurate for short commands. Phone flow stays as-is.
+- **Gates downstream:** Watch app (Phase 5) — no good on-device STT, needs server-side. Voicemail transcription (Phase 5). Ambient recording pipeline (Phase 6 — DJI Mic 3).
+- Phone can optionally switch to Whisper later if desired, but no urgency
+
+### 4. Google Calendar Integration
+
+Read/write Google Calendar access — real appointments replace or supplement the local calendar store.
+
+- Google Cloud project + OAuth2 credentials, one-time browser auth flow
+- New `gcal.py` — wraps Google Calendar API, returns events in same format as calendar_store.py
+- Merge calendar sources: Google Calendar for events, local store for ARIA-specific reminders
+- ACTION blocks (add/modify/delete event) write to Google Calendar
+- Periodic sync (every 5-15 min) caches events locally for fast briefings and offline fallback
+
+### 5. Gmail Integration
+
+IMAP/Gmail API email monitoring — Claude summarizes and triages incoming mail.
+
+- Reuses Google Cloud project from calendar step
+- New `email_monitor.py` — polls for new messages, extracts sender/subject/snippet
+- Claude one-line summaries: "3 new emails — one from your doctor's office, two from mailing lists"
+- Morning briefing: overnight important emails, mailing lists suppressed by default
+- Auto-extract appointments and deadlines from emails into Google Calendar
+- Configurable priority: sender allowlist in config.py, Claude judges the rest
+
+### 6. Smart Alarm + SMS Announce
+
+Falls naturally out of the above infrastructure:
+
+- **Smart Alarm:** "Wake me at [time] with a briefing" — sets urgent timer + queues morning brief on dismissal. ~30 lines in process_actions() + tick.py.
+- **SMS Announce:** Tasker monitors incoming SMS, POSTs to daemon for Claude summarization, ARIA speaks it aloud. Configurable interrupt/quiet hours rules. ~50 lines.
 
 ---
 
@@ -694,7 +764,7 @@ Phase 8 gives ARIA a physical presence — not just software on a laptop but a d
 | Phase 1 | Core Loop | **COMPLETE.** Morning brief, weather, calendar, basic voice commands. End-to-end pipeline proven. |
 | Phase 2 | Migration & Failover | **COMPLETE.** Beardos primary, slappy warm standby, automatic failover via Tasker, rsync data sync. |
 | Phase 3 | Self-Contained Features | **COMPLETE.** Image gen, specialist logs (vehicle/health/legal), diet/nutrition tracking, project briefs, daily debrief, file input, SMS/MMS, location tracking, autonomous timers, proactive nudges, location-based reminders (geofencing). |
-| Phase 4 | The Keystones | Whisper STT (keystone — gates Phases 5-6). Google Calendar + Gmail integration (parallel, high daily value). Smart alarm. Incoming SMS. |
+| Phase 4 | The Keystones | 1) Fitbit integration (health baseline before April 6 exercise start). 2) Nutrition label photo tracking. 3) Whisper STT (keystone — gates Phases 5-6). 4) Google Calendar. 5) Gmail. 6) Smart alarm + SMS announce. |
 | Phase 5 | Comms & Wearable | Pixel Watch 4 hold-to-talk, full two-way comms (SMS, email, calls, voicemail), smart filtering & quiet hours. |
 | Phase 6 | Total Recall | DJI Mic 3 ambient recording, Whisper transcription pipeline, Qdrant recall, promise tracker, person profiles, upgraded debrief, person/topic-based reminders, Whisper Pi node. |
 | Phase 7 | Personalized Model | LoRA fine-tuning on interaction history, Neo4j relational graph memory, multi-agent orchestration. Requires Phase 6 data. |
@@ -702,4 +772,4 @@ Phase 8 gives ARIA a physical presence — not just software on a laptop but a d
 
 ---
 
-*Next Step: Phase 4 keystones — Whisper STT on RTX 3090 + Google Calendar/Gmail integration.*
+*Next Step: Phase 4.1 — Fitbit integration (establish health baseline before April 6 exercise start).*
