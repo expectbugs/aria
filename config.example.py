@@ -36,6 +36,11 @@ REQUEST_LOG = LOGS_DIR / "requests.jsonl"
 CALENDAR_DB = DATA_DIR / "calendar.json"
 REMINDERS_DB = DATA_DIR / "reminders.json"
 
+# --- Specialist Logs ---
+VEHICLE_DB = DATA_DIR / "vehicle.json"
+HEALTH_DB = DATA_DIR / "health.json"
+LEGAL_DB = DATA_DIR / "legal.json"
+
 # --- Weather (NWS API, free, no key needed) ---
 WEATHER_LAT = 42.58
 WEATHER_LON = -88.43

@@ -6,6 +6,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.2.4] — 2026-03-18
+
+### Specialist Modules, Debrief, File Input & Nutrition Tracking
+
+Major Phase 3 progress — added specialist logging, project briefs, daily debrief, diet/nutrition tracking, and universal file input from phone.
+
+### Added
+
+- **Specialist modules** — three new JSON-backed log stores following the calendar_store pattern:
+  - **`vehicle_store.py`** — vehicle maintenance log with CRUD, `get_latest_by_type()` for service interval tracking
+  - **`health_store.py`** — health/physical log with pain, sleep, exercise, symptom, medication, meal, and nutrition categories; `get_patterns()` detects recurring symptoms, sleep averages, fish/omega-3 intake tracking
+  - **`legal_store.py`** — legal case log with development, filing, contact, note, court_date, and deadline entry types; `get_upcoming_dates()` for court dates
+- **6 new ACTION block types** — `log_vehicle`, `delete_vehicle_entry`, `log_health`, `delete_health_entry`, `log_legal`, `delete_legal_entry`
+- **Keyword-triggered context injection** — vehicle (xterra, oil, mileage...), health (pain, sleep, body log...), legal (case, court, walworth...) keywords trigger relevant specialist data in Claude's context
+- **Specialist data in morning briefing** — recent vehicle maintenance, health patterns (last 7 days), upcoming legal dates
+- **Project status briefs (`projects.py`)** — voice-callable project summaries from markdown files in `data/projects/`; keyword detection for "project update", "status of X", etc.
+- **Daily debrief ("good night")** — triggered by "good night", "end my day", etc.; gathers today's interactions from request log, calendar events, tomorrow's prep, active reminders, specialist log activity, meals logged, health patterns, diet day counter, and overnight weather forecast
+- **Diet/nutrition tracking** — trimmed `data/diet_reference.md` for daily context injection on food/nutrition keywords; full medical profile stored in `data/health_profile.md` for future specialist AI; meal logging via health_store "meal" category; diet day counter in briefings and debriefs (started March 17, 2026); fish/omega-3 intake pattern detection
+- **Universal file input (`POST /ask/file`)** — accepts any file from phone via AutoShare + Tasker; supports both multipart form data and raw body with query params; handles images (base64 visual blocks), PDFs (document blocks), text/code files (inline text), and unknown types (metadata); nutrition keywords in caption auto-inject diet reference
+- **File inbox (`data/inbox/`)** — all received files saved with timestamps for future reference; Claude is informed of saved path so she can access files later via shell
+- **AutoShare polling snippet (`snippets/aria_file_poll.js`)** — Tasker JavaScriptlet for polling file request results with adaptive intervals
+- **`python-multipart` dependency** — required by FastAPI for file upload endpoints
+
+### Changed
+
+- **`ClaudeSession.query()`** — now accepts optional `file_blocks` parameter for multimodal messages (text + images/PDFs/files)
+- **System prompt expanded** — documents specialist log ACTION blocks with field schemas and trigger phrases; file input capability; diet compliance awareness
+- **`config.example.py`** — added `VEHICLE_DB`, `HEALTH_DB`, `LEGAL_DB` paths
+- **`.gitignore`** — added `adam_health_nutrition_profile.md` (personal health data)
+- **`requirements.txt`** — updated with python-multipart
+
+---
+
 ## [0.2.3] — 2026-03-16
 
 ### Visual Output Dependencies

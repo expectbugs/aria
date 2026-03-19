@@ -198,39 +198,63 @@ ARIA can generate and push images to the phone, displayed via Tasker HTTP Server
 - Legal case timeline / relationship diagrams
 - Project status visual overviews
 
-### Specialist Modules
+### Specialist Modules — COMPLETE
 
 **Legal Case File Assistant**
 - Command: "Case update"
-- Reads a structured local file about your Walworth County case
+- JSON-backed log (`legal_store.py`) with entry types: development, filing, contact, note, court_date, deadline
 - Surfaces upcoming dates, key contacts, recent developments
-- Lets you voice-log new developments with timestamps
-- Entirely local — never cloud-synced
+- Voice-log new developments with timestamps via ACTION blocks
+- Entirely local — never cloud-synced; only upcoming dates appear in morning briefing (no case details surfaced unprompted)
 
 **Vehicle Maintenance Log — Xterra**
 - "Log Xterra — oil change today at [mileage]"
 - "When did I last change my oil?"
-- Tracks all maintenance events and surfaces overdue service
+- JSON-backed log (`vehicle_store.py`) with event types, mileage, cost tracking
+- `get_latest_by_type()` surfaces last service date per type
+- Recent entries appear in morning briefing
 
 **Health & Physical Log**
 - "Body log — back is sore, slept 6 hours"
-- Claude tracks patterns over time
+- JSON-backed log (`health_store.py`) with categories: pain, sleep, exercise, symptom, medication, meal, nutrition, general
+- Pattern detection: recurring symptoms, sleep averages, fish/omega-3 intake tracking
 - Surfaces in morning brief if threshold crossed: "Back pain 4 of last 7 days"
 
-### Project Status Briefs
+**Diet & Nutrition Tracking**
+- Meal logging via "meal" category in health_store
+- `data/diet_reference.md` — trimmed dietary guidelines injected as context on food/nutrition keywords
+- `data/health_profile.md` — comprehensive medical profile for future specialist AI use
+- Diet day counter in morning briefings and evening debriefs
+- Claude flags dietary deviations and encourages compliance (NAFLD-aware)
 
-Custom voice commands per project. Each brief reads a structured notes file and summarizes current status, open questions, and next steps. You define what each project brief contains.
+### Project Status Briefs — COMPLETE
 
-### Daily Debrief — Good Night (Basic Version)
+Custom voice commands per project. Each brief is a markdown file in `data/projects/`. "Project update on ARIA" reads the relevant file and Claude summarizes current status, open questions, and next steps conversationally. If no specific project named, lists available briefs.
 
-Basic version triggered by "Good night" or a button press, using only ARIA's conversation history and local data (no transcript pipeline yet):
+### Daily Debrief — Good Night (Basic Version) — COMPLETE
 
-- Summary of what was completed today
-- Pending items carried forward
-- Prep reminders for tomorrow
-- Option to set next-morning alarm
+Triggered by "Good night", "end my day", "evening debrief", or "wrap up my day". Gathers from local data only (no transcript pipeline yet):
+
+- Today's ARIA interactions from request log
+- Today's calendar events and tomorrow's appointments (prep tonight)
+- Active reminders carried forward
+- Specialist log activity (vehicle, health, legal entries from today)
+- Meals logged today and diet day counter
+- Health patterns (last 7 days)
+- Tonight/tomorrow weather forecast
 
 *Upgrades automatically in Phase 6 when the ambient transcript pipeline exists — adds full day-of-conversation parsing, extracted commitments, and verbatim log comparison.*
+
+### File Input — COMPLETE
+
+Universal file input from phone via AutoShare share target + Tasker HTTP Request. Share any file from any app to ARIA.
+
+- `POST /ask/file` accepts images, PDFs, text/code files, and unknown types
+- Images sent as base64 visual content blocks; PDFs as document blocks; text files inline
+- All received files saved to `data/inbox/` with timestamps for future reference
+- Nutrition keywords in caption auto-inject diet reference for food photo analysis
+- Supports both multipart form data and raw body with query params (Tasker compatible)
+- Same async polling flow as voice requests (/ask/status, /ask/result)
 
 ### Proactive Nudges (Basic Version)
 
@@ -630,7 +654,7 @@ Phase 8 gives ARIA a physical presence — not just software on a laptop but a d
 |-------|-------|-----------------|
 | Phase 1 | Core Loop | **COMPLETE.** Morning brief, weather, calendar, basic voice commands. End-to-end pipeline proven. |
 | Phase 2 | Migration & Failover | **COMPLETE.** Beardos primary, slappy warm standby, automatic failover via Tasker, rsync data sync. |
-| Phase 3 | Self-Contained Features | **PARTIAL.** Image gen done. Remaining: specialist logs (legal/vehicle/health), project briefs, basic debrief & nudges, geofencing reminders. |
+| Phase 3 | Self-Contained Features | **PARTIAL.** Image gen, specialist logs (vehicle/health/legal), diet/nutrition tracking, project briefs, daily debrief, file input done. Remaining: geofencing reminders, proactive nudges. |
 | Phase 4 | The Keystones | Whisper STT (keystone — gates Phases 5-6). Google Calendar + Gmail integration (parallel, high daily value). Smart alarm. Incoming SMS. |
 | Phase 5 | Comms & Wearable | Pixel Watch 4 hold-to-talk, full two-way comms (SMS, email, calls, voicemail), smart filtering & quiet hours. |
 | Phase 6 | Total Recall | DJI Mic 3 ambient recording, Whisper transcription pipeline, Qdrant recall, promise tracker, person profiles, upgraded debrief, person/topic-based reminders, Whisper Pi node. |
@@ -639,4 +663,4 @@ Phase 8 gives ARIA a physical presence — not just software on a laptop but a d
 
 ---
 
-*Next Step: Finish Phase 3 — specialist modules, basic debrief, basic nudges, geofencing reminders.*
+*Next Step: Finish Phase 3 — geofencing reminders, proactive nudges.*

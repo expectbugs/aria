@@ -20,6 +20,9 @@ tts_models/
 *.env
 config.py
 
+# Personal health data
+adam_health_nutrition_profile.md
+
 # Claude project files
 .claude/
 
