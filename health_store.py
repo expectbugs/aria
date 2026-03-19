@@ -93,12 +93,14 @@ def get_patterns(days: int = 7) -> list[str]:
 
 def add_entry(entry_date: str, category: str, description: str,
               severity: Optional[int] = None,
-              sleep_hours: Optional[float] = None) -> dict:
+              sleep_hours: Optional[float] = None,
+              meal_type: Optional[str] = None) -> dict:
     """Add a health log entry.
 
     category: pain, sleep, exercise, symptom, medication, meal, nutrition, general
     severity: 1-10 (optional, for pain/symptoms)
     sleep_hours: hours slept (optional, for sleep entries)
+    meal_type: breakfast, lunch, dinner, snack (optional, for meal entries)
     """
     entries = _load()
     entry = {
@@ -108,6 +110,7 @@ def add_entry(entry_date: str, category: str, description: str,
         "description": description,
         "severity": severity,
         "sleep_hours": sleep_hours,
+        "meal_type": meal_type,
         "created": datetime.now().isoformat(),
     }
     entries.append(entry)

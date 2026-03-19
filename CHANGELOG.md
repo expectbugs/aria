@@ -6,6 +6,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.3.0] — 2026-03-19
+
+### Phase 3 Complete — Autonomous ARIA
+
+ARIA is now autonomous. She can schedule her own future actions, proactively nudge via SMS, resolve GPS to street addresses, and push voice to the phone on demand. This release completes Phase 3.
+
+### Added
+
+- **Timer system (`timer_store.py`)** — JSON-backed scheduler with SMS or voice delivery. ARIA creates timers via ACTION blocks: relative (`minutes: 30`) or absolute (`time: "14:30"`). Supports priority levels (urgent bypasses quiet hours).
+- **Tick script (`tick.py`)** — cron job running every minute. Checks for due timers and fires them. Evaluates nudge conditions every 30 minutes. Most ticks are no-ops (<100ms).
+- **Proactive nudge system** — Python condition checks against all data stores with per-type cooldowns:
+  - Meal gap (5+ hours without logging, noon-9pm)
+  - Calendar warning (event in 15-45 minutes)
+  - Overdue reminders
+  - Diet compliance (evening check if <2 meals logged)
+  - Health patterns (recurring symptoms, low sleep)
+  - Legal deadlines (within 3 days)
+  - Battery low (<15%)
+- **Nudge cooldowns** — per-type minimum intervals prevent nagging (meal: 4h, calendar: 30min, health: 24h, vehicle: 7d, etc.)
+- **Quiet hours** (midnight-7am) — nudges suppressed unless timer priority is urgent
+- **`POST /nudge` endpoint** — tick sends triggered conditions, Claude composes a natural consolidated SMS
+- **Reverse geocoding (`location_store.py`)** — GPS coords resolved to human-readable addresses via Nominatim (OpenStreetMap, free). Results cached by ~100m precision.
+- **Voice push (`push_audio.py`)** — push TTS audio to phone via Tasker HTTP Server `/audio` path. Voice-delivery timers only (explicit user opt-in). Falls back to SMS if phone unreachable.
+- **`meal_type` field** in health_store — breakfast, lunch, dinner, snack for better diet tracking and nudge evaluation
+
+### Changed
+
+- **Location context** — briefings and queries now show resolved addresses with movement history as place names
+- **`location_store.record()`** now async (reverse geocoding via httpx)
+- **System prompt** — documents timer ACTION blocks, meal_type field, voice push
+- **Cron** — tick.py at `* * * * *` (every minute), alongside existing rsync
+
+---
+
 ## [0.2.5] — 2026-03-19
 
 ### SMS/MMS via Twilio & Tailscale Funnel

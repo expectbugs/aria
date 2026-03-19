@@ -63,6 +63,14 @@ PHONE_IP = "100.x.x.x"         # phone's Tailscale IP
 PHONE_PORT = 8451               # Tasker HTTP Server port
 PHONE_IMAGE_DIR = "ARIA"        # directory on phone for pushed images (relative to internal storage)
 
+# --- Timers & Nudges ---
+TIMER_DB = DATA_DIR / "timers.json"
+NUDGE_INTERVAL_MIN = 30           # minutes between nudge evaluations
+QUIET_HOURS_START = 0              # midnight (0-23)
+QUIET_HOURS_END = 7                # 7am (0-23)
+TICK_STATE_FILE = DATA_DIR / "tick_state.json"
+NUDGE_COOLDOWNS_FILE = DATA_DIR / "nudge_cooldowns.json"
+
 # --- Twilio (SMS/MMS/Voice) ---
 TWILIO_ACCOUNT_SID = "your-twilio-account-sid"       # Basic Auth user for REST API
 TWILIO_AUTH_TOKEN = "your-twilio-auth-token"          # Basic Auth password for REST API

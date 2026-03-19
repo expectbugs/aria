@@ -170,10 +170,10 @@ Tasker JavaScriptlet handles failover at the request level:
 
 ---
 
-## Phase 3: Self-Contained Features — PARTIALLY COMPLETE
-*Specialist logs, basic debrief & nudges, geofencing, image generation (done), and pattern awareness*
+## Phase 3: Self-Contained Features — COMPLETE
+*Specialist logs, debrief, nudges, image generation, file input, SMS/MMS, location tracking, autonomous timers, diet/nutrition tracking*
 
-All remaining Phase 3 features are self-contained — they require no external service integrations, no new hardware pipelines, and no dependencies on later phases. Ship these first before tackling the keystones.
+All Phase 3 features are self-contained — no external service integrations, no new hardware pipelines, and no dependencies on later phases. Geofencing moved to Phase 5.
 
 ### Image Generation & Visual Output — COMPLETE
 
@@ -256,14 +256,32 @@ Universal file input from phone via AutoShare share target + Tasker HTTP Request
 - Supports both multipart form data and raw body with query params (Tasker compatible)
 - Same async polling flow as voice requests (/ask/status, /ask/result)
 
-### Proactive Nudges (Basic Version)
+### Proactive Nudges — COMPLETE
 
-Basic version — Claude reviews conversation history and local data stores to surface follow-ups:
+Autonomous nudge system via cron-based tick script (every minute). Python condition checks against all data stores, Claude composes natural SMS messages when conditions trigger:
 
-- "You mentioned calling the insurance company last Tuesday — still pending"
-- "You haven't logged your Xterra mileage in 3 weeks"
+- Meal gap detection (5+ hours without logging, noon-9pm)
+- Calendar warnings (event in 15-45 minutes)
+- Overdue reminders
+- Diet compliance (evening check if <2 meals logged)
+- Health pattern alerts
+- Legal deadline warnings (within 3 days)
+- Battery low alerts (<15%)
+- Per-type cooldowns prevent nagging (meal: 4h, calendar: 30min, health: 24h, vehicle: 7d)
+- Quiet hours (midnight-7am) suppress non-urgent nudges
 
 *Upgrades automatically in Phase 6 when ambient transcripts provide richer source data for pattern-based nudges.*
+
+### Autonomous Timer System — COMPLETE
+
+ARIA can schedule her own future actions via ACTION blocks:
+
+- Relative timers: "remind me in 30 minutes"
+- Absolute timers: "remind me at 2:30 PM"
+- SMS delivery (default) or voice push (explicit user opt-in only)
+- Priority levels: urgent timers bypass quiet hours
+- ARIA creates timers during conversations: "I'll follow up on that in 2 hours"
+- Tick script checks for due timers every minute
 
 ### SMS/MMS Input — COMPLETE
 
@@ -271,9 +289,19 @@ ARIA has a Twilio phone number (+1 262-475-1990) for receiving SMS and MMS messa
 
 - `POST /sms` webhook receives messages from Twilio, validates signatures, handles A2P compliance (STOP/HELP)
 - Exposed to the internet via Tailscale Funnel at `https://beardos.tail847be6.ts.net/webhook/sms`
-- Outbound replies via Twilio REST API (pending A2P 10DLC verification as of March 2026)
+- Outbound replies and proactive nudges via Twilio REST API (pending A2P 10DLC verification as of March 2026)
+- Outbound MMS supported — images staged in `data/mms_outbox/` and served via Funnel for Twilio to fetch
 - Same phone number will support voice calls in Phase 5 when Whisper STT is ready
 - Privacy policy and terms of service hosted via GitHub Pages for compliance
+
+### Phone Location Tracking — COMPLETE
+
+Tasker reports GPS coordinates every 5 minutes. Reverse geocoded to street addresses via Nominatim (OpenStreetMap, free).
+
+- Location history in `data/location.jsonl` with timestamps
+- Latest position and battery level in morning briefings
+- Movement history injected as context for location-related queries
+- Geocode results cached by ~100m precision
 
 ### Context-Aware Reminders — Geofencing — MOVED TO PHASE 5
 
@@ -669,7 +697,7 @@ Phase 8 gives ARIA a physical presence — not just software on a laptop but a d
 |-------|-------|-----------------|
 | Phase 1 | Core Loop | **COMPLETE.** Morning brief, weather, calendar, basic voice commands. End-to-end pipeline proven. |
 | Phase 2 | Migration & Failover | **COMPLETE.** Beardos primary, slappy warm standby, automatic failover via Tasker, rsync data sync. |
-| Phase 3 | Self-Contained Features | **PARTIAL.** Image gen, specialist logs (vehicle/health/legal), diet/nutrition tracking, project briefs, daily debrief, file input, SMS/MMS done. Remaining: proactive nudges. Geofencing moved to Phase 5. |
+| Phase 3 | Self-Contained Features | **COMPLETE.** Image gen, specialist logs (vehicle/health/legal), diet/nutrition tracking, project briefs, daily debrief, file input, SMS/MMS, location tracking, autonomous timers, proactive nudges. Geofencing moved to Phase 5. |
 | Phase 4 | The Keystones | Whisper STT (keystone — gates Phases 5-6). Google Calendar + Gmail integration (parallel, high daily value). Smart alarm. Incoming SMS. |
 | Phase 5 | Comms & Wearable | Pixel Watch 4 hold-to-talk, full two-way comms (SMS, email, calls, voicemail), smart filtering & quiet hours, geofencing reminders. |
 | Phase 6 | Total Recall | DJI Mic 3 ambient recording, Whisper transcription pipeline, Qdrant recall, promise tracker, person profiles, upgraded debrief, person/topic-based reminders, Whisper Pi node. |
@@ -678,4 +706,4 @@ Phase 8 gives ARIA a physical presence — not just software on a laptop but a d
 
 ---
 
-*Next Step: Finish Phase 3 — proactive nudges. Then Phase 4 keystones.*
+*Next Step: Phase 4 keystones — Whisper STT on RTX 3090 + Google Calendar/Gmail integration.*

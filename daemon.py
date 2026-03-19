@@ -21,12 +21,13 @@ import vehicle_store
 import health_store
 import legal_store
 import location_store
+import timer_store
 import projects
 import sms
 import weather
 import news
 
-app = FastAPI(title="ARIA", version="0.2.5")
+app = FastAPI(title="ARIA", version="0.3.0")
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -287,8 +288,8 @@ async def gather_briefing_context() -> str:
     # Location — latest known position
     loc = location_store.get_latest()
     if loc:
-        parts.append(f"\nLast known location: {loc['lat']:.4f}, {loc['lon']:.4f}"
-                     f" (as of {loc['timestamp'][11:16]})")
+        loc_name = loc.get("location", f"{loc['lat']:.4f}, {loc['lon']:.4f}")
+        parts.append(f"\nLast known location: {loc_name} (as of {loc['timestamp'][11:16]})")
         if loc.get("battery_pct") is not None:
             parts.append(f"  Phone battery: {loc['battery_pct']}%")
 
@@ -358,14 +359,20 @@ Vehicle maintenance (Xterra):
 Mileage and cost are optional. When the user says "log Xterra" or mentions vehicle maintenance, use log_vehicle.
 
 Health and physical log:
-<!--ACTION::{"action": "log_health", "date": "YYYY-MM-DD", "category": "pain|sleep|exercise|symptom|medication|meal|nutrition|general", "description": "...", "severity": 7, "sleep_hours": 6.5}-->
+<!--ACTION::{"action": "log_health", "date": "YYYY-MM-DD", "category": "pain|sleep|exercise|symptom|medication|meal|nutrition|general", "description": "...", "severity": 7, "sleep_hours": 6.5, "meal_type": "breakfast|lunch|dinner|snack"}-->
 <!--ACTION::{"action": "delete_health_entry", "id": "..."}-->
-Severity (1-10) is for pain/symptoms. sleep_hours is for sleep entries. Both optional. When the user says "body log" or mentions health/sleep/pain, use log_health. For meals and food intake, use category "meal" with a description of what was eaten. You have a detailed diet reference in context when nutrition keywords are detected — use it to flag deviations from the plan and encourage compliance. The user has NAFLD and is on a structured diet plan — be supportive and informed.
+Severity (1-10) is for pain/symptoms. sleep_hours is for sleep entries. meal_type is for meal entries (breakfast/lunch/dinner/snack). All optional. When the user says "body log" or mentions health/sleep/pain, use log_health. For meals and food intake, use category "meal" with a description of what was eaten and the appropriate meal_type. You have a detailed diet reference in context when nutrition keywords are detected — use it to flag deviations from the plan and encourage compliance. The user has NAFLD and is on a structured diet plan — be supportive and informed.
 
 Legal case log:
 <!--ACTION::{"action": "log_legal", "date": "YYYY-MM-DD", "entry_type": "development|filing|contact|note|court_date|deadline", "description": "...", "contacts": ["name1", "name2"]}-->
 <!--ACTION::{"action": "delete_legal_entry", "id": "..."}-->
 Contacts list is optional. When the user says "case update" or mentions legal/court matters, use log_legal. This data is especially sensitive — never reference it unless the user brings it up.
+
+Timers and alarms — you can schedule future actions:
+<!--ACTION::{"action": "set_timer", "label": "...", "minutes": 30, "delivery": "sms", "message": "Your message here"}-->
+<!--ACTION::{"action": "set_timer", "label": "...", "time": "14:30", "delivery": "sms", "message": "Your message here"}-->
+<!--ACTION::{"action": "cancel_timer", "id": "..."}-->
+Use "minutes" for relative delays or "time" (HH:MM, 24h) for a specific time today. Delivery is "sms" by default — only use "voice" if the user explicitly asks you to speak/say it out loud or wake them up with your voice. For alarms and wake-ups, set priority to "urgent" so they bypass quiet hours. Always compose the "message" field — this is exactly what will be delivered when the timer fires.
 
 You have access to project status briefs stored as markdown files. When the user asks for a "project update", "project status", or "status of [name]", the relevant brief will be provided in context. Summarize it conversationally. If no specific project is mentioned and multiple exist, list the available projects and ask which one. To create or update a project brief, use your shell access to write a markdown file to the data/projects/ directory.
 
@@ -642,6 +649,7 @@ def process_actions(response_text: str) -> str:
                     description=action["description"],
                     severity=action.get("severity"),
                     sleep_hours=action.get("sleep_hours"),
+                    meal_type=action.get("meal_type"),
                 )
             elif act == "delete_health_entry":
                 if not health_store.delete_entry(action["id"]):
@@ -656,6 +664,31 @@ def process_actions(response_text: str) -> str:
             elif act == "delete_legal_entry":
                 if not legal_store.delete_entry(action["id"]):
                     failures.append("Couldn't delete legal entry — no entry found with that ID.")
+            elif act == "set_timer":
+                # Compute fire_at from minutes (relative) or time (absolute)
+                if "minutes" in action:
+                    fire_at = (datetime.now() + timedelta(minutes=action["minutes"])).isoformat()
+                elif "time" in action:
+                    t = datetime.strptime(action["time"], "%H:%M").time()
+                    fire_at = datetime.combine(datetime.now().date(), t).isoformat()
+                    # If the time has already passed today, set for tomorrow
+                    if fire_at <= datetime.now().isoformat():
+                        fire_at = datetime.combine(
+                            datetime.now().date() + timedelta(days=1), t
+                        ).isoformat()
+                else:
+                    failures.append("Timer needs 'minutes' or 'time' field.")
+                    continue
+                timer_store.add_timer(
+                    label=action.get("label", "Timer"),
+                    fire_at=fire_at,
+                    delivery=action.get("delivery", "sms"),
+                    priority=action.get("priority", "gentle"),
+                    message=action.get("message", ""),
+                )
+            elif act == "cancel_timer":
+                if not timer_store.cancel_timer(action["id"]):
+                    failures.append("Couldn't cancel timer — no active timer found with that ID.")
         except Exception as e:
             failures.append(f"Action failed: {e}")
             log_request("ACTION", "error", error=str(e))
@@ -701,11 +734,12 @@ class LocationUpdate(BaseModel):
 async def update_location(loc: LocationUpdate, request: Request):
     """Receive a location update from the phone."""
     verify_auth(request)
-    entry = location_store.record(
+    entry = await location_store.record(
         lat=loc.lat, lon=loc.lon, accuracy=loc.accuracy,
         speed=loc.speed, battery=loc.battery,
     )
-    return {"status": "ok", "timestamp": entry["timestamp"]}
+    return {"status": "ok", "timestamp": entry["timestamp"],
+            "location": entry.get("location", "")}
 
 
 @app.post("/ask", response_model=AskResponse)
@@ -856,14 +890,29 @@ async def ask(req: AskRequest, request: Request):
                                      "Create one by writing a markdown file there.")
 
             # Location context
+            # Timer context
+            timer_keywords = ["timer", "alarm", "remind me in", "tell me when",
+                              "set a timer", "cancel timer", "wake me",
+                              "how long", "minutes", "countdown"]
+            if any(kw in text.lower() for kw in timer_keywords):
+                active_timers = timer_store.get_active()
+                if active_timers:
+                    ctx_parts.append("Active timers: " + "; ".join(
+                        f"[id={t['id']}] {t['label']} — fires at {t['fire_at'][11:16]}"
+                        f" ({t['delivery']})"
+                        for t in active_timers
+                    ))
+
             location_keywords = ["where am i", "where i am", "location",
                                  "how far", "near me", "close to",
                                  "my location", "where are you"]
             if any(kw in text.lower() for kw in location_keywords):
                 loc = location_store.get_latest()
                 if loc:
+                    loc_name = loc.get("location", f"{loc['lat']:.4f}, {loc['lon']:.4f}")
                     ctx_parts.append(
-                        f"User's last known location: {loc['lat']:.4f}, {loc['lon']:.4f}"
+                        f"User's last known location: {loc_name}"
+                        f" ({loc['lat']:.4f}, {loc['lon']:.4f})"
                         f" (as of {loc['timestamp'][11:16]})"
                     )
                     if loc.get("battery_pct") is not None:
@@ -871,9 +920,15 @@ async def ask(req: AskRequest, request: Request):
                 # Include recent movement if they're asking about location
                 history = location_store.get_history(hours=4)
                 if len(history) > 1:
+                    def _loc_label(h):
+                        name = h.get("location")
+                        if name:
+                            return name
+                        return f"{h['lat']:.4f},{h['lon']:.4f}"
+
                     ctx_parts.append("Recent movement (last 4 hours): " + "; ".join(
-                        f"{h['timestamp'][11:16]} → {h['lat']:.4f},{h['lon']:.4f}"
-                        for h in history[-12:]  # last 12 data points max
+                        f"{h['timestamp'][11:16]} → {_loc_label(h)}"
+                        for h in history[-12:]
                     ))
 
             # Legal context
@@ -1241,6 +1296,37 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
             sms.send_sms(from_number, "Sorry, something went wrong processing your message.")
         except Exception:
             pass
+
+
+class NudgeRequest(BaseModel):
+    triggers: list[str]
+    context: str = ""
+
+
+@app.post("/nudge")
+async def nudge(req: NudgeRequest, request: Request):
+    """System-initiated nudge — tick.py calls this when conditions trigger.
+
+    Claude composes a natural, consolidated SMS from the trigger list.
+    Returns the composed message text (tick.py handles delivery).
+    """
+    verify_auth(request)
+
+    prompt = (
+        "The following conditions have been detected and the user should be notified. "
+        "Compose a single brief, natural SMS message covering all of them. "
+        "Be warm and supportive, not nagging. Keep it under 300 characters. "
+        "Do NOT use markdown or special formatting. Do NOT add any ACTION blocks.\n\n"
+        "Triggers:\n" + "\n".join(f"- {t}" for t in req.triggers)
+    )
+    extra_context = req.context if req.context else ""
+
+    response = await ask_claude(prompt, extra_context)
+    # Strip any accidental ACTION blocks
+    import re
+    response = re.sub(r'<!--ACTION::.*?-->', '', response).strip()
+
+    return {"message": response}
 
 
 @app.post("/sms")
