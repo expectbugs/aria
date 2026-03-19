@@ -13,6 +13,16 @@ from pathlib import Path
 HOST_NAME = "hostname"       # machine name (beardos, slappy, etc.)
 IS_PRIMARY = True             # False for failover nodes
 
+# --- Owner Profile (personal info — stays in gitignored config.py) ---
+OWNER_NAME = "Your Name"
+OWNER_TIMEZONE = "US Central"
+OWNER_VEHICLE = "Vehicle make/model"
+OWNER_WORK_SCHEDULE = "your work hours"
+OWNER_WORK_STATUS = "employed/leave/etc."
+OWNER_EMPLOYER = "Employer name"
+OWNER_HEALTH_NOTES = "Any health context ARIA should be aware of"
+OWNER_LIVING_SITUATION = "Where you currently live"
+
 # --- Paths ---
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
