@@ -6,6 +6,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.3.2] — 2026-03-19
+
+### System Prompt Optimization & Missing Functionality
+
+Rewrote the system prompt from scratch for maximum effectiveness. 41% smaller than the original while covering significantly more capabilities. Also wired up the modify_event ACTION block that existed in calendar_store but was never connected.
+
+### Added
+
+- **`modify_event` ACTION block** — was implemented in calendar_store.py but never wired into process_actions(). ARIA can now move/rename events without delete-and-readd.
+- **User identity in prompt** — ARIA knows Adam's name, timezone (Central), work schedule (2nd shift), living situation, vehicle (Xterra), and key life context
+- **Known places in prompt** — home, my house, work, doctor with addresses so ARIA can use them naturally in conversation
+- **Channel awareness** — ARIA adapts response style for voice (natural speech) vs SMS (under 300 chars, no formatting)
+- **Recurring reminders documented** — daily/weekly/monthly option was supported but never mentioned in the prompt
+- **Multi-ACTION instruction** — ARIA now knows she can emit multiple ACTION blocks in one response
+- **Auto meal logging** — when Adam describes eating something specific, ARIA logs it without asking
+- **Diet behavioral rules** — never suggest moderation (cold turkey works better), reinforce streak milestones
+- **Timer confirmation** — ARIA confirms exact fire time and delivery method when setting timers
+- **Relative date resolution** — explicit instruction to resolve "next Tuesday" etc. to exact dates
+- **Honesty rule** — say "I think" when estimating, verify when possible, never confabulate
+- **Push audio tool** — documented in prompt for voice-delivery timers
+- **OpenRC note** — prevents ARIA from defaulting to systemd commands
+
+### Changed
+
+- **System prompt rewritten** — organized by priority (identity → rules → actions → tools → context), 41% smaller than pre-optimization while covering more functionality
+
+### Fixed
+
+- **modify_event ACTION block** — existed in calendar_store.modify_event() since Phase 1 but was never handled in process_actions(), making it impossible to modify events via voice
+
+---
+
 ## [0.3.1] — 2026-03-19
 
 ### Location-Based Reminders
