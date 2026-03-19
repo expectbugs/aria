@@ -141,6 +141,46 @@ def process_timers():
         fire_timer(timer)
 
 
+# --- Location-Based Reminders ---
+
+def check_location_reminders():
+    """Check location-triggered reminders against current GPS position."""
+    loc = location_store.get_latest()
+    if not loc or not loc.get("location"):
+        return
+
+    current_location = loc.get("location", "").lower()
+    reminders = calendar_store.get_reminders()
+
+    for r in reminders:
+        if not r.get("location") or r.get("done"):
+            continue
+
+        reminder_location = r["location"].lower()
+        trigger = r.get("location_trigger", "arrive")
+
+        # Resolve known place names (e.g., "home" → "rapids trail, waukesha")
+        known = getattr(config, "KNOWN_PLACES", {})
+        resolved = known.get(reminder_location, reminder_location)
+
+        # Check if current location matches
+        location_match = (
+            resolved in current_location
+            or current_location in resolved
+        )
+
+        if trigger == "arrive" and location_match:
+            # Fire the reminder
+            message = f"Location reminder: {r['text']} (you're at {loc.get('location', 'this location')})"
+            if not is_quiet_hours():
+                try:
+                    sms.send_to_owner(message)
+                    log.info("Location reminder fired: %s", r["id"])
+                except Exception as e:
+                    log.error("Location reminder SMS failed: %s", e)
+            calendar_store.complete_reminder(r["id"])
+
+
 # --- Nudge Evaluation ---
 
 # Cooldown periods in hours per nudge type
@@ -294,9 +334,12 @@ def run_nudge_evaluation():
 # --- Main ---
 
 def main():
-    """Single tick — check timers and maybe evaluate nudges."""
+    """Single tick — check timers, location reminders, and maybe nudges."""
     # Job 1: Always check timers
     process_timers()
+
+    # Job 2: Always check location-based reminders
+    check_location_reminders()
 
     # Job 2: Nudge evaluation on its own cadence
     state = load_state()

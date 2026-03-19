@@ -63,6 +63,13 @@ PHONE_IP = "100.x.x.x"         # phone's Tailscale IP
 PHONE_PORT = 8451               # Tasker HTTP Server port
 PHONE_IMAGE_DIR = "ARIA"        # directory on phone for pushed images (relative to internal storage)
 
+# --- Known Places (for location-based reminders) ---
+# Values are matched as substrings against reverse-geocoded addresses (case-insensitive)
+KNOWN_PLACES = {
+    "home": "your street, your city",
+    "work": "workplace street, city",
+}
+
 # --- Timers & Nudges ---
 TIMER_DB = DATA_DIR / "timers.json"
 NUDGE_INTERVAL_MIN = 30           # minutes between nudge evaluations

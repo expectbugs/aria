@@ -27,7 +27,7 @@ import sms
 import weather
 import news
 
-app = FastAPI(title="ARIA", version="0.3.0")
+app = FastAPI(title="ARIA", version="0.3.1")
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -341,12 +341,13 @@ You have access to the following tools via function results provided in the cont
 - FLUX.2 step guidance: use fewer steps (12-16) for quick/casual images, more steps (24-30) for high-quality artistic content. Default to fewer steps unless the user asks for high quality.
 
 When the user wants to add a calendar event, extract the title, date (YYYY-MM-DD), and time (HH:MM, 24h).
-When the user wants a reminder, extract the text and optional due date.
+When the user wants a reminder, extract the text and optional due date. For location-triggered reminders ("remind me when I get home", "remind me when I'm at work"), use the location field with a recognizable place name and location_trigger ("arrive" or "leave"). Location reminders are checked automatically against GPS data every minute.
 When the user wants weather, provide it conversationally.
 
 For calendar/reminder modifications, respond with a JSON action block at the END of your response:
 <!--ACTION::{"action": "add_event", "title": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}-->
 <!--ACTION::{"action": "add_reminder", "text": "...", "due": "YYYY-MM-DD"}-->
+<!--ACTION::{"action": "add_reminder", "text": "...", "location": "home", "location_trigger": "arrive"}-->
 <!--ACTION::{"action": "complete_reminder", "id": "..."}-->
 <!--ACTION::{"action": "delete_event", "id": "..."}-->
 <!--ACTION::{"action": "delete_reminder", "id": "..."}-->
@@ -621,6 +622,8 @@ def process_actions(response_text: str) -> str:
                     text=action["text"],
                     due=action.get("due"),
                     recurring=action.get("recurring"),
+                    location=action.get("location"),
+                    location_trigger=action.get("location_trigger"),
                 )
             elif act == "complete_reminder":
                 if not calendar_store.complete_reminder(action["id"]):

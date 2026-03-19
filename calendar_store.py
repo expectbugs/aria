@@ -81,15 +81,22 @@ def get_reminders(include_done: bool = False) -> list[dict]:
 
 
 def add_reminder(text: str, due: Optional[str] = None,
-                 recurring: Optional[str] = None) -> dict:
+                 recurring: Optional[str] = None,
+                 location: Optional[str] = None,
+                 location_trigger: Optional[str] = None) -> dict:
     """Add a reminder. due format: YYYY-MM-DD or YYYY-MM-DD HH:MM.
-    recurring: 'daily', 'weekly', 'monthly', or None."""
+    recurring: 'daily', 'weekly', 'monthly', or None.
+    location: place name for location-triggered reminders (e.g., 'home', 'work', address).
+    location_trigger: 'arrive' or 'leave' (default: 'arrive').
+    """
     reminders = _load(REMINDERS_DB)
     reminder = {
         "id": str(uuid.uuid4())[:8],
         "text": text,
         "due": due,
         "recurring": recurring,
+        "location": location,
+        "location_trigger": location_trigger or ("arrive" if location else None),
         "done": False,
         "created": datetime.now().isoformat(),
     }

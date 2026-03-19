@@ -6,6 +6,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.3.1] — 2026-03-19
+
+### Location-Based Reminders
+
+Geofencing is now handled natively by the existing location tracking + tick system. No separate Tasker GPS profiles needed.
+
+### Added
+
+- **Location-triggered reminders** — reminders with `location` and `location_trigger` (arrive/leave) fields. "Remind me when I get home to check the mail" creates a reminder that fires when GPS shows you at home.
+- **Known places in config** — `KNOWN_PLACES` maps names like "home", "work", "my house", "doctor" to partial address matches against reverse-geocoded GPS data
+- **`check_location_reminders()`** in tick.py — runs every tick (every minute), checks all location reminders against current GPS position, fires via SMS and marks complete
+
+### Changed
+
+- **`calendar_store.add_reminder()`** — new optional `location` and `location_trigger` parameters
+- **System prompt** — documents location-triggered reminder ACTION blocks, instructs ARIA to use them for "remind me when I get to X" requests
+- **Geofencing removed from Phase 5** — no longer needed as a separate feature
+
+---
+
 ## [0.3.0] — 2026-03-19
 
 ### Phase 3 Complete — Autonomous ARIA
