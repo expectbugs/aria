@@ -12,7 +12,7 @@
 //    Link to "ARIA Location" task
 //
 // Tasker variables available after Get Location v2:
-//   %gl_latitude, %gl_longitude, %gl_accuracy
+//   %gl_latitude, %gl_longitude, %gl_coordinates_accuracy
 //   %gl_speed (m/s, may be 0)
 //   %BATT (battery level, always available)
 
@@ -32,8 +32,8 @@ if (!lat || !lon || lat === "%gl_latitude") {
         "lon": parseFloat(lon)
     };
 
-    var acc = local("gl_accuracy");
-    if (acc && acc !== "%gl_accuracy") payload.accuracy = parseFloat(acc);
+    var acc = local("gl_coordinates_accuracy");
+    if (acc && acc !== "%gl_coordinates_accuracy") payload.accuracy = parseFloat(acc);
 
     var spd = local("gl_speed");
     if (spd && spd !== "%gl_speed") payload.speed = parseFloat(spd);
