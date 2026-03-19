@@ -325,8 +325,8 @@ You have access to the following tools via function results provided in the cont
 - Visual Output: Matplotlib (charts/graphs), Graphviz (diagrams/flowcharts), SVG (vector graphics) — write a script, run it, then push the result. ALL output must be PNG format for phone compatibility: use savefig("output.png") for Matplotlib, dot -Tpng for Graphviz, and convert SVG to PNG (e.g. via cairosvg or Inkscape) before pushing.
 - Push to Phone: python ~/aria/push_image.py /path/to/image.png [--caption "description"] — displays the image on the phone immediately
 - File Input: The user can send you files (photos, screenshots, PDFs, text files) from their phone. These arrive as content blocks in the message. Analyze the file and respond conversationally. For food photos, check against the diet reference if available in context.
-- Twilio: All Twilio credentials are in config.py. Two auth methods available: (1) TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN for primary REST API Basic Auth (user=AccountSID, password=AuthToken), (2) TWILIO_API_SID + TWILIO_API_KEY for revocable API key Basic Auth (user=API SID, password=API Key). Prefer the API key pair for routine operations. Access via `import config`.
-- Images intended for the phone should be generated at 540x1212 resolution with no upscale. After generating any image, ALWAYS push it to the phone using push_image.py.
+- Twilio: All Twilio credentials are in config.py. To send an SMS: `python -c "import sms; sms.send_to_owner('message text')"`. To send an MMS with an image: `python -c "import sms; sms.send_mms(config.OWNER_PHONE_NUMBER, 'caption', '/path/to/image.png')"` — this stages the file for Twilio to fetch via public URL and sends it. When responding to SMS conversations, if the response would benefit from an image, generate one and send it via MMS.
+- Images intended for the phone should be generated at 540x1212 resolution with no upscale. After generating any image, deliver it to the phone — use push_image.py for voice/file requests, or MMS via sms.send_mms() if responding to an SMS conversation.
 - FLUX.2 step guidance: use fewer steps (12-16) for quick/casual images, more steps (24-30) for high-quality artistic content. Default to fewer steps unless the user asks for high quality.
 
 When the user wants to add a calendar event, extract the title, date (YYYY-MM-DD), and time (HH:MM, 24h).
@@ -1170,6 +1170,20 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
         log_request(f"[sms:{from_number}] {user_text}", "ok",
                     response=response, duration=duration)
 
+        # Save full SMS conversation to dedicated log
+        sms_log = config.DATA_DIR / "sms_log.jsonl"
+        sms_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "from": from_number,
+            "to": config.TWILIO_PHONE_NUMBER,
+            "inbound": body,
+            "media": [url for url, _ in media_urls] if media_urls else [],
+            "response": response,
+            "duration_s": round(duration, 2),
+        }
+        with open(sms_log, "a") as f:
+            f.write(json.dumps(sms_entry) + "\n")
+
     except Exception as e:
         log.exception("SMS processing error")
         log_request(f"[sms:{from_number}] {body}", "error", error=str(e))
@@ -1225,6 +1239,34 @@ async def webhook_sms(request: Request):
     asyncio.create_task(_process_sms(from_number, body, media_urls))
 
     return Response(content="<Response></Response>", media_type="application/xml")
+
+
+@app.get("/mms_media/{filename}")
+async def serve_mms_media(filename: str):
+    """Serve staged MMS media files for Twilio to fetch.
+
+    Publicly accessible via Tailscale Funnel so Twilio can download
+    the image for MMS delivery. Files auto-clean after serving.
+    """
+    import re
+    safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '', filename)
+    path = sms.MMS_OUTBOX / safe_name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    mime_type, _ = mimetypes.guess_type(str(path))
+    content = path.read_bytes()
+
+    # Clean up after Twilio fetches it (delay slightly in case of retries)
+    async def _cleanup():
+        await asyncio.sleep(60)
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    asyncio.create_task(_cleanup())
+
+    return Response(content=content, media_type=mime_type or "application/octet-stream")
 
 
 @app.get("/snippet/{name}")

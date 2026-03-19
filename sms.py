@@ -1,12 +1,20 @@
 """Twilio SMS/MMS integration for ARIA."""
 
 import logging
+import shutil
+import uuid
+from pathlib import Path
+
 from twilio.rest import Client
 from twilio.request_validator import RequestValidator
 
 import config
 
 log = logging.getLogger("aria.sms")
+
+# Directory for outbound MMS media (served via /mms_media endpoint)
+MMS_OUTBOX = config.DATA_DIR / "mms_outbox"
+MMS_OUTBOX.mkdir(parents=True, exist_ok=True)
 
 # Lazy-initialized Twilio client
 _client: Client | None = None
@@ -18,6 +26,27 @@ def get_client() -> Client:
     if _client is None:
         _client = Client(config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN)
     return _client
+
+
+def stage_media(local_path: str) -> str:
+    """Copy a local file to the MMS outbox and return the public URL.
+
+    The file is served via the /mms_media endpoint through Tailscale Funnel,
+    making it accessible to Twilio for MMS delivery.
+    """
+    src = Path(local_path)
+    if not src.exists():
+        raise FileNotFoundError(f"Media file not found: {local_path}")
+
+    # Use a unique name to avoid collisions
+    media_id = str(uuid.uuid4())[:8]
+    dest = MMS_OUTBOX / f"{media_id}_{src.name}"
+    shutil.copy2(src, dest)
+
+    # Build public URL via Tailscale Funnel
+    public_url = f"{config.TWILIO_WEBHOOK_URL.rsplit('/sms', 1)[0]}/mms_media/{dest.name}"
+    log.info("Staged MMS media: %s -> %s", local_path, public_url)
+    return public_url
 
 
 def send_sms(to: str, body: str, media_url: str | None = None) -> str:
@@ -34,6 +63,12 @@ def send_sms(to: str, body: str, media_url: str | None = None) -> str:
     message = client.messages.create(**kwargs)
     log.info("SMS sent to %s (sid=%s)", to, message.sid)
     return message.sid
+
+
+def send_mms(to: str, body: str, local_path: str) -> str:
+    """Send an MMS with a local file. Stages the file and sends via Twilio."""
+    public_url = stage_media(local_path)
+    return send_sms(to, body, media_url=public_url)
 
 
 def send_to_owner(body: str, media_url: str | None = None) -> str:
