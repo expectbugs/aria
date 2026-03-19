@@ -20,6 +20,7 @@ import calendar_store
 import vehicle_store
 import health_store
 import legal_store
+import location_store
 import projects
 import sms
 import weather
@@ -283,6 +284,14 @@ async def gather_briefing_context() -> str:
     if diet_day > 0:
         parts.append(f"\nDiet day {diet_day} (started March 17, 2026)")
 
+    # Location — latest known position
+    loc = location_store.get_latest()
+    if loc:
+        parts.append(f"\nLast known location: {loc['lat']:.4f}, {loc['lon']:.4f}"
+                     f" (as of {loc['timestamp'][11:16]})")
+        if loc.get("battery_pct") is not None:
+            parts.append(f"  Phone battery: {loc['battery_pct']}%")
+
     # Legal — upcoming dates only (don't surface case details unprompted)
     legal_upcoming = legal_store.get_upcoming_dates()
     if legal_upcoming:
@@ -325,6 +334,7 @@ You have access to the following tools via function results provided in the cont
 - Visual Output: Matplotlib (charts/graphs), Graphviz (diagrams/flowcharts), SVG (vector graphics) — write a script, run it, then push the result. ALL output must be PNG format for phone compatibility: use savefig("output.png") for Matplotlib, dot -Tpng for Graphviz, and convert SVG to PNG (e.g. via cairosvg or Inkscape) before pushing.
 - Push to Phone: python ~/aria/push_image.py /path/to/image.png [--caption "description"] — displays the image on the phone immediately
 - File Input: The user can send you files (photos, screenshots, PDFs, text files) from their phone. These arrive as content blocks in the message. Analyze the file and respond conversationally. For food photos, check against the diet reference if available in context.
+- Location: The user's phone reports GPS coordinates every 5 minutes to /location. Latest position and history are available in context when location-related keywords are detected. Location data is in data/location.jsonl.
 - Twilio: All Twilio credentials are in config.py. To send an SMS: `python -c "import sms; sms.send_to_owner('message text')"`. To send an MMS with an image: `python -c "import sms; sms.send_mms(config.OWNER_PHONE_NUMBER, 'caption', '/path/to/image.png')"` — this stages the file for Twilio to fetch via public URL and sends it. When responding to SMS conversations, if the response would benefit from an image, generate one and send it via MMS.
 - Images intended for the phone should be generated at 540x1212 resolution with no upscale. After generating any image, deliver it to the phone — use push_image.py for voice/file requests, or MMS via sms.send_mms() if responding to an SMS conversation.
 - FLUX.2 step guidance: use fewer steps (12-16) for quick/casual images, more steps (24-30) for high-quality artistic content. Default to fewer steps unless the user asks for high quality.
@@ -679,6 +689,25 @@ def verify_auth(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+class LocationUpdate(BaseModel):
+    lat: float
+    lon: float
+    accuracy: float | None = None
+    speed: float | None = None
+    battery: int | None = None
+
+
+@app.post("/location")
+async def update_location(loc: LocationUpdate, request: Request):
+    """Receive a location update from the phone."""
+    verify_auth(request)
+    entry = location_store.record(
+        lat=loc.lat, lon=loc.lon, accuracy=loc.accuracy,
+        speed=loc.speed, battery=loc.battery,
+    )
+    return {"status": "ok", "timestamp": entry["timestamp"]}
+
+
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest, request: Request):
     start = time.time()
@@ -825,6 +854,27 @@ async def ask(req: AskRequest, request: Request):
                 else:
                     ctx_parts.append("No project briefs found in data/projects/. "
                                      "Create one by writing a markdown file there.")
+
+            # Location context
+            location_keywords = ["where am i", "where i am", "location",
+                                 "how far", "near me", "close to",
+                                 "my location", "where are you"]
+            if any(kw in text.lower() for kw in location_keywords):
+                loc = location_store.get_latest()
+                if loc:
+                    ctx_parts.append(
+                        f"User's last known location: {loc['lat']:.4f}, {loc['lon']:.4f}"
+                        f" (as of {loc['timestamp'][11:16]})"
+                    )
+                    if loc.get("battery_pct") is not None:
+                        ctx_parts.append(f"Phone battery: {loc['battery_pct']}%")
+                # Include recent movement if they're asking about location
+                history = location_store.get_history(hours=4)
+                if len(history) > 1:
+                    ctx_parts.append("Recent movement (last 4 hours): " + "; ".join(
+                        f"{h['timestamp'][11:16]} → {h['lat']:.4f},{h['lon']:.4f}"
+                        for h in history[-12:]  # last 12 data points max
+                    ))
 
             # Legal context
             legal_keywords = ["case", "legal", "court", "lawyer", "attorney",
