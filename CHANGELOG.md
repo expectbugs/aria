@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.1] — 2026-03-20
+
+### Performance: async TTS, parallel fetches, health checks
+
+Offloads TTS to thread pool so the event loop stays responsive. Parallelizes Fitbit and news fetches. Adds dependency health checks to `/health`.
+
+### Changed
+
+- **TTS no longer blocks the event loop** (S4) — `kokoro.create()` now runs via `asyncio.to_thread()` through a centralized `_generate_tts()` helper. Replaces 5 duplicate inline TTS blocks with one shared function.
+- **Fitbit snapshot fetches run in parallel** (M4) — `fetch_daily_snapshot()` uses `asyncio.gather` for 8 API calls (~1.6s → ~200ms). Added `asyncio.Lock` on token refresh to prevent stampede when parallel requests all hit 401.
+- **News feeds fetched in parallel** (M6) — `get_news_digest()` uses `asyncio.gather` for all RSS feeds (~3x faster morning briefings).
+- **`/health` reports dependency status** (D3) — response now includes `checks` dict: database connectivity, Claude CLI process alive, TTS model loaded, Whisper model loaded (if enabled). Returns `"status": "degraded"` if database or Claude are down.
+- **Version** bumped to 0.4.1
+
+---
+
 ## [0.4.0] — 2026-03-20
 
 ### PostgreSQL Migration — All Data Stores

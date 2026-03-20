@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.1", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -1123,10 +1123,37 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
 @app.get("/health")
 async def health():
     uptime = time.time() - START_TIME
+    checks = {}
+
+    # Database
+    try:
+        with db.get_conn() as conn:
+            conn.execute("SELECT 1")
+        checks["database"] = "ok"
+    except Exception:
+        checks["database"] = "error"
+
+    # Claude CLI process
+    checks["claude"] = "ok" if _claude_session._is_alive() else "down"
+
+    # TTS model
+    checks["tts"] = "loaded" if _kokoro is not None else "not loaded"
+
+    # Whisper model (if enabled)
+    if getattr(config, 'ENABLE_WHISPER', False):
+        try:
+            import whisper_engine
+            checks["whisper"] = "loaded" if whisper_engine._engine and whisper_engine._engine._model else "not loaded"
+        except Exception:
+            checks["whisper"] = "error"
+
+    degraded = checks.get("database") != "ok" or checks.get("claude") != "ok"
+
     return {
-        "status": "ok",
+        "status": "degraded" if degraded else "ok",
         "uptime_s": round(uptime, 1),
         "version": app.version,
+        "checks": checks,
     }
 
 
@@ -1262,24 +1289,34 @@ def _get_kokoro():
     return _kokoro
 
 
+def _tts_sync(text: str) -> bytes:
+    """Generate TTS audio synchronously. Called from thread pool."""
+    import io
+    import soundfile as sf
+
+    kokoro = _get_kokoro()
+    samples, sample_rate = kokoro.create(
+        text, voice=config.KOKORO_VOICE, speed=1.0, lang="en-us"
+    )
+    buf = io.BytesIO()
+    sf.write(buf, samples, sample_rate, format="WAV")
+    buf.seek(0)
+    return buf.read()
+
+
+async def _generate_tts(text: str) -> bytes:
+    """Generate TTS audio without blocking the event loop."""
+    return await asyncio.to_thread(_tts_sync, text)
+
+
 @app.post("/ask/audio")
 async def ask_audio(req: AskRequest, request: Request):
     """Same as /ask but returns WAV audio via Kokoro TTS."""
     result = await ask(req, request)
-    text = result.response
 
     try:
-        import io
-        import soundfile as sf
-
-        kokoro = _get_kokoro()
-        samples, sample_rate = kokoro.create(
-            text, voice=config.KOKORO_VOICE, speed=1.0, lang="en-us"
-        )
-        buf = io.BytesIO()
-        sf.write(buf, samples, sample_rate, format="WAV")
-        buf.seek(0)
-        return Response(content=buf.read(), media_type="audio/wav")
+        audio = await _generate_tts(result.response)
+        return Response(content=audio, media_type="audio/wav")
     except Exception as e:
         log_request("TTS", "error", error=str(e))
         raise HTTPException(status_code=500, detail=f"TTS error: {e}")
@@ -1289,19 +1326,8 @@ async def _process_task(task_id: str, req: AskRequest, request: Request):
     """Background worker for async ask processing."""
     try:
         result = await ask(req, request)
-        text = result.response
-
-        import io
-        import soundfile as sf
-
-        kokoro = _get_kokoro()
-        samples, sample_rate = kokoro.create(
-            text, voice=config.KOKORO_VOICE, speed=1.0, lang="en-us"
-        )
-        buf = io.BytesIO()
-        sf.write(buf, samples, sample_rate, format="WAV")
-        buf.seek(0)
-        _tasks[task_id].update({"status": "done", "audio": buf.read()})
+        audio = await _generate_tts(result.response)
+        _tasks[task_id].update({"status": "done", "audio": audio})
     except Exception as e:
         _tasks[task_id].update({"status": "error", "error": str(e)})
 
@@ -1351,17 +1377,8 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         log_request(f"[file:{filename}] {user_text}", "ok",
                     response=response, duration=duration)
 
-        import io
-        import soundfile as sf
-
-        kokoro = _get_kokoro()
-        samples, sample_rate = kokoro.create(
-            response, voice=config.KOKORO_VOICE, speed=1.0, lang="en-us"
-        )
-        buf = io.BytesIO()
-        sf.write(buf, samples, sample_rate, format="WAV")
-        buf.seek(0)
-        _tasks[task_id].update({"status": "done", "audio": buf.read()})
+        audio = await _generate_tts(response)
+        _tasks[task_id].update({"status": "done", "audio": audio})
     except Exception as e:
         log_request(f"[file:{filename}] {caption}", "error", error=str(e))
         _tasks[task_id].update({"status": "error", "error": str(e)})
@@ -1546,23 +1563,14 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
             response = "I've sent that to you as a text."
 
         # Step 4: Generate TTS audio
-        import io
-        import soundfile as sf
-
-        kokoro = _get_kokoro()
-        samples, sample_rate = kokoro.create(
-            response, voice=config.KOKORO_VOICE, speed=1.0, lang="en-us"
-        )
-        buf = io.BytesIO()
-        sf.write(buf, samples, sample_rate, format="WAV")
-        buf.seek(0)
+        audio = await _generate_tts(response)
 
         duration = time.time() - start
         log_request(f"[voice] {user_text}", "ok", response=response, duration=duration)
 
         _tasks[task_id].update({
             "status": "done",
-            "audio": buf.read(),
+            "audio": audio,
             "transcript": user_text,
         })
     except Exception as e:
@@ -1756,15 +1764,9 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
         if delivery == "voice":
             # User requested voice delivery — generate TTS and push audio
             try:
-                import io as _io
-                import soundfile as sf
-
-                kokoro = _get_kokoro()
-                samples, sample_rate = kokoro.create(
-                    response, voice=config.KOKORO_VOICE, speed=1.0, lang="en-us"
-                )
+                audio = await _generate_tts(response)
                 wav_path = config.DATA_DIR / "sms_voice_response.wav"
-                sf.write(str(wav_path), samples, sample_rate, format="WAV")
+                wav_path.write_bytes(audio)
                 import push_audio
                 push_audio.push_audio(str(wav_path))
                 log.info("Voice delivery via SMS request from %s", from_number)

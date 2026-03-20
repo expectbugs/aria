@@ -1,5 +1,7 @@
 """News digest via RSS feeds."""
 
+import asyncio
+
 import feedparser
 import httpx
 from config import NEWS_FEEDS
@@ -24,10 +26,14 @@ async def fetch_feed(name: str, url: str, max_items: int = 3) -> list[dict]:
 
 
 async def get_news_digest(max_per_feed: int = 3) -> dict[str, list[dict]]:
-    """Fetch headlines from all configured feeds."""
+    """Fetch headlines from all configured feeds in parallel."""
+    names = list(NEWS_FEEDS.keys())
+    urls = list(NEWS_FEEDS.values())
+    results = await asyncio.gather(
+        *[fetch_feed(n, u, max_per_feed) for n, u in zip(names, urls)]
+    )
     digest = {}
-    for name, url in NEWS_FEEDS.items():
-        items = await fetch_feed(name, url, max_per_feed)
+    for name, items in zip(names, results):
         if items:
             digest[name] = items
     return digest

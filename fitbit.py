@@ -4,6 +4,7 @@ Handles OAuth2 token management and provides typed accessors for all
 health/fitness data types available from a Personal app registration.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, date, timedelta
@@ -24,6 +25,7 @@ class FitbitClient:
     def __init__(self):
         self._tokens: dict | None = None
         self._user_id: str = "-"  # "-" means current user in Fitbit API
+        self._refresh_lock = asyncio.Lock()
 
     def _load_tokens(self) -> dict:
         if self._tokens:
@@ -41,25 +43,36 @@ class FitbitClient:
         self._user_id = tokens.get("user_id", "-")
         config.FITBIT_TOKEN_FILE.write_text(json.dumps(tokens, indent=2))
 
-    async def _refresh_tokens(self):
-        """Refresh the access token using the refresh token."""
-        tokens = self._load_tokens()
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{API_BASE}/oauth2/token",
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": tokens["refresh_token"],
-                    "client_id": config.FITBIT_CLIENT_ID,
-                },
-                auth=(config.FITBIT_CLIENT_ID, config.FITBIT_CLIENT_SECRET),
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Token refresh failed ({resp.status_code}): {resp.text}")
-        new_tokens = resp.json()
-        self._save_tokens(new_tokens)
-        log.info("Fitbit tokens refreshed")
+    async def _refresh_tokens(self, expired_access_token: str = ""):
+        """Refresh the access token using the refresh token.
+
+        Uses a lock to prevent concurrent refresh stampedes when multiple
+        parallel requests all hit 401 at the same time.
+        """
+        async with self._refresh_lock:
+            # Re-check: another coroutine may have already refreshed
+            self._tokens = None  # force reload from disk
+            tokens = self._load_tokens()
+            if expired_access_token and tokens["access_token"] != expired_access_token:
+                log.info("Fitbit tokens already refreshed by another request")
+                return
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{API_BASE}/oauth2/token",
+                    data={
+                        "grant_type": "refresh_token",
+                        "refresh_token": tokens["refresh_token"],
+                        "client_id": config.FITBIT_CLIENT_ID,
+                    },
+                    auth=(config.FITBIT_CLIENT_ID, config.FITBIT_CLIENT_SECRET),
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+            if resp.status_code != 200:
+                raise RuntimeError(f"Token refresh failed ({resp.status_code}): {resp.text}")
+            new_tokens = resp.json()
+            self._save_tokens(new_tokens)
+            log.info("Fitbit tokens refreshed")
 
     async def _request(self, path: str, params: dict | None = None) -> dict:
         """Make an authenticated API request with auto-refresh on 401."""
@@ -72,8 +85,8 @@ class FitbitClient:
             )
 
             if resp.status_code == 401:
-                # Token expired, refresh and retry
-                await self._refresh_tokens()
+                # Token expired — refresh (lock prevents stampede)
+                await self._refresh_tokens(expired_access_token=tokens["access_token"])
                 tokens = self._load_tokens()
                 headers = {"Authorization": f"Bearer {tokens['access_token']}"}
                 resp = await client.get(
@@ -266,27 +279,30 @@ class FitbitClient:
     # --- Batch Fetch (used by webhook handler) ---
 
     async def fetch_daily_snapshot(self, day: str = "today") -> dict:
-        """Fetch all daily data types in one batch. Returns a unified snapshot."""
+        """Fetch all daily data types in parallel. Returns a unified snapshot."""
         snapshot = {"date": day, "fetched_at": datetime.now().isoformat()}
 
-        # Fetch all data types, tolerating individual failures
-        fetchers = {
-            "heart_rate": self.get_heart_rate(day),
-            "hrv": self.get_hrv(day),
-            "sleep": self.get_sleep(day),
-            "spo2": self.get_spo2(day),
-            "activity": self.get_activity_summary(day),
-            "breathing_rate": self.get_breathing_rate(day),
-            "temperature": self.get_temperature(day),
-            "vo2max": self.get_vo2max(day),
-        }
+        # Fetch all data types in parallel, tolerating individual failures
+        keys = ["heart_rate", "hrv", "sleep", "spo2",
+                "activity", "breathing_rate", "temperature", "vo2max"]
+        coros = [
+            self.get_heart_rate(day),
+            self.get_hrv(day),
+            self.get_sleep(day),
+            self.get_spo2(day),
+            self.get_activity_summary(day),
+            self.get_breathing_rate(day),
+            self.get_temperature(day),
+            self.get_vo2max(day),
+        ]
 
-        for key, coro in fetchers.items():
-            try:
-                snapshot[key] = await coro
-            except Exception as e:
-                log.warning("Failed to fetch %s: %s", key, e)
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        for key, result in zip(keys, results):
+            if isinstance(result, Exception):
+                log.warning("Failed to fetch %s: %s", key, result)
                 snapshot[key] = None
+            else:
+                snapshot[key] = result
 
         return snapshot
 
