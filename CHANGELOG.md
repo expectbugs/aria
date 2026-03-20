@@ -6,6 +6,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.2] — 2026-03-20
+
+### Second code audit: 9 bug fixes (v0.4.2)
+
+Second comprehensive audit of all 23 source files. Fixed 6 significant and 3 moderate bugs found during the review.
+
+### Fixed
+
+- **ACTION block markup leaks into responses** (S9) — `re.sub` was missing `re.DOTALL` flag (the `re.findall` had it since v0.3.9 but the stripping sub was missed). Multiline ACTION blocks now fully stripped from spoken/texted responses. Also fixed in nudge endpoint.
+- **Location reminders lost during quiet hours** (S11) — `complete_reminder()` was called regardless of whether SMS was sent. Now only completes on successful delivery; retries next tick otherwise.
+- **Ghost exercise sessions** (S10) — `start_exercise()` now deactivates any existing active session (`end_reason = 'superseded'`) before creating a new one.
+- **Fitbit snapshot null overwrite** (S13) — Failed data type fetches no longer set keys to null. Null values are also filtered in `save_snapshot()` as defense-in-depth, preventing JSONB merge from overwriting good data.
+- **Claude subprocess orphaned on shutdown** (M16) — Lifespan now calls `_claude_session._kill()` before closing the DB pool.
+- **File upload delivery routing** (S8) — `_process_file_task` now supports `set_delivery` ACTION blocks. SMS delivery sends text and skips TTS entirely (no voice output when SMS was requested). Same fix applied to `_process_voice_task`.
+- **SMS from any phone number** (M13) — SMS webhook now rejects messages from non-owner phone numbers (STOP/HELP remain open for A2P compliance).
+- **ACTION failure replaces entire response** (M2) — Error notice now appended to response instead of replacing it, preserving Claude's conversational answer.
+- **tick.py error isolation** (M14) — Each cron job now wrapped in its own try/except. One job failure no longer blocks timers, location reminders, exercise coaching, Fitbit polling, or nudges.
+
+### Changed
+
+- **Delivery routing returns no audio for SMS** — When `set_delivery` routes to SMS, task completes with empty audio and `"delivery": "sms"` in status response. Tasker can skip audio fetch/playback entirely.
+- **Version** bumped to 0.4.2
+
+---
+
 ## [0.4.1] — 2026-03-20
 
 ### Performance: async TTS, parallel fetches, health checks

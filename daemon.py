@@ -39,10 +39,11 @@ async def lifespan(app: FastAPI):
     """Initialize and clean up resources."""
     db.get_pool()  # warm the connection pool
     yield
+    await _claude_session._kill()
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.1", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.2", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -1074,11 +1075,11 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             log_request("ACTION", "error", error=str(e))
 
     # Strip action blocks from spoken response
-    clean_response = re.sub(r'<!--ACTION::.*?-->', '', response_text).strip()
+    clean_response = re.sub(r'<!--ACTION::.*?-->', '', response_text, flags=re.DOTALL).strip()
 
     if failures:
         log_request("ACTION", "error", error="; ".join(failures))
-        clean_response = "Sorry, something went wrong. " + " ".join(failures) + " Please try again."
+        clean_response += "\n\nNote: Some actions failed — " + " ".join(failures)
 
     # Validate: if specific actions were expected but not found, warn
     if expect_actions:
@@ -1371,11 +1372,23 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         )
 
         response = await ask_claude(user_text, extra_context, file_blocks)
-        response = process_actions(response)
+        delivery_meta = {}
+        response = process_actions(response, metadata=delivery_meta)
+        delivery = delivery_meta.get("delivery", "voice")
 
         duration = time.time() - start
         log_request(f"[file:{filename}] {user_text}", "ok",
                     response=response, duration=duration)
+
+        # Handle delivery routing
+        if delivery == "sms":
+            try:
+                sms.send_to_owner(response)
+            except Exception as se:
+                log.error("SMS delivery from file request failed: %s", se)
+            # No voice output — user explicitly requested SMS
+            _tasks[task_id].update({"status": "done", "audio": b"", "delivery": "sms"})
+            return
 
         audio = await _generate_tts(response)
         _tasks[task_id].update({"status": "done", "audio": audio})
@@ -1485,7 +1498,10 @@ async def ask_status(task_id: str, request: Request):
     elif task["status"] == "error":
         return JSONResponse(status_code=500, content={"status": "error", "error": task.get("error", "Unknown")})
     else:
-        return JSONResponse(status_code=200, content={"status": "done"})
+        content = {"status": "done"}
+        if task.get("delivery"):
+            content["delivery"] = task["delivery"]
+        return JSONResponse(status_code=200, content=content)
 
 
 # --- Whisper STT Endpoints ---
@@ -1555,12 +1571,21 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
 
         # Step 3: Handle delivery routing
         if delivery == "sms":
-            # User asked for text delivery — send SMS, speak brief confirmation
+            # User asked for text delivery — send SMS, no voice output
             try:
                 sms.send_to_owner(response)
             except Exception as se:
                 log.error("SMS delivery from voice request failed: %s", se)
-            response = "I've sent that to you as a text."
+
+            duration = time.time() - start
+            log_request(f"[voice] {user_text}", "ok", response=response, duration=duration)
+            _tasks[task_id].update({
+                "status": "done",
+                "audio": b"",
+                "transcript": user_text,
+                "delivery": "sms",
+            })
+            return
 
         # Step 4: Generate TTS audio
         audio = await _generate_tts(response)
@@ -1833,7 +1858,7 @@ async def nudge(req: NudgeRequest, request: Request):
 
     response = await ask_claude(prompt, extra_context)
     # Strip any accidental ACTION blocks
-    response = re.sub(r'<!--ACTION::.*?-->', '', response).strip()
+    response = re.sub(r'<!--ACTION::.*?-->', '', response, flags=re.DOTALL).strip()
 
     return {"message": response}
 
@@ -1875,6 +1900,11 @@ async def webhook_sms(request: Request):
             content=f'<Response><Message>{help_text}</Message></Response>',
             media_type="application/xml",
         )
+
+    # Only process messages from the owner (STOP/HELP remain open for A2P compliance)
+    if from_number != config.OWNER_PHONE_NUMBER:
+        log.warning("SMS from unknown sender %s ignored", from_number)
+        return Response(content="<Response></Response>", media_type="application/xml")
 
     if not body and not media_urls:
         return Response(content="<Response></Response>", media_type="application/xml")

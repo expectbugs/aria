@@ -4,6 +4,7 @@ Provides sync connections to PostgreSQL via a connection pool.
 Used by all stores (daemon.py and tick.py).
 """
 
+import atexit
 import logging
 from datetime import date as _date, time as _time, datetime as _datetime
 
@@ -72,3 +73,6 @@ def close():
         _pool.close()
         _pool = None
         log.info("Database connection pool closed")
+
+
+atexit.register(close)

@@ -24,6 +24,9 @@ def save_snapshot(snapshot: dict):
         day = (date.today() - timedelta(days=1)).isoformat()
     snapshot["date"] = day
 
+    # Filter null values to avoid overwriting good data in JSONB merge
+    snapshot = {k: v for k, v in snapshot.items() if v is not None}
+
     with db.get_conn() as conn:
         conn.execute(
             """INSERT INTO fitbit_snapshots (date, data)
@@ -327,6 +330,12 @@ def start_exercise(exercise_type: str = "general") -> dict:
     }
 
     with db.get_conn() as conn:
+        # Deactivate any existing active session to prevent ghost rows
+        conn.execute(
+            """UPDATE fitbit_exercise
+               SET active = FALSE, ended_at = NOW(), end_reason = 'superseded'
+               WHERE active = TRUE"""
+        )
         row = conn.execute(
             """INSERT INTO fitbit_exercise
                (exercise_type, resting_hr, max_hr, target_zones)

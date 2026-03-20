@@ -300,7 +300,7 @@ class FitbitClient:
         for key, result in zip(keys, results):
             if isinstance(result, Exception):
                 log.warning("Failed to fetch %s: %s", key, result)
-                snapshot[key] = None
+                # Don't set key to None — would overwrite good data in JSONB merge
             else:
                 snapshot[key] = result
 

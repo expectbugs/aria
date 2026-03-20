@@ -190,15 +190,16 @@ def check_location_reminders():
         )
 
         if trigger == "arrive" and location_match:
-            # Fire the reminder
+            # Fire the reminder — only complete if delivery succeeds
+            if is_quiet_hours():
+                continue  # retry next tick after quiet hours
             message = f"Location reminder: {r['text']} (you're at {loc.get('location', 'this location')})"
-            if not is_quiet_hours():
-                try:
-                    sms.send_to_owner(message)
-                    log.info("Location reminder fired: %s", r["id"])
-                except Exception as e:
-                    log.error("Location reminder SMS failed: %s", e)
-            calendar_store.complete_reminder(r["id"])
+            try:
+                sms.send_to_owner(message)
+                log.info("Location reminder fired: %s", r["id"])
+                calendar_store.complete_reminder(r["id"])
+            except Exception as e:
+                log.error("Location reminder SMS failed: %s", e)
 
 
 # --- Nudge Evaluation ---
@@ -587,28 +588,33 @@ def process_fitbit_poll():
 # --- Main ---
 
 def main():
-    """Single tick — check timers, location reminders, exercise, fitbit, and maybe nudges."""
-    # Job 1: Always check timers
-    process_timers()
+    """Single tick — check timers, location reminders, exercise, fitbit, and maybe nudges.
 
-    # Job 2: Always check location-based reminders
-    check_location_reminders()
-
-    # Job 3: Exercise coaching (every tick when active)
-    process_exercise_tick()
-
-    # Job 4: Fitbit data polling (every 15 min during waking hours)
-    process_fitbit_poll()
+    Each job is isolated so one failure doesn't block the rest.
+    """
+    for job_name, job_fn in [
+        ("timers", process_timers),
+        ("location_reminders", check_location_reminders),
+        ("exercise", process_exercise_tick),
+        ("fitbit_poll", process_fitbit_poll),
+    ]:
+        try:
+            job_fn()
+        except Exception:
+            log.exception("Tick job '%s' failed", job_name)
 
     # Job 5: Nudge evaluation on its own cadence
-    state = load_state()
-    last_nudge = state.get("last_nudge_check", "")
-    cutoff = (datetime.now() - timedelta(minutes=config.NUDGE_INTERVAL_MIN)).isoformat()
+    try:
+        state = load_state()
+        last_nudge = state.get("last_nudge_check", "")
+        cutoff = (datetime.now() - timedelta(minutes=config.NUDGE_INTERVAL_MIN)).isoformat()
 
-    if not last_nudge or last_nudge < cutoff:
-        run_nudge_evaluation()
-        state["last_nudge_check"] = datetime.now().isoformat()
-        save_state(state)
+        if not last_nudge or last_nudge < cutoff:
+            run_nudge_evaluation()
+            state["last_nudge_check"] = datetime.now().isoformat()
+            save_state(state)
+    except Exception:
+        log.exception("Tick job 'nudge_evaluation' failed")
 
 
 if __name__ == "__main__":
