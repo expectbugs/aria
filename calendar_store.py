@@ -1,127 +1,116 @@
-"""Local calendar and reminders store backed by JSON files."""
+"""Local calendar and reminders store backed by PostgreSQL."""
 
-import json
 import uuid
-from datetime import datetime, date
-from pathlib import Path
+from datetime import datetime
 from typing import Optional
 
-from config import CALENDAR_DB, REMINDERS_DB
-
-
-def _load(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    return json.loads(path.read_text())
-
-
-def _save(path: Path, data: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, default=str))
+import db
 
 
 # --- Calendar Events ---
 
 def get_events(start: Optional[str] = None, end: Optional[str] = None) -> list[dict]:
     """Get calendar events, optionally filtered by date range (YYYY-MM-DD)."""
-    events = _load(CALENDAR_DB)
+    clauses = []
+    params = []
     if start:
-        events = [e for e in events if e.get("date", "") >= start]
+        clauses.append("date >= %s")
+        params.append(start)
     if end:
-        events = [e for e in events if e.get("date", "") <= end]
-    return sorted(events, key=lambda e: (e.get("date", ""), e.get("time", "")))
+        clauses.append("date <= %s")
+        params.append(end)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM events {where} ORDER BY date, time",
+            params,
+        ).fetchall()
+    return [db.serialize_row(r) for r in rows]
 
 
 def add_event(title: str, event_date: str, time: Optional[str] = None,
               notes: Optional[str] = None) -> dict:
     """Add a calendar event. date format: YYYY-MM-DD, time format: HH:MM."""
-    events = _load(CALENDAR_DB)
-    event = {
-        "id": str(uuid.uuid4())[:8],
-        "title": title,
-        "date": event_date,
-        "time": time,
-        "notes": notes,
-        "created": datetime.now().isoformat(),
-    }
-    events.append(event)
-    _save(CALENDAR_DB, events)
-    return event
+    event_id = str(uuid.uuid4())[:8]
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """INSERT INTO events (id, title, date, time, notes)
+               VALUES (%s, %s, %s, %s, %s)
+               RETURNING *""",
+            (event_id, title, event_date, time, notes),
+        ).fetchone()
+    return db.serialize_row(row)
 
 
 def modify_event(event_id: str, **updates) -> Optional[dict]:
     """Modify an existing event by ID. Pass fields to update as kwargs."""
-    events = _load(CALENDAR_DB)
-    for event in events:
-        if event["id"] == event_id:
-            event.update(updates)
-            _save(CALENDAR_DB, events)
-            return event
-    return None
+    # Filter out internal fields that shouldn't be overwritten
+    allowed = {"title", "date", "time", "notes"}
+    updates = {k: v for k, v in updates.items() if k in allowed}
+    if not updates:
+        return None
+    set_clause = ", ".join(f"{k} = %s" for k in updates)
+    params = list(updates.values()) + [event_id]
+    with db.get_conn() as conn:
+        row = conn.execute(
+            f"UPDATE events SET {set_clause} WHERE id = %s RETURNING *",
+            params,
+        ).fetchone()
+    return db.serialize_row(row) if row else None
 
 
 def delete_event(event_id: str) -> bool:
     """Delete an event by ID."""
-    events = _load(CALENDAR_DB)
-    new_events = [e for e in events if e["id"] != event_id]
-    if len(new_events) == len(events):
-        return False
-    _save(CALENDAR_DB, new_events)
-    return True
+    with db.get_conn() as conn:
+        cur = conn.execute("DELETE FROM events WHERE id = %s", (event_id,))
+    return cur.rowcount > 0
 
 
 # --- Reminders ---
 
 def get_reminders(include_done: bool = False) -> list[dict]:
     """Get all reminders. By default only returns active ones."""
-    reminders = _load(REMINDERS_DB)
-    if not include_done:
-        reminders = [r for r in reminders if not r.get("done")]
-    return sorted(reminders, key=lambda r: r.get("due", "") or "9999")
+    if include_done:
+        where = ""
+    else:
+        where = "WHERE NOT done"
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM reminders {where} ORDER BY COALESCE(due, '9999-12-31')",
+        ).fetchall()
+    return [db.serialize_row(r) for r in rows]
 
 
 def add_reminder(text: str, due: Optional[str] = None,
                  recurring: Optional[str] = None,
                  location: Optional[str] = None,
                  location_trigger: Optional[str] = None) -> dict:
-    """Add a reminder. due format: YYYY-MM-DD or YYYY-MM-DD HH:MM.
-    recurring: 'daily', 'weekly', 'monthly', or None.
-    location: place name for location-triggered reminders (e.g., 'home', 'work', address).
-    location_trigger: 'arrive' or 'leave' (default: 'arrive').
-    """
-    reminders = _load(REMINDERS_DB)
-    reminder = {
-        "id": str(uuid.uuid4())[:8],
-        "text": text,
-        "due": due,
-        "recurring": recurring,
-        "location": location,
-        "location_trigger": location_trigger or ("arrive" if location else None),
-        "done": False,
-        "created": datetime.now().isoformat(),
-    }
-    reminders.append(reminder)
-    _save(REMINDERS_DB, reminders)
-    return reminder
+    """Add a reminder. due format: YYYY-MM-DD or YYYY-MM-DD HH:MM."""
+    reminder_id = str(uuid.uuid4())[:8]
+    trigger = location_trigger or ("arrive" if location else None)
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """INSERT INTO reminders (id, text, due, recurring, location, location_trigger)
+               VALUES (%s, %s, %s, %s, %s, %s)
+               RETURNING *""",
+            (reminder_id, text, due, recurring, location, trigger),
+        ).fetchone()
+    return db.serialize_row(row)
 
 
 def complete_reminder(reminder_id: str) -> Optional[dict]:
     """Mark a reminder as done."""
-    reminders = _load(REMINDERS_DB)
-    for r in reminders:
-        if r["id"] == reminder_id:
-            r["done"] = True
-            r["completed_at"] = datetime.now().isoformat()
-            _save(REMINDERS_DB, reminders)
-            return r
-    return None
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """UPDATE reminders SET done = TRUE, completed_at = NOW()
+               WHERE id = %s RETURNING *""",
+            (reminder_id,),
+        ).fetchone()
+    return db.serialize_row(row) if row else None
 
 
 def delete_reminder(reminder_id: str) -> bool:
     """Delete a reminder by ID."""
-    reminders = _load(REMINDERS_DB)
-    new_reminders = [r for r in reminders if r["id"] != reminder_id]
-    if len(new_reminders) == len(reminders):
-        return False
-    _save(REMINDERS_DB, new_reminders)
-    return True
+    with db.get_conn() as conn:
+        cur = conn.execute("DELETE FROM reminders WHERE id = %s", (reminder_id,))
+    return cur.rowcount > 0

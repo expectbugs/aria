@@ -9,6 +9,7 @@ import os
 import re
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 
 import config
+import db
 import calendar_store
 import vehicle_store
 import health_store
@@ -31,12 +33,21 @@ import fitbit
 import fitbit_store
 import nutrition_store
 
-app = FastAPI(title="ARIA", version="0.3.9")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize and clean up resources."""
+    db.get_pool()  # warm the connection pool
+    yield
+    db.close()
+
+
+app = FastAPI(title="ARIA", version="0.4.0", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
 
-# Ensure dirs exist
+# Ensure dirs exist (still needed for inbox, mms_outbox, etc.)
 config.LOGS_DIR.mkdir(parents=True, exist_ok=True)
 config.DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -57,16 +68,16 @@ class AskResponse(BaseModel):
 
 def log_request(text: str, status: str, response: str = "", error: str = "",
                 duration: float = 0.0):
-    entry = {
-        "timestamp": datetime.now().isoformat(),
-        "input": text,
-        "status": status,
-        "response": response[:500] if response else "",
-        "error": error,
-        "duration_s": round(duration, 2),
-    }
-    with open(config.REQUEST_LOG, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    try:
+        with db.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO request_log (input, status, response, error, duration_s)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (text, status, (response[:500] if response else ""),
+                 error, round(duration, 2)),
+            )
+    except Exception as e:
+        logging.getLogger("aria").error("Failed to log request: %s", e)
 
 
 # --- Context Gathering ---
@@ -74,19 +85,12 @@ def log_request(text: str, status: str, response: str = "", error: str = "",
 def _get_today_requests() -> list[dict]:
     """Read today's entries from the request log."""
     today = datetime.now().strftime("%Y-%m-%d")
-    entries = []
-    if not config.REQUEST_LOG.exists():
-        return entries
-    for line in config.REQUEST_LOG.read_text().splitlines():
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-            if entry.get("timestamp", "").startswith(today):
-                entries.append(entry)
-        except json.JSONDecodeError:
-            continue
-    return entries
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM request_log WHERE timestamp >= %s ORDER BY timestamp",
+            (today,),
+        ).fetchall()
+    return [db.serialize_row(r) for r in rows]
 
 
 async def build_request_context(text: str, is_image: bool = False) -> str:
@@ -1780,18 +1784,18 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
                     response=response, duration=duration)
 
         # Save full SMS conversation to dedicated log
-        sms_log = config.DATA_DIR / "sms_log.jsonl"
-        sms_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "from": from_number,
-            "to": config.TWILIO_PHONE_NUMBER,
-            "inbound": body,
-            "media": [url for url, _ in media_urls] if media_urls else [],
-            "response": response,
-            "duration_s": round(duration, 2),
-        }
-        with open(sms_log, "a") as f:
-            f.write(json.dumps(sms_entry) + "\n")
+        try:
+            media_list = [url for url, _ in media_urls] if media_urls else []
+            with db.get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO sms_log
+                       (from_number, to_number, inbound, media, response, duration_s)
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (from_number, config.TWILIO_PHONE_NUMBER, body,
+                     media_list, response, round(duration, 2)),
+                )
+        except Exception as e:
+            log.error("Failed to log SMS conversation: %s", e)
 
     except Exception as e:
         log.exception("SMS processing error")

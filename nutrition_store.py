@@ -1,26 +1,25 @@
 """Nutrition tracking store — structured per-item intake with daily totals.
 
-Stores individual food items with full nutrient breakdown. Daily totals
-computed on the fly by summing items × servings. Integrates with Fitbit
+Stores individual food items with full nutrient breakdown in PostgreSQL.
+Daily totals computed via SQL aggregation. Integrates with Fitbit
 calorie burn data for net energy balance.
 
 All nutrient values stored PER SERVING as printed on the label.
 Actual intake = label value × servings consumed.
 """
 
-import json
 import logging
 import uuid
 from datetime import datetime, date, timedelta
-from pathlib import Path
 from typing import Optional
 
+import psycopg.types.json
+
+import db
 import config
 import fitbit_store
 
 log = logging.getLogger("aria.nutrition")
-
-NUTRITION_DB = config.NUTRITION_DB
 
 # Daily targets from diet_reference.md — used for limit checking
 DAILY_TARGETS = {
@@ -44,17 +43,6 @@ NUTRIENT_FIELDS = [
 ]
 
 
-def _load() -> list[dict]:
-    if not NUTRITION_DB.exists():
-        return []
-    return json.loads(NUTRITION_DB.read_text())
-
-
-def _save(data: list[dict]):
-    NUTRITION_DB.parent.mkdir(parents=True, exist_ok=True)
-    NUTRITION_DB.write_text(json.dumps(data, indent=2, default=str))
-
-
 def add_item(
     food_name: str,
     meal_type: str = "snack",
@@ -72,61 +60,62 @@ def add_item(
                Use None for unknown values, not 0.
     servings: how many servings actually consumed.
     """
-    # A nutrition entry with 0 or negative servings is never meaningful.
-    # Treat as 1.0 to prevent zeroed-out totals.
     if servings <= 0:
         log.warning("Nutrition entry '%s' had servings=%s, defaulting to 1.0",
                      food_name, servings)
         servings = 1.0
 
-    entries = _load()
+    item_id = str(uuid.uuid4())[:8]
     now = datetime.now()
-    entry = {
-        "id": str(uuid.uuid4())[:8],
-        "date": entry_date or now.strftime("%Y-%m-%d"),
-        "time": entry_time or now.strftime("%H:%M"),
-        "meal_type": meal_type,
-        "food_name": food_name,
-        "source": source,
-        "servings": servings,
-        "serving_size": serving_size,
-        "nutrients": nutrients or {},
-        "notes": notes,
-        "created": now.isoformat(),
-    }
-    entries.append(entry)
-    _save(entries)
+    d = entry_date or now.strftime("%Y-%m-%d")
+    t = entry_time or now.strftime("%H:%M")
+
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """INSERT INTO nutrition_entries
+               (id, date, time, meal_type, food_name, source, servings, serving_size, nutrients, notes)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               RETURNING *""",
+            (item_id, d, t, meal_type, food_name, source, servings,
+             serving_size, psycopg.types.json.Jsonb(nutrients or {}), notes),
+        ).fetchone()
     log.info("Nutrition logged: %s (%s) — %s servings", food_name, meal_type, servings)
-    return entry
+    return db.serialize_row(row)
 
 
 def delete_item(item_id: str) -> bool:
     """Delete a nutrition entry by ID."""
-    entries = _load()
-    new_entries = [e for e in entries if e["id"] != item_id]
-    if len(new_entries) == len(entries):
-        return False
-    _save(new_entries)
-    return True
+    with db.get_conn() as conn:
+        cur = conn.execute("DELETE FROM nutrition_entries WHERE id = %s", (item_id,))
+    return cur.rowcount > 0
 
 
 def get_items(day: str | None = None, meal_type: str | None = None,
               days: int | None = None) -> list[dict]:
     """Get nutrition entries, newest first."""
-    entries = _load()
+    clauses = []
+    params = []
     if day:
-        entries = [e for e in entries if e.get("date") == day]
+        clauses.append("date = %s")
+        params.append(day)
     elif days:
         cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-        entries = [e for e in entries if e.get("date", "") >= cutoff]
+        clauses.append("date >= %s")
+        params.append(cutoff)
     if meal_type:
-        entries = [e for e in entries if e.get("meal_type") == meal_type]
-    entries.sort(key=lambda e: (e.get("date", ""), e.get("time", "")), reverse=True)
-    return entries
+        clauses.append("meal_type = %s")
+        params.append(meal_type)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM nutrition_entries {where} ORDER BY date DESC, time DESC",
+            params,
+        ).fetchall()
+    return [db.serialize_row(r) for r in rows]
 
 
 def get_daily_totals(day: str | None = None) -> dict:
-    """Compute nutrient totals for a day.
+    """Compute nutrient totals for a day via SQL aggregation.
 
     Returns: {nutrient_name: total_value, ...} with values multiplied
     by servings consumed. None values are excluded from sums.
@@ -134,22 +123,23 @@ def get_daily_totals(day: str | None = None) -> dict:
     if not day:
         day = date.today().isoformat()
 
-    entries = [e for e in _load() if e.get("date") == day]
-    totals = {field: 0.0 for field in NUTRIENT_FIELDS}
-    totals["item_count"] = len(entries)
+    # Build SQL SUM expressions for each nutrient
+    sums = ", ".join(
+        f"COALESCE(SUM(CASE WHEN nutrients->>'{f}' IS NOT NULL "
+        f"THEN (nutrients->>'{f}')::float * servings END), 0) AS {f}"
+        for f in NUTRIENT_FIELDS
+    )
 
-    for entry in entries:
-        servings = entry.get("servings", 1.0)
-        nutrients = entry.get("nutrients", {})
-        for field in NUTRIENT_FIELDS:
-            value = nutrients.get(field)
-            if value is not None:
-                totals[field] += value * servings
+    with db.get_conn() as conn:
+        row = conn.execute(
+            f"SELECT COUNT(*) AS item_count, {sums} FROM nutrition_entries WHERE date = %s",
+            (day,),
+        ).fetchone()
 
+    totals = dict(row)
     # Round for readability
     for field in NUTRIENT_FIELDS:
         totals[field] = round(totals[field], 1)
-
     return totals
 
 
@@ -199,7 +189,6 @@ def check_limits(day: str | None = None) -> list[str]:
         label = target["label"]
         unit = target["unit"]
 
-        # Check hard limits (NAFLD critical)
         hard_limit = target.get("hard_limit")
         if hard_limit and value >= hard_limit:
             warnings.append(f"OVER LIMIT: {label} at {value}{unit} — hard limit is {hard_limit}{unit}")
@@ -285,27 +274,40 @@ def get_context(day: str | None = None) -> str:
 
 def get_weekly_summary() -> str:
     """Build a weekly nutrition summary for briefings."""
-    parts = []
-    cal_totals = []
-    protein_totals = []
-    fiber_totals = []
-    sugar_totals = []
-    days_logged = 0
+    week_start = (date.today() - timedelta(days=6)).isoformat()
 
-    for i in range(7):
-        day = (date.today() - timedelta(days=i)).isoformat()
-        totals = get_daily_totals(day)
-        if totals["item_count"] > 0:
-            days_logged += 1
-            cal_totals.append(totals["calories"])
-            protein_totals.append(totals["protein_g"])
-            fiber_totals.append(totals["dietary_fiber_g"])
-            sugar_totals.append(totals["added_sugars_g"])
+    # Single query for all days
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """SELECT date,
+                COUNT(*) AS item_count,
+                COALESCE(SUM(CASE WHEN nutrients->>'calories' IS NOT NULL
+                    THEN (nutrients->>'calories')::float * servings END), 0) AS calories,
+                COALESCE(SUM(CASE WHEN nutrients->>'protein_g' IS NOT NULL
+                    THEN (nutrients->>'protein_g')::float * servings END), 0) AS protein_g,
+                COALESCE(SUM(CASE WHEN nutrients->>'dietary_fiber_g' IS NOT NULL
+                    THEN (nutrients->>'dietary_fiber_g')::float * servings END), 0) AS dietary_fiber_g,
+                COALESCE(SUM(CASE WHEN nutrients->>'added_sugars_g' IS NOT NULL
+                    THEN (nutrients->>'added_sugars_g')::float * servings END), 0) AS added_sugars_g,
+                COALESCE(SUM(CASE WHEN nutrients->>'omega3_mg' IS NOT NULL
+                    THEN (nutrients->>'omega3_mg')::float * servings END), 0) AS omega3_mg
+            FROM nutrition_entries
+            WHERE date >= %s
+            GROUP BY date""",
+            (week_start,),
+        ).fetchall()
 
-    if not days_logged:
+    if not rows:
         return ""
 
-    parts.append(f"Nutrition summary (last 7 days, {days_logged} days logged):")
+    days_logged = len(rows)
+    cal_totals = [r["calories"] for r in rows]
+    protein_totals = [r["protein_g"] for r in rows]
+    fiber_totals = [r["dietary_fiber_g"] for r in rows]
+    sugar_totals = [r["added_sugars_g"] for r in rows]
+    omega_days = sum(1 for r in rows if r["omega3_mg"] > 0)
+
+    parts = [f"Nutrition summary (last 7 days, {days_logged} days logged):"]
     if cal_totals:
         parts.append(f"  Avg calories: {sum(cal_totals)/len(cal_totals):.0f} / 1,600-1,900 target")
     if protein_totals:
@@ -315,13 +317,6 @@ def get_weekly_summary() -> str:
     if sugar_totals:
         parts.append(f"  Avg added sugar: {sum(sugar_totals)/len(sugar_totals):.0f}g / <10g")
 
-    # Fish/omega-3 tracking
-    omega_days = 0
-    for i in range(7):
-        day = (date.today() - timedelta(days=i)).isoformat()
-        totals = get_daily_totals(day)
-        if totals.get("omega3_mg", 0) > 0:
-            omega_days += 1
     if omega_days:
         parts.append(f"  Omega-3 days: {omega_days}/7 (target: 3-4)")
     else:

@@ -57,6 +57,9 @@ pillow==12.1.1
 piper-tts==1.4.1
 propcache==0.4.1
 protobuf==7.34.0
+psycopg==3.3.3
+psycopg-binary==3.3.3
+psycopg-pool==3.3.0
 pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5

@@ -1,36 +1,31 @@
-"""Health and physical log backed by a JSON file."""
+"""Health and physical log backed by PostgreSQL."""
 
-import json
 import uuid
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Optional
 
-from config import HEALTH_DB
-
-
-def _load() -> list[dict]:
-    if not HEALTH_DB.exists():
-        return []
-    return json.loads(HEALTH_DB.read_text())
-
-
-def _save(data: list[dict]) -> None:
-    HEALTH_DB.parent.mkdir(parents=True, exist_ok=True)
-    HEALTH_DB.write_text(json.dumps(data, indent=2, default=str))
+import db
 
 
 def get_entries(days: Optional[int] = None,
                 category: Optional[str] = None) -> list[dict]:
     """Get log entries, newest first. Optionally filter by recency or category."""
-    entries = _load()
+    clauses = []
+    params = []
     if days:
         cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-        entries = [e for e in entries if e.get("date", "") >= cutoff]
+        clauses.append("date >= %s")
+        params.append(cutoff)
     if category:
-        entries = [e for e in entries if e.get("category") == category]
-    entries.sort(key=lambda e: e.get("date", ""), reverse=True)
-    return entries
+        clauses.append("category = %s")
+        params.append(category)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM health_entries {where} ORDER BY date DESC",
+            params,
+        ).fetchall()
+    return [db.serialize_row(r) for r in rows]
 
 
 def get_patterns(days: int = 7) -> list[str]:
@@ -41,7 +36,13 @@ def get_patterns(days: int = 7) -> list[str]:
       "average sleep: 5.8 hours over last 7 days"
     """
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    entries = [e for e in _load() if e.get("date", "") >= cutoff]
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM health_entries WHERE date >= %s",
+            (cutoff,),
+        ).fetchall()
+
+    entries = [db.serialize_row(r) for r in rows]
     patterns = []
 
     # Count symptom/pain occurrences by description keyword
@@ -56,7 +57,6 @@ def get_patterns(days: int = 7) -> list[str]:
         desc = e.get("description", "").lower()
 
         if cat in ("pain", "symptom"):
-            # Group by the first meaningful word(s) of the description
             key = desc.split(",")[0].strip() if desc else "unspecified"
             pain_days.setdefault(key, set()).add(date)
 
@@ -101,27 +101,20 @@ def add_entry(entry_date: str, category: str, description: str,
     sleep_hours: hours slept (optional, for sleep entries)
     meal_type: breakfast, lunch, dinner, snack (optional, for meal entries)
     """
-    entries = _load()
-    entry = {
-        "id": str(uuid.uuid4())[:8],
-        "date": entry_date,
-        "category": category,
-        "description": description,
-        "severity": severity,
-        "sleep_hours": sleep_hours,
-        "meal_type": meal_type,
-        "created": datetime.now().isoformat(),
-    }
-    entries.append(entry)
-    _save(entries)
-    return entry
+    entry_id = str(uuid.uuid4())[:8]
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """INSERT INTO health_entries
+               (id, date, category, description, severity, sleep_hours, meal_type)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               RETURNING *""",
+            (entry_id, entry_date, category, description, severity, sleep_hours, meal_type),
+        ).fetchone()
+    return db.serialize_row(row)
 
 
 def delete_entry(entry_id: str) -> bool:
     """Delete an entry by ID."""
-    entries = _load()
-    new_entries = [e for e in entries if e["id"] != entry_id]
-    if len(new_entries) == len(entries):
-        return False
-    _save(new_entries)
-    return True
+    with db.get_conn() as conn:
+        cur = conn.execute("DELETE FROM health_entries WHERE id = %s", (entry_id,))
+    return cur.rowcount > 0

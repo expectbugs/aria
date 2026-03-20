@@ -12,7 +12,6 @@ Cron entry:
 import json
 import logging
 import sys
-import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config
+import db
 import timer_store
 import calendar_store
 import health_store
@@ -51,28 +51,41 @@ def is_quiet_hours() -> bool:
 
 def load_state() -> dict:
     """Load tick state (last nudge check time, etc.)."""
-    if config.TICK_STATE_FILE.exists():
-        return json.loads(config.TICK_STATE_FILE.read_text())
-    return {}
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT key, value FROM tick_state").fetchall()
+    return {r["key"]: r["value"] for r in rows}
 
 
 def save_state(state: dict):
     """Save tick state."""
-    config.TICK_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    config.TICK_STATE_FILE.write_text(json.dumps(state, default=str))
+    with db.get_conn() as conn:
+        for key, value in state.items():
+            conn.execute(
+                """INSERT INTO tick_state (key, value, updated_at)
+                   VALUES (%s, %s, NOW())
+                   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()""",
+                (key, str(value)),
+            )
 
 
 def load_cooldowns() -> dict:
     """Load nudge cooldowns {nudge_type: last_fired_iso}."""
-    if config.NUDGE_COOLDOWNS_FILE.exists():
-        return json.loads(config.NUDGE_COOLDOWNS_FILE.read_text())
-    return {}
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT nudge_type, last_fired FROM nudge_cooldowns").fetchall()
+    return {r["nudge_type"]: r["last_fired"].isoformat() for r in rows}
 
 
 def save_cooldowns(cooldowns: dict):
     """Save nudge cooldowns."""
-    config.NUDGE_COOLDOWNS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    config.NUDGE_COOLDOWNS_FILE.write_text(json.dumps(cooldowns, default=str))
+    with db.get_conn() as conn:
+        for nudge_type, last_fired in cooldowns.items():
+            conn.execute(
+                """INSERT INTO nudge_cooldowns (nudge_type, last_fired, updated_at)
+                   VALUES (%s, %s, NOW())
+                   ON CONFLICT (nudge_type) DO UPDATE
+                   SET last_fired = EXCLUDED.last_fired, updated_at = NOW()""",
+                (nudge_type, last_fired),
+            )
 
 
 def is_cooled_down(cooldowns: dict, nudge_type: str, hours: float) -> bool:

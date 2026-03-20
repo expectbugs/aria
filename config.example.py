@@ -3,7 +3,7 @@
 Copy this to config.py and edit for your host. config.py is gitignored —
 each machine keeps its own. The repo + config.py is the full deployment.
 
-Required: HOST_NAME, TAILSCALE_IP, CLAUDE_CLI, AUTH_TOKEN
+Required: HOST_NAME, TAILSCALE_IP, CLAUDE_CLI, AUTH_TOKEN, DATABASE_URL
 Everything else has sensible defaults.
 """
 
@@ -41,18 +41,8 @@ CLAUDE_TIMEOUT = 600            # seconds per CLI invocation (10 min — image g
 # --- Auth ---
 AUTH_TOKEN = "your-token-here"  # Tasker sends this as Bearer token
 
-# --- Logging ---
-REQUEST_LOG = LOGS_DIR / "requests.jsonl"
-
-# --- Calendar & Reminders ---
-CALENDAR_DB = DATA_DIR / "calendar.json"
-REMINDERS_DB = DATA_DIR / "reminders.json"
-
-# --- Specialist Logs ---
-VEHICLE_DB = DATA_DIR / "vehicle.json"
-HEALTH_DB = DATA_DIR / "health.json"
-LEGAL_DB = DATA_DIR / "legal.json"
-NUTRITION_DB = DATA_DIR / "nutrition.json"
+# --- Database ---
+DATABASE_URL = "postgresql://aria@/aria"  # local Unix socket, trust auth
 
 # --- Weather (NWS API, free, no key needed) ---
 WEATHER_LAT = 42.58
@@ -82,13 +72,10 @@ KNOWN_PLACES = {
     "work": "workplace street, city",
 }
 
-# --- Timers & Nudges ---
-TIMER_DB = DATA_DIR / "timers.json"
+# --- Nudges ---
 NUDGE_INTERVAL_MIN = 30           # minutes between nudge evaluations
 QUIET_HOURS_START = 0              # midnight (0-23)
 QUIET_HOURS_END = 7                # 7am (0-23)
-TICK_STATE_FILE = DATA_DIR / "tick_state.json"
-NUDGE_COOLDOWNS_FILE = DATA_DIR / "nudge_cooldowns.json"
 
 # --- Twilio (SMS/MMS/Voice) ---
 TWILIO_ACCOUNT_SID = "your-twilio-account-sid"       # Basic Auth user for REST API
@@ -105,9 +92,7 @@ FITBIT_CLIENT_ID = "your-client-id"               # OAuth 2.0 Client ID
 FITBIT_CLIENT_SECRET = "your-client-secret"         # Client Secret
 FITBIT_REDIRECT_URI = "https://localhost:8000/callback"
 FITBIT_TOKEN_FILE = DATA_DIR / "fitbit_tokens.json"  # auto-managed OAuth tokens
-FITBIT_DB_DIR = DATA_DIR / "fitbit"                   # daily JSON files per data type
 FITBIT_WEBHOOK_VERIFY = "aria-fitbit-verify"          # subscriber verification code
-FITBIT_EXERCISE_FILE = DATA_DIR / "fitbit_exercise.json"  # exercise mode state
 FITBIT_SCOPES = [                                     # data types to request access to
     "activity", "heartrate", "sleep", "oxygen_saturation",
     "respiratory_rate", "temperature", "weight", "profile",

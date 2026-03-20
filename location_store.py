@@ -1,22 +1,16 @@
-"""Location tracking backed by a JSON lines file with reverse geocoding."""
+"""Location tracking with reverse geocoding, backed by PostgreSQL."""
 
-import json
 import logging
 import httpx
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Optional
 
-from config import DATA_DIR
+import db
 
 log = logging.getLogger("aria.location")
 
-LOCATION_LOG = DATA_DIR / "location.jsonl"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "ARIA/1.0 (personal assistant)"
-
-# In-memory cache of the latest location
-_latest: dict | None = None
 
 # Cache reverse geocode results by rounded coords to avoid redundant lookups
 # Key: (rounded_lat, rounded_lon) at ~100m precision
@@ -48,21 +42,17 @@ async def _reverse_geocode(lat: float, lon: float) -> str:
                 data = resp.json()
                 address = data.get("address", {})
 
-                # Build a concise location string
                 parts = []
-                # Street address if available
                 house = address.get("house_number", "")
                 road = address.get("road", "")
                 if road:
                     parts.append(f"{house} {road}".strip())
 
-                # City/town/village
                 city = (address.get("city") or address.get("town")
                         or address.get("village") or address.get("hamlet", ""))
                 if city:
                     parts.append(city)
 
-                # State
                 state = address.get("state", "")
                 if state:
                     parts.append(state)
@@ -79,54 +69,33 @@ async def _reverse_geocode(lat: float, lon: float) -> str:
 async def record(lat: float, lon: float, accuracy: float | None = None,
                  speed: float | None = None, battery: int | None = None) -> dict:
     """Record a location update with reverse geocoding. Returns the saved entry."""
-    global _latest
-
     location_name = await _reverse_geocode(lat, lon)
 
-    entry = {
-        "timestamp": datetime.now().isoformat(),
-        "lat": lat,
-        "lon": lon,
-        "location": location_name,
-        "accuracy_m": accuracy,
-        "speed_mps": speed,
-        "battery_pct": battery,
-    }
-    LOCATION_LOG.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOCATION_LOG, "a") as f:
-        f.write(json.dumps(entry) + "\n")
-    _latest = entry
-    return entry
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """INSERT INTO locations (lat, lon, location, accuracy_m, speed_mps, battery_pct)
+               VALUES (%s, %s, %s, %s, %s, %s)
+               RETURNING *""",
+            (lat, lon, location_name, accuracy, speed, battery),
+        ).fetchone()
+    return db.serialize_row(row)
 
 
 def get_latest() -> dict | None:
-    """Get the most recent location. Uses in-memory cache if available."""
-    global _latest
-    if _latest:
-        return _latest
-    # Fall back to reading last line of the log
-    if not LOCATION_LOG.exists():
-        return None
-    lines = LOCATION_LOG.read_text().strip().splitlines()
-    if not lines:
-        return None
-    _latest = json.loads(lines[-1])
-    return _latest
+    """Get the most recent location."""
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM locations ORDER BY timestamp DESC LIMIT 1",
+        ).fetchone()
+    return db.serialize_row(row) if row else None
 
 
 def get_history(hours: int = 24) -> list[dict]:
     """Get location history for the last N hours, oldest first."""
-    if not LOCATION_LOG.exists():
-        return []
     cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
-    entries = []
-    for line in LOCATION_LOG.read_text().strip().splitlines():
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-            if entry.get("timestamp", "") >= cutoff:
-                entries.append(entry)
-        except json.JSONDecodeError:
-            continue
-    return entries
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM locations WHERE timestamp >= %s ORDER BY timestamp",
+            (cutoff,),
+        ).fetchall()
+    return [db.serialize_row(r) for r in rows]

@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.0] — 2026-03-20
+
+### PostgreSQL Migration — All Data Stores
+
+Migrated all 8 data stores, 3 log streams, and 2 state files from JSON/JSONL to PostgreSQL 17. Eliminates file locking race conditions (C3), reduces nutrition query I/O from 5+ file reads to 1 SQL query, and replaces full-file scans with indexed queries.
+
+### Added
+
+- **`db.py`** — Connection pool management for PostgreSQL (psycopg v3, sync connections, dict_row).
+- **`schema.sql`** — 15 PostgreSQL tables with indexes on date, timestamp, and status columns.
+- **`migrate.py`** — One-time migration script from JSON/JSONL to PostgreSQL. Idempotent (ON CONFLICT DO NOTHING).
+- **FastAPI lifespan** — DB connection pool initializes on startup, closes on shutdown.
+
+### Changed
+
+- **All 8 stores** rewritten: `calendar_store`, `health_store`, `legal_store`, `vehicle_store`, `timer_store`, `nutrition_store`, `location_store`, `fitbit_store` — JSON `_load()`/`_save()` replaced with SQL queries.
+- **timer_store** — each operation is now a single atomic SQL statement. No more read-modify-write race between daemon and tick.py.
+- **fitbit_store** — daily snapshots stored as JSONB. `save_snapshot()` uses `ON CONFLICT DO UPDATE` for atomic merge. Exercise HR append uses JSONB `||` operator (atomic, no read-modify-write). `get_trend()` fetches all days in one query instead of 7 file reads.
+- **nutrition_store** — `get_daily_totals()` uses SQL SUM aggregation (1 query, was 5+ file reads). `get_weekly_summary()` uses GROUP BY (1 query, was 14 file reads).
+- **location_store** — removed in-memory `_latest` cache and JSONL append. `get_latest()` is now an indexed query.
+- **daemon.py** — `log_request()` and `_get_today_requests()` use `request_log` table. SMS log uses `sms_log` table.
+- **sms.py** — outbound SMS logging uses `sms_outbound` table.
+- **tick.py** — `load_state()`/`save_state()` and cooldowns use PostgreSQL key-value tables.
+- **config** — `DATABASE_URL` replaces 11 JSON file path constants.
+- **Version** bumped to 0.4.0
+
+### Removed
+
+- JSON file path config constants: `CALENDAR_DB`, `REMINDERS_DB`, `VEHICLE_DB`, `HEALTH_DB`, `LEGAL_DB`, `NUTRITION_DB`, `TIMER_DB`, `FITBIT_DB_DIR`, `FITBIT_EXERCISE_FILE`, `TICK_STATE_FILE`, `NUDGE_COOLDOWNS_FILE`, `REQUEST_LOG`
+- `_load()`/`_save()` boilerplate from all stores
+
+### Dependencies
+
+- Added: `psycopg[binary]` 3.3.3, `psycopg_pool` 3.3.0
+- Requires: PostgreSQL 17 with `aria` database and user
+
+---
+
 ## [0.3.9] — 2026-03-19
 
 ### First Code Audit — 12 Bug Fixes

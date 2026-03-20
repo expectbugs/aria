@@ -1,47 +1,43 @@
-"""Legal case log backed by a JSON file."""
+"""Legal case log backed by PostgreSQL."""
 
-import json
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-from config import LEGAL_DB
-
-
-def _load() -> list[dict]:
-    if not LEGAL_DB.exists():
-        return []
-    return json.loads(LEGAL_DB.read_text())
-
-
-def _save(data: list[dict]) -> None:
-    LEGAL_DB.parent.mkdir(parents=True, exist_ok=True)
-    LEGAL_DB.write_text(json.dumps(data, indent=2, default=str))
+import db
 
 
 def get_entries(limit: Optional[int] = None,
                 entry_type: Optional[str] = None) -> list[dict]:
     """Get log entries, newest first. Optionally filter by entry_type."""
-    entries = _load()
+    clauses = []
+    params = []
     if entry_type:
-        entries = [e for e in entries if e.get("entry_type") == entry_type]
-    entries.sort(key=lambda e: e.get("date", ""), reverse=True)
+        clauses.append("entry_type = %s")
+        params.append(entry_type)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    limit_clause = f"LIMIT %s" if limit else ""
     if limit:
-        entries = entries[:limit]
-    return entries
+        params.append(limit)
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM legal_entries {where} ORDER BY date DESC {limit_clause}",
+            params,
+        ).fetchall()
+    return [db.serialize_row(r) for r in rows]
 
 
 def get_upcoming_dates() -> list[dict]:
     """Get entries with entry_type 'court_date' or 'deadline' that are today or later."""
     today = datetime.now().strftime("%Y-%m-%d")
-    entries = _load()
-    upcoming = [
-        e for e in entries
-        if e.get("entry_type") in ("court_date", "deadline")
-        and e.get("date", "") >= today
-    ]
-    return sorted(upcoming, key=lambda e: e.get("date", ""))
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM legal_entries
+               WHERE entry_type IN ('court_date', 'deadline') AND date >= %s
+               ORDER BY date""",
+            (today,),
+        ).fetchall()
+    return [db.serialize_row(r) for r in rows]
 
 
 def add_entry(entry_date: str, entry_type: str, description: str,
@@ -51,25 +47,19 @@ def add_entry(entry_date: str, entry_type: str, description: str,
     entry_type: development, filing, contact, note, court_date, deadline
     contacts: list of people/entities mentioned (optional)
     """
-    entries = _load()
-    entry = {
-        "id": str(uuid.uuid4())[:8],
-        "date": entry_date,
-        "entry_type": entry_type,
-        "description": description,
-        "contacts": contacts or [],
-        "created": datetime.now().isoformat(),
-    }
-    entries.append(entry)
-    _save(entries)
-    return entry
+    entry_id = str(uuid.uuid4())[:8]
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """INSERT INTO legal_entries (id, date, entry_type, description, contacts)
+               VALUES (%s, %s, %s, %s, %s)
+               RETURNING *""",
+            (entry_id, entry_date, entry_type, description, contacts or []),
+        ).fetchone()
+    return db.serialize_row(row)
 
 
 def delete_entry(entry_id: str) -> bool:
     """Delete an entry by ID."""
-    entries = _load()
-    new_entries = [e for e in entries if e["id"] != entry_id]
-    if len(new_entries) == len(entries):
-        return False
-    _save(new_entries)
-    return True
+    with db.get_conn() as conn:
+        cur = conn.execute("DELETE FROM legal_entries WHERE id = %s", (entry_id,))
+    return cur.rowcount > 0
