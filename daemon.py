@@ -103,7 +103,8 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     # --- Weather ---
     weather_keywords = ["weather", "temperature", "forecast", "rain",
                         "snow", "storm", "wind", "cold", "hot", "warm",
-                        "outside", "umbrella"]
+                        "outside", "umbrella", "jacket", "coat", "humid",
+                        "degrees", "sunny", "cloudy", "ice", "freeze"]
     if any(kw in text_lower for kw in weather_keywords):
         try:
             current = await weather.get_current_conditions()
@@ -131,7 +132,9 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
     calendar_keywords = ["calendar", "schedule", "week", "appointment",
-                         "event", "plan", "busy"]
+                         "event", "plan", "busy", "free", "available",
+                         "tomorrow", "tonight", "monday", "tuesday",
+                         "wednesday", "thursday", "friday", "saturday", "sunday"]
     if any(kw in text_lower for kw in calendar_keywords):
         events = calendar_store.get_events(start=today, end=week_end)
     else:
@@ -258,8 +261,9 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
                 ))
 
     # --- Legal ---
-    legal_keywords = ["case", "legal", "court", "lawyer", "attorney",
-                      "walworth", "filing", "case update"]
+    legal_keywords = ["legal", "court", "lawyer", "attorney",
+                      "walworth", "filing", "case update", "legal case",
+                      "court case", "court date", "lawsuit"]
     if any(kw in text_lower for kw in legal_keywords):
         l_entries = legal_store.get_entries(limit=10)
         if l_entries:
