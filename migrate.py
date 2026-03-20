@@ -54,7 +54,7 @@ def migrate_events(conn):
     for e in entries:
         conn.execute(
             """INSERT INTO events (id, title, date, time, notes, created)
-               VALUES (%s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, COALESCE(%s, NOW()))
                ON CONFLICT (id) DO NOTHING""",
             (e["id"], e["title"], e["date"], e.get("time"),
              e.get("notes"), e.get("created")),
@@ -69,7 +69,7 @@ def migrate_reminders(conn):
     for r in entries:
         conn.execute(
             """INSERT INTO reminders (id, text, due, recurring, location, location_trigger, done, completed_at, created)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s, NOW()))
                ON CONFLICT (id) DO NOTHING""",
             (r["id"], r["text"], r.get("due"), r.get("recurring"),
              r.get("location"), r.get("location_trigger"),
@@ -85,7 +85,7 @@ def migrate_health(conn):
     for e in entries:
         conn.execute(
             """INSERT INTO health_entries (id, date, category, description, severity, sleep_hours, meal_type, created)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, COALESCE(%s, NOW()))
                ON CONFLICT (id) DO NOTHING""",
             (e["id"], e["date"], e["category"], e["description"],
              e.get("severity"), e.get("sleep_hours"), e.get("meal_type"), e.get("created")),
@@ -100,7 +100,7 @@ def migrate_vehicle(conn):
     for e in entries:
         conn.execute(
             """INSERT INTO vehicle_entries (id, date, event_type, description, mileage, cost, created)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s, COALESCE(%s, NOW()))
                ON CONFLICT (id) DO NOTHING""",
             (e["id"], e["date"], e["event_type"], e["description"],
              e.get("mileage"), e.get("cost"), e.get("created")),
@@ -115,7 +115,7 @@ def migrate_legal(conn):
     for e in entries:
         conn.execute(
             """INSERT INTO legal_entries (id, date, entry_type, description, contacts, created)
-               VALUES (%s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, COALESCE(%s, NOW()))
                ON CONFLICT (id) DO NOTHING""",
             (e["id"], e["date"], e["entry_type"], e["description"],
              e.get("contacts", []), e.get("created")),
@@ -130,7 +130,7 @@ def migrate_timers(conn):
     for t in entries:
         conn.execute(
             """INSERT INTO timers (id, label, fire_at, delivery, priority, message, source, status, created, fired_at, cancelled_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s, NOW()), %s, %s)
                ON CONFLICT (id) DO NOTHING""",
             (t["id"], t["label"], t["fire_at"], t.get("delivery", "sms"),
              t.get("priority", "gentle"), t.get("message", ""),
@@ -147,7 +147,7 @@ def migrate_nutrition(conn):
     for n in entries:
         conn.execute(
             """INSERT INTO nutrition_entries (id, date, time, meal_type, food_name, source, servings, serving_size, nutrients, notes, created)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s, NOW()))
                ON CONFLICT (id) DO NOTHING""",
             (n["id"], n["date"], n.get("time", "00:00"), n.get("meal_type", "snack"),
              n["food_name"], n.get("source", "label_photo"),

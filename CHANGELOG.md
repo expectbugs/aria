@@ -6,6 +6,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.4] — 2026-03-20
+
+### Comprehensive test suite (v0.4.4)
+
+Added 532 tests across 41 test files covering every module in the codebase.
+
+### Added
+
+- **Unit tests (423 tests, 31 files)** — All stores, daemon endpoints, action processing, context building, Claude session protocol, delivery routing, task lifecycle, TTS pipeline, WebSocket STT, tick.py jobs, fuzz testing, concurrency, and real-world input edge cases. All external I/O (database, Claude CLI, SMS, phone push, HTTP APIs) is mocked for safety.
+- **Integration tests (103 tests, 10 files)** — Real SQL execution against a disposable `aria_test` PostgreSQL database. Tests every store's CRUD operations, JSONB handling, dynamic SQL aggregation, cross-module data flow, and migration idempotency.
+- **Property-based fuzz tests** — Hypothesis-powered fuzzing of ACTION block parsing to verify it never crashes on arbitrary input.
+- **Test infrastructure** — `tests/conftest.py` with safety guards, `tests/helpers.py` data factories, `tests/integration/conftest.py` with automatic test database lifecycle (create/truncate/drop).
+
+### Fixed
+
+- **migrate.py NOT NULL violation** — All 7 migrate functions explicitly passed `NULL` for the `created` column when the source JSON lacked the field, violating the `NOT NULL` constraint. Now uses `COALESCE(%s, NOW())` to fall back to current timestamp.
+
+### Changed
+
+- **Version** bumped to 0.4.4
+
+---
+
 ## [0.4.3] — 2026-03-20
 
 ### Third code audit cleanup: 4 fixes (v0.4.3)

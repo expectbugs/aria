@@ -29,6 +29,10 @@ adam_health_nutrition_profile.md
 # Personal notes
 notes/
 
+# Test cache
+.hypothesis/
+.pytest_cache/
+
 # Editor
 *.swp
 *.swo
