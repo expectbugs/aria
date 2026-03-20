@@ -268,8 +268,10 @@ def get_context(day: str | None = None) -> str:
         if net["on_track"] is True:
             parts.append(f"  On track for target deficit")
         elif net["on_track"] is False:
-            deficit = -net["net"] if net["net"] < 0 else 0
-            parts.append(f"  Deficit: {deficit} cal (target: 500-1,000)")
+            if net["net"] > 0:
+                parts.append(f"  Surplus: +{net['net']} cal (target: deficit of 500-1,000)")
+            else:
+                parts.append(f"  Deficit: {-net['net']} cal (target: 500-1,000)")
 
     # Warnings
     warnings = check_limits(day)

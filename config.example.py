@@ -22,6 +22,8 @@ OWNER_WORK_STATUS = "employed/leave/etc."
 OWNER_EMPLOYER = "Employer name"
 OWNER_HEALTH_NOTES = "Any health context ARIA should be aware of"
 OWNER_LIVING_SITUATION = "Where you currently live"
+OWNER_BIRTH_DATE = "1984-01-01"  # YYYY-MM-DD, used for age-based health calculations
+DIET_START_DATE = ""             # YYYY-MM-DD, set when starting a structured diet (leave empty if N/A)
 
 # --- Paths ---
 BASE_DIR = Path(__file__).parent
@@ -72,7 +74,6 @@ NEWS_FEEDS = {
 # --- Phone (Tasker HTTP Server for image push) ---
 PHONE_IP = "100.x.x.x"         # phone's Tailscale IP
 PHONE_PORT = 8451               # Tasker HTTP Server port
-PHONE_IMAGE_DIR = "ARIA"        # directory on phone for pushed images (relative to internal storage)
 
 # --- Known Places (for location-based reminders) ---
 # Values are matched as substrings against reverse-geocoded addresses (case-insensitive)

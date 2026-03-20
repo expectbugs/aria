@@ -305,9 +305,9 @@ def get_exercise_state() -> dict | None:
 def start_exercise(exercise_type: str = "general") -> dict:
     """Activate exercise mode. Called by process_actions()."""
     # Compute target HR zones using Karvonen formula
-    # Max HR = 220 - age, using age 42 and resting HR from latest data
-    age = 42
-    max_hr = 220 - age  # 178
+    birth = date.fromisoformat(config.OWNER_BIRTH_DATE)
+    age = (date.today() - birth).days // 365
+    max_hr = 220 - age
     resting_hr = 68  # default
 
     hr = get_heart_summary()

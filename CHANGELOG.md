@@ -6,6 +6,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.3.9] — 2026-03-19
+
+### First Code Audit — 12 Bug Fixes
+
+Comprehensive code review of the entire codebase. Found and fixed 3 critical bugs, 5 significant issues, and 4 minor issues. Full report in CODE_REVIEW.md.
+
+### Fixed
+
+- **Critical: task memory leak** — completed background tasks dropped their `created` timestamp, making them immune to the 2-hour expiry. Audio blobs accumulated in memory forever. Fixed by using `.update()` instead of dict replacement, and deleting tasks after audio is fetched.
+- **Critical: ACTION block regex ignored multiline JSON** — `re.findall` without `re.DOTALL` silently skipped ACTION blocks where Claude formatted JSON across multiple lines. Added `re.DOTALL` flag.
+- **Unused `get_trend()` call in tick.py** — wasted 28+ JSON parse operations every nudge evaluation cycle. Removed.
+- **Wrong docstring on `build_request_context`** — claimed it returned a tuple, actually returns a string.
+- **Nutrition `on_track` display bug** — showed "Deficit: 0 cal" during a calorie surplus instead of reporting the surplus.
+- **Unknown ACTION types silently ignored** — added `log.warning` for unrecognized action types in `process_actions()`.
+- **Unused imports** — removed `Counter` from health_store.py, `timedelta` from vehicle_store.py.
+- **Inline `import re`** — consolidated 4 inline imports in daemon.py to a single top-level import.
+- **Hardcoded diet start date** — `date(2026, 3, 17)` duplicated in 4 places, moved to `config.DIET_START_DATE`.
+- **Hardcoded age in exercise HR zones** — `age = 42` replaced with computation from `config.OWNER_BIRTH_DATE`.
+- **Dead config** — removed unused `PHONE_IMAGE_DIR` from config.example.py.
+
+### Changed
+
+- **Aria now uses Opus 4.6** with auto effort level (was Sonnet with medium effort).
+- **Version** bumped to 0.3.9
+
+---
+
 ## [0.3.8] — 2026-03-19
 
 ### Whisper STT Integration — Phase 4.3 Keystone

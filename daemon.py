@@ -6,6 +6,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import time
 import uuid
 from datetime import datetime, date, timedelta
@@ -30,7 +31,7 @@ import fitbit
 import fitbit_store
 import nutrition_store
 
-app = FastAPI(title="ARIA", version="0.3.8")
+app = FastAPI(title="ARIA", version="0.3.9")
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -95,7 +96,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     and /sms to ensure identical behavior regardless of input channel.
     Handles briefings, debriefs, and all keyword-triggered data injection.
 
-    Returns (context_string, is_briefing_or_debrief).
+    Returns the context string.
     """
     text_lower = text.lower()
     ctx_parts = []
@@ -349,7 +350,7 @@ def gather_health_context() -> str:
         parts.append("Health patterns (7d): " + "; ".join(patterns))
 
     # Diet day counter
-    diet_start = date(2026, 3, 17)
+    diet_start = date.fromisoformat(config.DIET_START_DATE)
     diet_day = (datetime.now().date() - diet_start).days + 1
     if diet_day > 0:
         parts.append(f"Diet day {diet_day}")
@@ -448,7 +449,7 @@ async def gather_debrief_context() -> str:
             parts.append("\nNo meals logged today.")
 
     # Diet day counter
-    diet_start = date(2026, 3, 17)
+    diet_start = date.fromisoformat(config.DIET_START_DATE)
     diet_day = (now.date() - diet_start).days + 1
     if diet_day > 0:
         parts.append(f"\nDiet day {diet_day}")
@@ -575,7 +576,7 @@ async def gather_briefing_context() -> str:
         parts.append(f"\n{weekly_nutrition}")
 
     # Diet — day count since diet start (March 17, 2026)
-    diet_start = date(2026, 3, 17)
+    diet_start = date.fromisoformat(config.DIET_START_DATE)
     diet_day = (now.date() - diet_start).days + 1
     if diet_day > 0:
         parts.append(f"\nDiet day {diet_day} (started March 17, 2026)")
@@ -796,7 +797,7 @@ class ClaudeSession:
     async def _spawn(self):
         """Spawn a fresh Claude CLI process with stream-json I/O."""
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        env["CLAUDE_CODE_EFFORT_LEVEL"] = "medium"
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = "auto"
 
         self._proc = await asyncio.create_subprocess_exec(
             config.CLAUDE_CLI,
@@ -804,7 +805,7 @@ class ClaudeSession:
             "--output-format", "stream-json",
             "--input-format", "stream-json",
             "--verbose",
-            "--model", "sonnet",
+            "--model", "opus",
             "--dangerously-skip-permissions",
             "--system-prompt", build_system_prompt(),
             stdin=asyncio.subprocess.PIPE,
@@ -942,8 +943,7 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
     metadata: optional mutable dict to receive extracted metadata like
               delivery routing preferences ({"delivery": "voice"}).
     """
-    import re
-    actions = re.findall(r'<!--ACTION::(\{.*?\})-->', response_text)
+    actions = re.findall(r'<!--ACTION::(\{.*?\})-->', response_text, re.DOTALL)
     failures = []
     action_types_found = []
 
@@ -1063,6 +1063,8 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             elif act == "set_delivery":
                 if metadata is not None:
                     metadata["delivery"] = action.get("method", "default")
+            else:
+                log.warning("Unknown ACTION type ignored: %s", act)
         except Exception as e:
             failures.append(f"Action failed: {e}")
             log_request("ACTION", "error", error=str(e))
@@ -1295,9 +1297,9 @@ async def _process_task(task_id: str, req: AskRequest, request: Request):
         buf = io.BytesIO()
         sf.write(buf, samples, sample_rate, format="WAV")
         buf.seek(0)
-        _tasks[task_id] = {"status": "done", "audio": buf.read()}
+        _tasks[task_id].update({"status": "done", "audio": buf.read()})
     except Exception as e:
-        _tasks[task_id] = {"status": "error", "error": str(e)}
+        _tasks[task_id].update({"status": "error", "error": str(e)})
 
 
 @app.post("/ask/start")
@@ -1355,10 +1357,10 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         buf = io.BytesIO()
         sf.write(buf, samples, sample_rate, format="WAV")
         buf.seek(0)
-        _tasks[task_id] = {"status": "done", "audio": buf.read()}
+        _tasks[task_id].update({"status": "done", "audio": buf.read()})
     except Exception as e:
         log_request(f"[file:{filename}] {caption}", "error", error=str(e))
-        _tasks[task_id] = {"status": "error", "error": str(e)}
+        _tasks[task_id].update({"status": "error", "error": str(e)})
 
 
 @app.post("/ask/file")
@@ -1438,6 +1440,7 @@ async def ask_result(task_id: str, request: Request):
         raise HTTPException(status_code=500, detail=error)
     else:
         audio = task["audio"]
+        del _tasks[task_id]
         return Response(content=audio, media_type="audio/wav")
 
 
@@ -1514,7 +1517,7 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
         transcript = await asyncio.to_thread(engine.transcribe_bytes, audio_bytes)
 
         if not transcript.text.strip():
-            _tasks[task_id] = {"status": "error", "error": "No speech detected in audio"}
+            _tasks[task_id].update({"status": "error", "error": "No speech detected in audio"})
             return
 
         user_text = transcript.text.strip()
@@ -1553,14 +1556,14 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
         duration = time.time() - start
         log_request(f"[voice] {user_text}", "ok", response=response, duration=duration)
 
-        _tasks[task_id] = {
+        _tasks[task_id].update({
             "status": "done",
             "audio": buf.read(),
             "transcript": user_text,
-        }
+        })
     except Exception as e:
         log_request("[voice]", "error", error=str(e))
-        _tasks[task_id] = {"status": "error", "error": str(e)}
+        _tasks[task_id].update({"status": "error", "error": str(e)})
 
 
 @app.post("/ask/voice")
@@ -1824,7 +1827,6 @@ async def nudge(req: NudgeRequest, request: Request):
 
     response = await ask_claude(prompt, extra_context)
     # Strip any accidental ACTION blocks
-    import re
     response = re.sub(r'<!--ACTION::.*?-->', '', response).strip()
 
     return {"message": response}
@@ -1885,7 +1887,6 @@ async def serve_mms_media(filename: str):
     Publicly accessible via Tailscale Funnel so Twilio can download
     the image for MMS delivery. Files auto-clean after serving.
     """
-    import re
     safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '', filename)
     path = sms.MMS_OUTBOX / safe_name
     if not path.exists():
@@ -1909,7 +1910,6 @@ async def serve_mms_media(filename: str):
 @app.get("/snippet/{name}")
 async def get_snippet(name: str):
     """Serve a text snippet for easy copy-paste on phone."""
-    import re
     safe_name = re.sub(r'[^a-zA-Z0-9_]', '', name)
     path = config.BASE_DIR / f"snippets/{safe_name}.js"
     if not path.exists():

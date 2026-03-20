@@ -13,7 +13,7 @@ import json
 import logging
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # Set up path so we can import project modules
@@ -261,7 +261,7 @@ def evaluate_nudges() -> list[tuple[str, str]]:
         today_meals = [m for m in health_store.get_entries(days=1, category="meal")
                        if m.get("date") == today]
         if len(today_meals) < 2:
-            diet_start = datetime(2026, 3, 17).date()
+            diet_start = date.fromisoformat(config.DIET_START_DATE)
             diet_day = (now.date() - diet_start).days + 1
             if diet_day > 0:
                 triggers.append(("diet_check",
@@ -302,7 +302,6 @@ def evaluate_nudges() -> list[tuple[str, str]]:
 
     # --- Fitbit: resting HR anomaly ---
     hr = fitbit_store.get_heart_summary()
-    trend = fitbit_store.get_trend(days=7)
     if hr and hr.get("resting_hr"):
         # Check against 7-day trend for anomaly
         resting_hrs = []

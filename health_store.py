@@ -2,7 +2,6 @@
 
 import json
 import uuid
-from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
