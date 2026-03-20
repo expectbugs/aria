@@ -72,6 +72,13 @@ def add_item(
                Use None for unknown values, not 0.
     servings: how many servings actually consumed.
     """
+    # A nutrition entry with 0 or negative servings is never meaningful.
+    # Treat as 1.0 to prevent zeroed-out totals.
+    if servings <= 0:
+        log.warning("Nutrition entry '%s' had servings=%s, defaulting to 1.0",
+                     food_name, servings)
+        servings = 1.0
+
     entries = _load()
     now = datetime.now()
     entry = {

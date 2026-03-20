@@ -26,6 +26,9 @@ adam_health_nutrition_profile.md
 # Claude project files
 .claude/
 
+# Personal notes
+notes/
+
 # Editor
 *.swp
 *.swo

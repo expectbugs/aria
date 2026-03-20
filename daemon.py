@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 
@@ -30,7 +30,7 @@ import fitbit
 import fitbit_store
 import nutrition_store
 
-app = FastAPI(title="ARIA", version="0.3.7")
+app = FastAPI(title="ARIA", version="0.3.8")
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -274,6 +274,24 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
             ))
 
     return "\n".join(ctx_parts) if ctx_parts else ""
+
+
+async def _get_context_for_text(text: str, is_image: bool = False) -> str:
+    """Route text to the right context builder.
+
+    Detects morning briefings and evening debriefs, otherwise uses
+    keyword-triggered context. Single source of truth — used by /ask,
+    /ask/voice, and /sms instead of repeating detection logic.
+    """
+    text_lower = text.lower()
+    if any(text_lower.startswith(p)
+           for p in ["good morning", "morning brief", "briefing", "start my day"]):
+        return await gather_briefing_context()
+    if any(text_lower.startswith(p)
+           for p in ["good night", "end my day", "nightly debrief",
+                      "evening debrief", "wrap up my day"]):
+        return await gather_debrief_context()
+    return await build_request_context(text, is_image=is_image)
 
 
 def gather_health_context() -> str:
@@ -629,13 +647,16 @@ You run on {host} (Gentoo Linux, OpenRC — NOT systemd). Full console access wi
 
 Channels: requests arrive via voice (Tasker), file share (AutoShare), or SMS/MMS (Twilio). For voice, respond naturally for speech. For SMS (noted in context), keep responses under 300 chars, no formatting. Images: use push_image.py for voice requests, MMS via sms.send_mms() for SMS conversations.
 
+DELIVERY ROUTING — MANDATORY:
+When """ + name + """ asks for a specific delivery method (voice, SMS, text, etc.), you MUST emit a set_delivery ACTION block. The system handles the actual routing — you just signal the intent. This is NOT optional. If """ + name + """ says "answer via voice", "respond by voice", "text me the answer", or ANY variation requesting a specific delivery method, emit set_delivery. The system will generate TTS and push audio, or send SMS, accordingly. Do NOT try to run push_audio.py yourself — the system does it automatically based on your set_delivery ACTION.
+Note: outbound SMS may be unreliable (A2P registration pending). When delivering via voice, the system handles TTS and audio push automatically.
+
 Tools:
 - Image Gen: `python ~/imgen/generate.py "prompt" [--steps N] [--seed N] [--width W] [--height H] [--output path.png]` (12-16 steps quick, 24-30 high quality)
 - Upscale: `~/upscale/upscale4k.sh input.png [output.png]`
 - 4K workflow: when user asks for a 4K image, generate at 1920x1080 (--width 1920 --height 1080) then upscale. Do NOT generate at phone resolution and upscale — that just stretches a small image.
 - Visual: Matplotlib, Graphviz, SVG — output must be PNG for phone
 - Push Image: `python ~/aria/push_image.py /path/to/image.png [--caption "..."]`
-- Push Audio: `python ~/aria/push_audio.py /path/to/audio.wav` (only for SMS conversations when user requests voice. NEVER use push_audio for file uploads or voice requests — those pipelines generate and deliver audio automatically)
 - SMS: `python -c "import sms; sms.send_to_owner('text')"` — MMS: `python -c "import sms; sms.send_mms(config.OWNER_PHONE_NUMBER, 'caption', '/path/to/image.png')"`
 - Phone images: 540x1212 resolution, no upscale.
 - File Input: photos, PDFs, text files arrive as content blocks. For food photos, check against diet reference.
@@ -677,6 +698,10 @@ Timers — "minutes" for relative, "time" (HH:MM 24h) for absolute today. Delive
 <!--ACTION::{"action": "set_timer", "label": "...", "time": "14:30", "delivery": "sms", "message": "..."}-->
 <!--ACTION::{"action": "cancel_timer", "id": "..."}-->
 When setting a timer, confirm the exact fire time and delivery method.
+
+Delivery routing — ALWAYS emit when """ + name + """ requests a specific response delivery method:
+<!--ACTION::{"action": "set_delivery", "method": "voice"}-->
+<!--ACTION::{"action": "set_delivery", "method": "sms"}-->
 
 Exercise — ONLY activate when """ + name + """ explicitly says he's going to exercise or asks for coaching. NEVER auto-detect:
 <!--ACTION::{"action": "start_exercise", "exercise_type": "stationary_bike|walking|general"}-->
@@ -900,7 +925,8 @@ async def ask_claude(user_text: str, extra_context: str = "",
 
 # --- Action Processing ---
 
-def process_actions(response_text: str, expect_actions: list[str] | None = None) -> str:
+def process_actions(response_text: str, expect_actions: list[str] | None = None,
+                    metadata: dict | None = None) -> str:
     """Extract and execute ACTION blocks from Claude's response.
 
     Returns the cleaned response, replacing it with an error message
@@ -909,6 +935,8 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None)
     expect_actions: optional list of action types that SHOULD be present
                     (e.g. ["log_nutrition"] for nutrition label photos).
                     If expected actions are missing, a warning is appended.
+    metadata: optional mutable dict to receive extracted metadata like
+              delivery routing preferences ({"delivery": "voice"}).
     """
     import re
     actions = re.findall(r'<!--ACTION::(\{.*?\})-->', response_text)
@@ -1028,6 +1056,9 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None)
                 fitbit_store.start_exercise(exercise_type)
             elif act == "end_exercise":
                 fitbit_store.end_exercise("user ended")
+            elif act == "set_delivery":
+                if metadata is not None:
+                    metadata["delivery"] = action.get("method", "default")
         except Exception as e:
             failures.append(f"Action failed: {e}")
             log_request("ACTION", "error", error=str(e))
@@ -1194,25 +1225,7 @@ async def ask(req: AskRequest, request: Request):
         raise HTTPException(status_code=400, detail="Empty input")
 
     try:
-        # Detect if this is a morning briefing or evening debrief
-        is_briefing = any(
-            text.lower().startswith(p)
-            for p in ["good morning", "morning brief", "briefing", "start my day"]
-        )
-        is_debrief = any(
-            text.lower().startswith(p)
-            for p in ["good night", "end my day", "nightly debrief",
-                       "evening debrief", "wrap up my day"]
-        )
-
-        extra_context = ""
-        if is_briefing:
-            extra_context = await gather_briefing_context()
-        elif is_debrief:
-            extra_context = await gather_debrief_context()
-        else:
-            extra_context = await build_request_context(text)
-
+        extra_context = await _get_context_for_text(text)
         response = await ask_claude(text, extra_context)
         response = process_actions(response)
 
@@ -1437,11 +1450,239 @@ async def ask_status(task_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Unknown task")
 
     if task["status"] == "processing":
-        return JSONResponse(status_code=202, content={"status": "processing"})
+        content = {"status": "processing"}
+        if task.get("transcript"):
+            content["transcript"] = task["transcript"]
+        return JSONResponse(status_code=202, content=content)
     elif task["status"] == "error":
         return JSONResponse(status_code=500, content={"status": "error", "error": task.get("error", "Unknown")})
     else:
         return JSONResponse(status_code=200, content={"status": "done"})
+
+
+# --- Whisper STT Endpoints ---
+
+@app.post("/stt")
+async def stt(request: Request):
+    """Transcribe audio to text via Whisper. Pure STT — no Claude, no TTS."""
+    if not getattr(config, 'ENABLE_WHISPER', False):
+        raise HTTPException(status_code=503, detail="Whisper STT not enabled on this host")
+    verify_auth(request)
+
+    content_type = request.headers.get("content-type", "")
+    if "multipart" in content_type:
+        form = await request.form()
+        upload = form.get("file")
+        if not upload:
+            raise HTTPException(status_code=400, detail="No file field in form")
+        audio_bytes = await upload.read()
+    else:
+        audio_bytes = await request.body()
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio")
+
+    import whisper_engine
+    engine = whisper_engine.get_engine()
+    result = await asyncio.to_thread(engine.transcribe_bytes, audio_bytes)
+
+    log_request(f"[stt] ({result.duration:.1f}s audio)", "ok",
+                response=result.text, duration=result.processing_time)
+
+    return {
+        "text": result.text,
+        "segments": result.segments,
+        "language": result.language,
+        "language_probability": result.language_probability,
+        "duration": result.duration,
+        "processing_time": result.processing_time,
+    }
+
+
+async def _process_voice_task(task_id: str, audio_bytes: bytes):
+    """Background worker: Whisper STT → Claude → Kokoro TTS."""
+    try:
+        start = time.time()
+
+        # Step 1: Transcribe audio
+        import whisper_engine
+        engine = whisper_engine.get_engine()
+        transcript = await asyncio.to_thread(engine.transcribe_bytes, audio_bytes)
+
+        if not transcript.text.strip():
+            _tasks[task_id] = {"status": "error", "error": "No speech detected in audio"}
+            return
+
+        user_text = transcript.text.strip()
+
+        # Make transcript available to /ask/status immediately (before Claude runs)
+        _tasks[task_id]["transcript"] = user_text
+
+        # Step 2: Build context and query Claude (same pipeline as /ask)
+        extra_context = await _get_context_for_text(user_text)
+        response = await ask_claude(user_text, extra_context)
+        delivery_meta = {}
+        response = process_actions(response, metadata=delivery_meta)
+        delivery = delivery_meta.get("delivery", "voice")
+
+        # Step 3: Handle delivery routing
+        if delivery == "sms":
+            # User asked for text delivery — send SMS, speak brief confirmation
+            try:
+                sms.send_to_owner(response)
+            except Exception as se:
+                log.error("SMS delivery from voice request failed: %s", se)
+            response = "I've sent that to you as a text."
+
+        # Step 4: Generate TTS audio
+        import io
+        import soundfile as sf
+
+        kokoro = _get_kokoro()
+        samples, sample_rate = kokoro.create(
+            response, voice=config.KOKORO_VOICE, speed=1.0, lang="en-us"
+        )
+        buf = io.BytesIO()
+        sf.write(buf, samples, sample_rate, format="WAV")
+        buf.seek(0)
+
+        duration = time.time() - start
+        log_request(f"[voice] {user_text}", "ok", response=response, duration=duration)
+
+        _tasks[task_id] = {
+            "status": "done",
+            "audio": buf.read(),
+            "transcript": user_text,
+        }
+    except Exception as e:
+        log_request("[voice]", "error", error=str(e))
+        _tasks[task_id] = {"status": "error", "error": str(e)}
+
+
+@app.post("/ask/voice")
+async def ask_voice(request: Request):
+    """Audio in, audio out. Whisper STT → Claude → Kokoro TTS.
+
+    Returns a task_id for async polling — same flow as /ask/start.
+    Poll /ask/status/{task_id} (includes transcript when STT completes),
+    then /ask/result/{task_id} for the audio response.
+    """
+    if not getattr(config, 'ENABLE_WHISPER', False):
+        raise HTTPException(status_code=503, detail="Whisper STT not enabled on this host")
+    verify_auth(request)
+
+    audio_bytes = await request.body()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio")
+
+    task_id = str(uuid.uuid4())[:8]
+    _tasks[task_id] = {"status": "processing", "created": time.time()}
+    asyncio.create_task(_process_voice_task(task_id, audio_bytes))
+    return {"task_id": task_id}
+
+
+@app.websocket("/ws/stt")
+async def ws_stt(websocket: WebSocket):
+    """Real-time streaming transcription via WebSocket.
+
+    Protocol:
+      Client sends JSON config: {"type": "config", "sample_rate": 16000, "encoding": "pcm_s16le"}
+      Client streams binary PCM audio chunks
+      Server sends JSON transcripts: {"type": "transcript", "text": "...", "start": 0.0, "end": 2.5}
+      Client sends JSON stop: {"type": "stop"}
+    """
+    if not getattr(config, 'ENABLE_WHISPER', False):
+        await websocket.close(code=1013, reason="Whisper STT not enabled")
+        return
+
+    # Auth check before accept
+    auth = websocket.headers.get("authorization", "")
+    if auth != f"Bearer {config.AUTH_TOKEN}":
+        await websocket.close(code=1008, reason="Unauthorized")
+        return
+
+    await websocket.accept()
+
+    import numpy as np
+    import whisper_engine
+
+    engine = whisper_engine.get_engine()
+    vad = whisper_engine.EnergyVAD()
+    sample_rate = 16000
+    audio_offset = 0.0
+
+    try:
+        while True:
+            message = await asyncio.wait_for(
+                websocket.receive(), timeout=30.0
+            )
+
+            if "text" in message:
+                data = json.loads(message["text"])
+                msg_type = data.get("type")
+
+                if msg_type == "config":
+                    sample_rate = data.get("sample_rate", 16000)
+                    vad = whisper_engine.EnergyVAD(sample_rate=sample_rate)
+                    await websocket.send_json({"type": "ready"})
+
+                elif msg_type == "stop":
+                    # Flush any remaining speech
+                    remaining = vad.flush()
+                    if remaining is not None:
+                        result = await asyncio.to_thread(
+                            engine.transcribe_numpy, remaining, sample_rate
+                        )
+                        if result.text.strip():
+                            await websocket.send_json({
+                                "type": "transcript",
+                                "text": result.text,
+                                "start": round(audio_offset, 2),
+                                "end": round(audio_offset + result.duration, 2),
+                            })
+                    await websocket.close(code=1000)
+                    return
+
+            elif "bytes" in message:
+                raw = message["bytes"]
+
+                # Convert to float32 numpy
+                pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+                # Resample to 16kHz if needed
+                if sample_rate != 16000:
+                    pcm = whisper_engine.resample(pcm, sample_rate, 16000)
+
+                # Feed to VAD — returns utterance array when speech ends
+                utterance = vad.process_chunk(pcm)
+                if utterance is not None:
+                    result = await asyncio.to_thread(
+                        engine.transcribe_numpy, utterance, 16000
+                    )
+                    if result.text.strip():
+                        await websocket.send_json({
+                            "type": "transcript",
+                            "text": result.text,
+                            "start": round(audio_offset, 2),
+                            "end": round(audio_offset + result.duration, 2),
+                        })
+                        log_request(f"[ws-stt] {result.text}", "ok",
+                                    duration=result.processing_time)
+                        audio_offset += result.duration
+
+    except WebSocketDisconnect:
+        pass
+    except asyncio.TimeoutError:
+        try:
+            await websocket.close(code=1001, reason="Timeout — no data received")
+        except Exception:
+            pass
+    except Exception as e:
+        log.exception("WebSocket STT error")
+        try:
+            await websocket.close(code=1011, reason=str(e)[:120])
+        except Exception:
+            pass
 
 
 # --- SMS/MMS Webhook ---
@@ -1484,25 +1725,9 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
         user_text = body if body else "The user sent a file via SMS."
         has_media = bool(file_blocks)
 
-        # Detect briefing/debrief via SMS
-        is_briefing = any(
-            user_text.lower().startswith(p)
-            for p in ["good morning", "morning brief", "briefing", "start my day"]
+        extra_context = await _get_context_for_text(
+            user_text, is_image=has_media
         )
-        is_debrief = any(
-            user_text.lower().startswith(p)
-            for p in ["good night", "end my day", "nightly debrief",
-                       "evening debrief", "wrap up my day"]
-        )
-
-        if is_briefing:
-            extra_context = await gather_briefing_context()
-        elif is_debrief:
-            extra_context = await gather_debrief_context()
-        else:
-            extra_context = await build_request_context(
-                user_text, is_image=has_media
-            )
 
         # SMS channel note — affects RESPONSE FORMAT only, not available context
         sms_note = f"This message arrived via SMS from {from_number}. Respond concisely — SMS has character limits. Do not use markdown or special formatting."
@@ -1513,14 +1738,35 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
 
         response = await ask_claude(user_text, extra_context,
                                     file_blocks if file_blocks else None)
-        response = process_actions(response)
+        delivery_meta = {}
+        response = process_actions(response, metadata=delivery_meta)
+        delivery = delivery_meta.get("delivery", "sms")
 
-        # Split long responses into multiple SMS messages (160 char limit per segment,
-        # but Twilio handles concatenation up to 1600 chars)
-        if len(response) > 1600:
-            response = response[:1597] + "..."
+        if delivery == "voice":
+            # User requested voice delivery — generate TTS and push audio
+            try:
+                import io as _io
+                import soundfile as sf
 
-        sms.send_sms(from_number, response)
+                kokoro = _get_kokoro()
+                samples, sample_rate = kokoro.create(
+                    response, voice=config.KOKORO_VOICE, speed=1.0, lang="en-us"
+                )
+                wav_path = config.DATA_DIR / "sms_voice_response.wav"
+                sf.write(str(wav_path), samples, sample_rate, format="WAV")
+                import push_audio
+                push_audio.push_audio(str(wav_path))
+                log.info("Voice delivery via SMS request from %s", from_number)
+            except Exception as ve:
+                log.error("Voice delivery failed, falling back to SMS: %s", ve)
+                if response.strip():
+                    sms.send_sms(from_number, response[:1597] + "..." if len(response) > 1600 else response)
+        else:
+            # Default SMS delivery
+            if response.strip():
+                if len(response) > 1600:
+                    response = response[:1597] + "..."
+                sms.send_sms(from_number, response)
 
         duration = time.time() - start
         log_request(f"[sms:{from_number}] {user_text}", "ok",

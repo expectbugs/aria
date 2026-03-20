@@ -112,6 +112,12 @@ FITBIT_SCOPES = [                                     # data types to request ac
     "respiratory_rate", "temperature", "weight", "profile",
 ]
 
+# --- Whisper STT (faster-whisper + CTranslate2) ---
+WHISPER_MODEL = "large-v3-turbo"     # "large-v3" for max accuracy, "large-v3-turbo" for speed
+WHISPER_DEVICE = "cuda"               # "cuda" for GPU, "cpu" for machines without GPU
+WHISPER_COMPUTE_TYPE = "float16"      # "float16" for GPU, "int8" for CPU
+ENABLE_WHISPER = False                # True only on GPU-equipped hosts
+
 # --- Hardware capabilities ---
 # Set based on what this machine can do. Daemon checks these at runtime.
 ENABLE_GPU = False              # True if NVIDIA GPU available (for Whisper, LoRA, etc.)

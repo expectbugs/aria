@@ -6,6 +6,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.3.8] — 2026-03-19
+
+### Whisper STT Integration — Phase 4.3 Keystone
+
+Local speech-to-text on the RTX 3090 via faster-whisper with large-v3-turbo model. Three new endpoints for batch, combined voice pipeline, and real-time streaming transcription. Also fixes delivery routing, nutrition data bugs, and empty SMS errors.
+
+### Added
+
+- **`whisper_engine.py`** — Whisper STT engine with lazy model loading, thread-safe GPU access, energy-based VAD for streaming, sample rate conversion
+- **`POST /stt`** — batch audio transcription endpoint. Any format, returns text + timestamped segments. ~0.25s for 3s audio on warm model.
+- **`POST /ask/voice`** — combined STT + Claude + TTS. Audio in, audio out. One round trip. Transcript available in `/ask/status` while Claude processes.
+- **`WebSocket /ws/stt`** — real-time streaming transcription. Client streams PCM chunks, server returns transcripts per utterance via VAD. ~700ms latency after speech ends.
+- **`set_delivery` ACTION block** — Aria emits this when user requests a specific delivery method (voice/SMS). Handler routes accordingly — generates TTS + push_audio for voice delivery, sends SMS for text. Replaces unreliable push_audio.py shell command approach.
+- **`_get_context_for_text()` helper** — single source of truth for briefing/debrief detection and context routing. Replaces 3 duplicate code blocks.
+- **Transcript in `/ask/status`** — voice tasks show `{"status": "processing", "transcript": "..."}` so clients can display what was heard while Claude processes.
+
+### Fixed
+
+- **Nutrition data zeroed out** — all 15 pantry entries had `servings=0`, zeroing all totals and making nutrition data invisible to Aria. Added guard in `nutrition_store.add_item()`: servings ≤ 0 defaults to 1.0. Repaired existing data with correct per-use serving sizes.
+- **Voice delivery via SMS unreliable** — Aria sometimes ignored "respond via voice" instructions (~50% compliance). Root cause: push_audio.py usage was a passive tool description, not a mandatory rule. Fixed with `set_delivery` ACTION block — delivery routing is now handler-enforced, not Claude-dependent.
+- **Empty SMS body → Twilio 400** — when Claude consumed the response text via push_audio shell command, empty string was passed to `sms.send_sms()`. Added empty body guard in `_process_sms`.
+- **Outbound SMS silently failing** — all outbound SMS blocked by A2P 10DLC carrier filtering (error 30034). Twilio API returns SID (appears successful) but carrier drops the message. No code fix needed (A2P registration pending), but voice delivery routing now works as the fallback channel.
+
+### Changed
+
+- **System prompt** — delivery routing section replaces passive push_audio tool description. `set_delivery` ACTION block is mandatory when user requests specific delivery method.
+- **Version** bumped to 0.3.8
+
+---
+
 ## [0.3.7] — 2026-03-19
 
 ### Unified Context Architecture
