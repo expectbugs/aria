@@ -37,6 +37,12 @@ Migrated all 8 data stores, 3 log streams, and 2 state files from JSON/JSONL to 
 - JSON file path config constants: `CALENDAR_DB`, `REMINDERS_DB`, `VEHICLE_DB`, `HEALTH_DB`, `LEGAL_DB`, `NUTRITION_DB`, `TIMER_DB`, `FITBIT_DB_DIR`, `FITBIT_EXERCISE_FILE`, `TICK_STATE_FILE`, `NUDGE_COOLDOWNS_FILE`, `REQUEST_LOG`
 - `_load()`/`_save()` boilerplate from all stores
 
+### Fixed (post-migration review)
+
+- **tick.py `process_exercise_tick()`** — still referenced removed `config.FITBIT_EXERCISE_FILE`. Replaced with atomic `UPDATE fitbit_exercise SET nudge_count = nudge_count + 1`.
+- **Timezone regression** — `serialize_row()` returned timezone-aware ISO strings from TIMESTAMPTZ columns, breaking all `datetime.now() - parsed_timestamp` arithmetic. Fixed: strips to naive local time matching original JSON behavior.
+- **Stale imports** — removed unused `json` from tick.py and fitbit_store.py, unused `config` from nutrition_store.py.
+
 ### Dependencies
 
 - Added: `psycopg[binary]` 3.3.3, `psycopg_pool` 3.3.0

@@ -478,4 +478,17 @@ External requests come through Tailscale Funnel (HTTPS), so they're encrypted. I
 
 ---
 
+## Resolution Status (updated v0.4.0)
+
+### Resolved in v0.3.9 (code audit fixes)
+C1 (task memory leak), C2 (ACTION regex), S5 (unused get_trend), S6 (wrong docstring), M8 (hardcoded diet date), M9 (hardcoded age), M11 (unused Counter), M12 (unused timedelta), m1 (inline import re), m5 (unknown actions silent), m9 (on_track display), D6 (dead config)
+
+### Resolved in v0.4.0 (PostgreSQL migration)
+C3 (file locking — atomic SQL), M7 (redundant reads — SQL aggregation), D1 (store boilerplate — eliminated), D5 (log rotation — indexed queries), D7 (graceful shutdown — lifespan)
+
+### Remaining (performance/feature, no bugs)
+S4 (TTS blocks event loop), M3 (httpx per-request), M4 (Fitbit sequential fetches), M6 (news sequential), D2 (session serialization), D3 (dependency health check), D4 (context size)
+
+---
+
 *This review covers all 21 Python source files (excluding venv) totaling ~3,200 lines of application code.*
