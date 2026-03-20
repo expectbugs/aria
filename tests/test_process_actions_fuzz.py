@@ -143,17 +143,23 @@ class TestRegexEdgeCases:
 
 class TestClaimDetectionFuzz:
     @given(st.sampled_from([
-        "I logged into the website today",
-        "I saved the file to my desktop",
+        "I logged your symptoms.",
+        "I've saved your event.",
+        "I tracked your nutrition.",
+    ]))
+    def test_first_person_claims_trigger(self, text):
+        """First-person claim phrases should always trigger the warning."""
+        result = daemon.process_actions(text)
+        assert "System note" in result
+
+    @given(st.sampled_from([
         "The data was stored in the cloud by the vendor",
         "She noted the address in her book",
+        "meals logged 3 of last 7 days",
+        "No meals logged today",
+        "calories tracked this week",
     ]))
-    def test_non_aria_claims_with_no_nutrients(self, text):
-        """Common English phrases with 'logged'/'saved' but no nutrient terms
-        should trigger the claim warning (this is a known behavior)."""
+    def test_descriptive_text_no_trigger(self, text):
+        """Descriptive/third-person text should NOT trigger the warning."""
         result = daemon.process_actions(text)
-        # These DO contain claim words but lack 3+ nutrient terms,
-        # so the nutrition false-positive check shouldn't fire.
-        # The basic claim detection WILL fire though.
-        if any(w in text.lower() for w in ["logged", "saved", "stored", "noted and logged"]):
-            assert "System note" in result or "may not" in result
+        assert "System note" not in result

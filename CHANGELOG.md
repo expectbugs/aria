@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.5] — 2026-03-20
+
+### Fixed
+
+- **Claim detection false positives on briefings** — The claim-without-action detector used single words ("logged", "saved") which triggered on descriptive briefing text like "meals logged 3 of last 7 days." Now uses phrase patterns ("I've logged", "logged your") that only match first-person storage claims. Eliminates false positives on morning briefings, debriefs, and nutrition summaries while still catching real claim-without-action violations.
+
+### Changed
+
+- **Version** bumped to 0.4.5
+
+---
+
 ## [0.4.4] — 2026-03-20
 
 ### Comprehensive test suite (v0.4.4)

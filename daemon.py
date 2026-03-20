@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.4", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.5", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -1117,27 +1117,34 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
                         error=f"Expected {missing}, got {action_types_found}")
             clean_response = warning
 
-    # Detect claim-without-action: response says data was stored but no actions found
+    # Detect claim-without-action: response says data was stored but no actions found.
+    # Uses phrase patterns (not single words) to distinguish real claims like
+    # "I've logged your meal" from descriptive text like "meals logged 3 of 7 days".
     if not actions:
-        claim_words = re.findall(
-            r'\b(logged|stored|saved|recorded|added to|tracked|captured|noted and logged)\b',
+        claim_phrases = re.findall(
+            r"(?:I've |I have |I )"
+            r"(?:logged|stored|saved|recorded|tracked|captured|added|noted)"
+            r"|"
+            r"(?:logged|stored|saved|recorded|tracked|added to|captured) your\b"
+            r"|"
+            r"\bnoted and logged\b",
             clean_response, re.IGNORECASE
         )
-        # Also detect nutrition-specific claims: mentions 3+ nutrient terms
+        # Also detect nutrition-specific claims: ARIA-phrased claim + 3+ nutrient terms
         # without a log_nutrition action (Claude extracted data but didn't store it)
         nutrient_terms = re.findall(
             r'\b(calories|protein|carb|fat|sodium|fiber|sugar|cholesterol|potassium)\b',
             clean_response, re.IGNORECASE
         )
-        if claim_words and len(set(t.lower() for t in nutrient_terms)) >= 3:
-            claim_words.append("nutrition_data_extracted")
-        if claim_words:
+        if claim_phrases and len(set(t.lower() for t in nutrient_terms)) >= 3:
+            claim_phrases.append("nutrition_data_extracted")
+        if claim_phrases:
             clean_response += (
                 "\n\n(System note: ARIA claimed to store data but no ACTION blocks "
                 "were emitted. The data may not have been saved. Please verify or retry.)"
             )
             log_request("CLAIM_WITHOUT_ACTION", "warning",
-                        error=f"Response claims '{claim_words}' but 0 actions found")
+                        error=f"Response claims '{claim_phrases}' but 0 actions found")
 
     return clean_response
 

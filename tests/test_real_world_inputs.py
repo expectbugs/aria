@@ -237,28 +237,45 @@ class TestBriefingEdgeCases:
 
 
 class TestClaimDetectionEdgeCases:
-    def test_logged_in_not_false_positive_without_nutrients(self):
-        """'logged in' (website login) without nutrient terms."""
-        result = daemon.process_actions("I logged in to my bank account")
-        # Has 'logged' but no 3+ nutrient terms → basic claim warning only
-        # This IS expected behavior per the code — it flags any claim word
-        assert "System note" in result
+    def test_briefing_descriptive_text_no_false_positive(self):
+        """Briefing-style text with 'logged' in descriptive context should NOT trigger."""
+        briefing_responses = [
+            "meals logged 3 of last 7 days",
+            "No meals logged today.",
+            "Health & nutrition patterns: meals logged 5 of last 7 days, "
+            "average sleep: 6.5 hours over last 7 days",
+            "Nutrition summary (last 7 days, 3 days logged): "
+            "Avg calories: 1800, Avg protein: 110g",
+            "calories tracked this week look good",
+        ]
+        for text in briefing_responses:
+            result = daemon.process_actions(text)
+            assert "System note" not in result, f"False positive on: {text!r}"
 
-    def test_pure_nutrition_discussion_without_action(self):
-        """Discussing nutrition data without storing should trigger warning."""
+    def test_first_person_claim_triggers(self):
+        """ARIA claiming to have stored data should trigger."""
+        claim_responses = [
+            "I've logged your meal.",
+            "I saved that to your calendar.",
+            "I have recorded your symptoms.",
+            "I tracked your nutrition intake.",
+            "Noted and logged!",
+            "I've added your event.",
+        ]
+        for text in claim_responses:
+            result = daemon.process_actions(text)
+            assert "System note" in result, f"Missed claim on: {text!r}"
+
+    def test_pure_nutrition_discussion_without_claim(self):
+        """Discussing nutrition data without a claim phrase should not trigger."""
         result = daemon.process_actions(
             "That meal had 450 calories, 38g protein, 18g fat, "
             "32g carbs, 680mg sodium, 6g fiber."
         )
-        # Has 3+ nutrient terms + no actions → should flag
-        # But it also needs a claim word. Let's check:
-        # No claim words like "logged"/"stored" here
-        # So the basic claim check won't fire.
-        # The nutrient extraction check needs claim_words AND 3+ nutrient_terms
-        assert "System note" not in result  # no claim words
+        assert "System note" not in result
 
-    def test_stored_with_nutrient_context(self):
-        """'stored' + multiple nutrients → should flag."""
+    def test_claim_with_nutrient_context(self):
+        """First-person claim + multiple nutrients → should flag."""
         result = daemon.process_actions(
             "I've stored your meal data: 450 calories, 38g protein, "
             "18g fat, 32g carbs, 680mg sodium, 6g fiber."
