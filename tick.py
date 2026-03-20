@@ -9,7 +9,6 @@ Cron entry:
     * * * * * /home/user/aria/venv/bin/python /home/user/aria/tick.py
 """
 
-import json
 import logging
 import sys
 from datetime import date, datetime, timedelta
@@ -72,7 +71,13 @@ def load_cooldowns() -> dict:
     """Load nudge cooldowns {nudge_type: last_fired_iso}."""
     with db.get_conn() as conn:
         rows = conn.execute("SELECT nudge_type, last_fired FROM nudge_cooldowns").fetchall()
-    return {r["nudge_type"]: r["last_fired"].isoformat() for r in rows}
+    result = {}
+    for r in rows:
+        ts = r["last_fired"]
+        if ts.tzinfo is not None:
+            ts = ts.astimezone().replace(tzinfo=None)
+        result[r["nudge_type"]] = ts.isoformat()
+    return result
 
 
 def save_cooldowns(cooldowns: dict):
@@ -558,10 +563,10 @@ def process_exercise_tick():
     if triggers:
         send_exercise_nudge(triggers, coaching_ctx)
         # Update nudge count
-        if config.FITBIT_EXERCISE_FILE.exists():
-            state = json.loads(config.FITBIT_EXERCISE_FILE.read_text())
-            state["nudge_count"] = nudge_count + 1
-            config.FITBIT_EXERCISE_FILE.write_text(json.dumps(state, indent=2))
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE fitbit_exercise SET nudge_count = nudge_count + 1 WHERE active = TRUE"
+            )
 
 
 def process_fitbit_poll():

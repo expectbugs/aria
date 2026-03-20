@@ -4,7 +4,6 @@ Stores one JSONB row per day with all fetched data types.
 Provides query functions for ARIA context injection and briefings.
 """
 
-import json
 import logging
 from datetime import datetime, date, timedelta
 

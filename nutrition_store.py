@@ -16,7 +16,6 @@ from typing import Optional
 import psycopg.types.json
 
 import db
-import config
 import fitbit_store
 
 log = logging.getLogger("aria.nutrition")

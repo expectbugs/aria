@@ -47,10 +47,14 @@ def serialize_row(row: dict) -> dict:
 
     Converts date/time/datetime types to ISO format strings so that
     existing code (string comparisons, f-string formatting) works unchanged.
+    Timezone-aware datetimes are converted to naive local time to match
+    the original JSON behavior (all code uses datetime.now() which is naive).
     """
     result = {}
     for key, val in row.items():
         if isinstance(val, _datetime):
+            if val.tzinfo is not None:
+                val = val.astimezone().replace(tzinfo=None)
             result[key] = val.isoformat()
         elif isinstance(val, _date):
             result[key] = val.isoformat()
