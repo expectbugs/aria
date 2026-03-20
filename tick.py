@@ -164,13 +164,19 @@ def process_timers():
 # --- Location-Based Reminders ---
 
 def check_location_reminders():
-    """Check location-triggered reminders against current GPS position."""
+    """Check location-triggered reminders against current GPS position.
+
+    Supports both "arrive" and "leave" triggers. Leave detection uses
+    tick_state to track previous presence at each reminder's location.
+    """
     loc = location_store.get_latest()
     if not loc or not loc.get("location"):
         return
 
     current_location = loc.get("location", "").lower()
     reminders = calendar_store.get_reminders()
+    state = load_state()
+    state_changed = False
 
     for r in reminders:
         if not r.get("location") or r.get("done"):
@@ -189,8 +195,12 @@ def check_location_reminders():
             or current_location in resolved
         )
 
+        # Track presence state for leave detection
+        state_key = f"loc_reminder:{r['id']}"
+        was_at = state.get(state_key) == "at"
+
         if trigger == "arrive" and location_match:
-            # Fire the reminder — only complete if delivery succeeds
+            # Fire on arrival — only complete if delivery succeeds
             if is_quiet_hours():
                 continue  # retry next tick after quiet hours
             message = f"Location reminder: {r['text']} (you're at {loc.get('location', 'this location')})"
@@ -200,6 +210,27 @@ def check_location_reminders():
                 calendar_store.complete_reminder(r["id"])
             except Exception as e:
                 log.error("Location reminder SMS failed: %s", e)
+
+        elif trigger == "leave" and was_at and not location_match:
+            # Fire on departure: was at location last tick, now elsewhere
+            if is_quiet_hours():
+                continue  # retry next tick after quiet hours
+            message = f"Location reminder: {r['text']} (you left {r['location']})"
+            try:
+                sms.send_to_owner(message)
+                log.info("Location reminder (leave) fired: %s", r["id"])
+                calendar_store.complete_reminder(r["id"])
+            except Exception as e:
+                log.error("Location reminder SMS failed: %s", e)
+
+        # Update presence state for next tick
+        new_presence = "at" if location_match else "away"
+        if state.get(state_key) != new_presence:
+            state[state_key] = new_presence
+            state_changed = True
+
+    if state_changed:
+        save_state(state)
 
 
 # --- Nudge Evaluation ---

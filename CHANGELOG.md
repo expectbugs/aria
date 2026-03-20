@@ -6,6 +6,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.3] — 2026-03-20
+
+### Third code audit cleanup: 4 fixes (v0.4.3)
+
+Final batch of fixes from the second comprehensive audit.
+
+### Fixed
+
+- **Nutrition claim-without-action false positive** (M17) — The system note "ARIA claimed to store data but no ACTION blocks were emitted" no longer fires when Claude merely reports existing nutrition data. The nutrient-terms heuristic now only triggers when storage-claim words ("logged", "saved", etc.) are also present.
+- **"Leave" location trigger now works** (S12) — Location reminders with `location_trigger: leave` now fire when the user departs from the target location. Uses tick_state to track per-reminder presence, detecting arrive→depart transitions between ticks.
+- **Morning briefing limited to once per day** (m15) — Saying "good morning" after the first briefing now falls through to normal context. Explicit re-requests ("morning briefing again", "repeat the briefing") still trigger a full briefing.
+- **Removed unused piper-tts** (m14) — `piper-tts==1.4.1` removed from requirements.txt (Kokoro replaced Piper).
+
+### Changed
+
+- **Version** bumped to 0.4.3
+
+---
+
 ## [0.4.2] — 2026-03-20
 
 ### Second code audit: 9 bug fixes (v0.4.2)

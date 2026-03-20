@@ -1,7 +1,7 @@
 # ARIA Code Review — Comprehensive Audit Report
 
 **Date:** 2026-03-20
-**Version:** v0.4.2
+**Version:** v0.4.3
 **Reviewer:** Claude (Opus 4.6)
 **Scope:** All 23 Python source files (~5,500 lines), schema.sql, requirements.txt
 **Previous review:** v0.3.8 (2026-03-19)
@@ -223,14 +223,14 @@ Any phone number can trigger Claude queries by texting the ARIA number.
 
 S9 (ACTION markup leak), S11 (quiet hours reminder loss), M14 (tick error isolation), S10 (ghost exercise sessions), S13 (snapshot null overwrite), M16 (orphan Claude process), S8 (file delivery routing), M13 (SMS any-sender), M2 (response overwrite on failure)
 
+### Resolved in v0.4.3
+
+M17 (nutrition false positive), S12 (leave location trigger), m15 (briefing once per day), m14 (remove piper-tts)
+
 ### Remaining
 
-1. **M17** — Nutrition claim-without-action false positive *(UX, conditional logic change)*
-2. **S12** — Leave location trigger not implemented *(feature gap, needs state tracking + design)*
-3. **m15** — Morning briefing should be once per day *(UX, needs state tracking)*
-4. **m14** — Remove piper-tts from requirements *(cleanup, 1 line)*
-5. **D2** — Single Claude session serializes all requests *(architectural)*
-6. **D4** — Context builder can produce very large strings *(architectural)*
+1. **D2** — Single Claude session serializes all requests *(architectural)*
+2. **D4** — Context builder can produce very large strings *(architectural)*
 
 ---
 

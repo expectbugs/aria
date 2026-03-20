@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.2", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.3", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -92,6 +92,23 @@ def _get_today_requests() -> list[dict]:
             (today,),
         ).fetchall()
     return [db.serialize_row(r) for r in rows]
+
+
+def _briefing_delivered_today() -> bool:
+    """Check if a morning briefing was already delivered today."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """SELECT 1 FROM request_log
+               WHERE timestamp >= %s AND status = 'ok'
+               AND (input ILIKE 'good morning%%'
+                    OR input ILIKE 'morning brief%%'
+                    OR input ILIKE 'briefing%%'
+                    OR input ILIKE 'start my day%%')
+               LIMIT 1""",
+            (today,),
+        ).fetchone()
+    return row is not None
 
 
 async def build_request_context(text: str, is_image: bool = False) -> str:
@@ -294,9 +311,14 @@ async def _get_context_for_text(text: str, is_image: bool = False) -> str:
     /ask/voice, and /sms instead of repeating detection logic.
     """
     text_lower = text.lower()
-    if any(text_lower.startswith(p)
-           for p in ["good morning", "morning brief", "briefing", "start my day"]):
-        return await gather_briefing_context()
+    briefing_triggers = ["good morning", "morning brief", "briefing", "start my day"]
+    if any(text_lower.startswith(p) for p in briefing_triggers):
+        # Explicit repeat requests always get the briefing
+        repeat_words = ["again", "repeat", "one more time", "redo"]
+        is_repeat = any(w in text_lower for w in repeat_words)
+        if is_repeat or not _briefing_delivered_today():
+            return await gather_briefing_context()
+        # Already delivered today — fall through to normal context
     if any(text_lower.startswith(p)
            for p in ["good night", "end my day", "nightly debrief",
                       "evening debrief", "wrap up my day"]):
@@ -1106,7 +1128,7 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             r'\b(calories|protein|carb|fat|sodium|fiber|sugar|cholesterol|potassium)\b',
             clean_response, re.IGNORECASE
         )
-        if len(set(t.lower() for t in nutrient_terms)) >= 3:
+        if claim_words and len(set(t.lower() for t in nutrient_terms)) >= 3:
             claim_words.append("nutrition_data_extracted")
         if claim_words:
             clean_response += (
