@@ -38,6 +38,7 @@ import nutrition_store
 async def lifespan(app: FastAPI):
     """Initialize and clean up resources."""
     db.get_pool()  # warm the connection pool
+    await _claude_session._ensure_alive()  # warm Claude session
     yield
     await _claude_session._kill()
     db.close()
