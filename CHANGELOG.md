@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.6] — 2026-03-21
+
+### Refactored
+
+- **Split daemon.py into 6 modules** — `daemon.py` (1,989 lines) refactored into focused modules: `system_prompt.py` (ARIA system prompt builder), `claude_session.py` (persistent Claude CLI session manager), `context.py` (keyword-triggered context injection for briefings, debriefs, health, calendar, etc.), `actions.py` (ACTION block extraction and dispatch), `tts.py` (Kokoro TTS model caching and audio generation). `daemon.py` retains FastAPI app, endpoints, background workers, auth, and file processing (~940 lines).
+- **Dependency injection for `log_request`** — `process_actions()` now accepts an optional `log_fn` parameter instead of importing `log_request` directly, eliminating circular dependency risk and simplifying test mocking.
+- **Removed 10 unused imports from daemon.py** — `calendar_store`, `vehicle_store`, `health_store`, `legal_store`, `timer_store`, `nutrition_store`, `weather`, `news`, `projects`, `os` no longer imported directly (accessed via `context.py` and `actions.py`).
+
+### Changed
+
+- **Test suite updated** — 8 test files updated with new mock paths pointing to the actual modules where functions live. 5 test files required no changes. All 534 tests pass.
+- **Version** bumped to 0.4.6
+
+---
+
 ## [0.4.5] — 2026-03-20
 
 ### Fixed

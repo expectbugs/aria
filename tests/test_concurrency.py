@@ -9,6 +9,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
+import claude_session
 import daemon
 
 
@@ -17,7 +18,7 @@ class TestClaudeSessionLock:
 
     @pytest.mark.asyncio
     async def test_queries_serialize(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
 
         execution_order = []
 

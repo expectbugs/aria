@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
-import daemon
+import claude_session
 
 
 class MockStreamWriter:
@@ -68,10 +68,10 @@ def make_mock_process():
 class TestClaudeSessionSpawn:
     @pytest.mark.asyncio
     async def test_spawn_args(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         mock_proc = make_mock_process()
 
-        with patch("daemon.asyncio.create_subprocess_exec",
+        with patch("claude_session.asyncio.create_subprocess_exec",
                    new_callable=AsyncMock, return_value=mock_proc) as mock_exec:
             await session._spawn()
 
@@ -86,10 +86,10 @@ class TestClaudeSessionSpawn:
 
     @pytest.mark.asyncio
     async def test_spawn_strips_claudecode_env(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         mock_proc = make_mock_process()
 
-        with patch("daemon.asyncio.create_subprocess_exec",
+        with patch("claude_session.asyncio.create_subprocess_exec",
                    new_callable=AsyncMock, return_value=mock_proc) as mock_exec, \
              patch.dict("os.environ", {"CLAUDECODE": "true", "PATH": "/usr/bin"}):
             await session._spawn()
@@ -101,7 +101,7 @@ class TestClaudeSessionSpawn:
 class TestClaudeSessionQuery:
     @pytest.mark.asyncio
     async def test_successful_query(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         proc = make_mock_process()
         session._proc = proc
         session._request_count = 0
@@ -122,7 +122,7 @@ class TestClaudeSessionQuery:
 
     @pytest.mark.asyncio
     async def test_control_request_auto_approval(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         proc = make_mock_process()
         session._proc = proc
         session._request_count = 0
@@ -146,7 +146,7 @@ class TestClaudeSessionQuery:
 
     @pytest.mark.asyncio
     async def test_error_result_raises(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         proc = make_mock_process()
         session._proc = proc
         session._request_count = 0
@@ -161,7 +161,7 @@ class TestClaudeSessionQuery:
 
     @pytest.mark.asyncio
     async def test_process_death_raises(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         proc = make_mock_process()
         session._proc = proc
         session._request_count = 0
@@ -173,13 +173,13 @@ class TestClaudeSessionQuery:
 
     @pytest.mark.asyncio
     async def test_timeout_kills_process(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         proc = make_mock_process()
         session._proc = proc
         session._request_count = 0
 
         # Don't push any response — will timeout
-        with patch("daemon.config.CLAUDE_TIMEOUT", 0.1):
+        with patch("claude_session.config.CLAUDE_TIMEOUT", 0.1):
             with pytest.raises(RuntimeError, match="timed out"):
                 await session.query("test")
 
@@ -188,7 +188,7 @@ class TestClaudeSessionQuery:
 
     @pytest.mark.asyncio
     async def test_extra_context_included(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         proc = make_mock_process()
         session._proc = proc
         session._request_count = 0
@@ -203,7 +203,7 @@ class TestClaudeSessionQuery:
 
     @pytest.mark.asyncio
     async def test_file_blocks_multimodal(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         proc = make_mock_process()
         session._proc = proc
         session._request_count = 0
@@ -223,7 +223,7 @@ class TestClaudeSessionQuery:
 class TestSessionRecycling:
     @pytest.mark.asyncio
     async def test_recycles_after_max_requests(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         session.MAX_REQUESTS = 2
 
         proc1 = make_mock_process()
@@ -261,17 +261,17 @@ class TestSessionRecycling:
 
 class TestSessionAlive:
     def test_not_alive_when_no_proc(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         assert session._is_alive() is False
 
     def test_not_alive_when_proc_exited(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         session._proc = MagicMock()
         session._proc.returncode = 1
         assert session._is_alive() is False
 
     def test_alive_when_running(self):
-        session = daemon.ClaudeSession()
+        session = claude_session.ClaudeSession()
         session._proc = MagicMock()
         session._proc.returncode = None
         assert session._is_alive() is True

@@ -4,6 +4,7 @@
 **Version:** v0.4.3
 **Reviewer:** Claude (Opus 4.6)
 **Scope:** All 23 Python source files (~5,500 lines), schema.sql, requirements.txt
+**Note:** daemon.py was refactored into 6 modules in v0.4.6. File/line references below predate this split. See `context.py`, `actions.py`, `claude_session.py`, `system_prompt.py`, `tts.py` for current locations.
 **Previous review:** v0.3.8 (2026-03-19)
 
 ---

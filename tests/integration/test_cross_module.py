@@ -13,7 +13,7 @@ import vehicle_store
 import legal_store
 import location_store
 import timer_store
-import daemon
+import context
 
 
 class TestNutritionFitbitIntegration:
@@ -76,7 +76,7 @@ class TestHealthContextIntegration:
             },
         })
 
-        ctx = daemon.gather_health_context()
+        ctx = context.gather_health_context()
         assert "grilled chicken" in ctx.lower()
         assert "450" in ctx or "Calories" in ctx
         assert "Diet day" in ctx
@@ -86,14 +86,14 @@ class TestBriefingContextIntegration:
     """Verify gather_briefing_context aggregates all data stores."""
 
     @pytest.mark.asyncio
-    @patch("daemon.weather.get_current_conditions", new_callable=AsyncMock,
+    @patch("context.weather.get_current_conditions", new_callable=AsyncMock,
            return_value={"description": "Sunny", "temperature_f": 55,
                         "humidity": 40, "wind_mph": 10})
-    @patch("daemon.weather.get_forecast", new_callable=AsyncMock,
+    @patch("context.weather.get_forecast", new_callable=AsyncMock,
            return_value=[{"name": "Today", "temperature": 55, "unit": "F",
                          "summary": "Sunny"}])
-    @patch("daemon.weather.get_alerts", new_callable=AsyncMock, return_value=[])
-    @patch("daemon.news.get_news_digest", new_callable=AsyncMock,
+    @patch("context.weather.get_alerts", new_callable=AsyncMock, return_value=[])
+    @patch("context.news.get_news_digest", new_callable=AsyncMock,
            return_value={"tech": [{"title": "Test Article"}]})
     async def test_briefing_includes_all_stores(self, mock_news, mock_alerts,
                                                   mock_forecast, mock_weather):
@@ -119,7 +119,7 @@ class TestBriefingContextIntegration:
             "heart_rate": {"value": {"restingHeartRate": 64}},
         })
 
-        briefing = await daemon.gather_briefing_context()
+        briefing = await context.gather_briefing_context()
         assert "Doctor" in briefing
         assert "Meeting" in briefing  # tomorrow's prep
         assert "Buy groceries" in briefing
@@ -129,7 +129,7 @@ class TestBriefingContextIntegration:
 
 class TestDebriefContextIntegration:
     @pytest.mark.asyncio
-    @patch("daemon.weather.get_forecast", new_callable=AsyncMock,
+    @patch("context.weather.get_forecast", new_callable=AsyncMock,
            return_value=[{"name": "Tonight", "temperature": 40, "unit": "F",
                          "summary": "Clear"}])
     async def test_debrief_includes_todays_data(self, mock_forecast):
@@ -139,7 +139,7 @@ class TestDebriefContextIntegration:
         calendar_store.add_event(title="Completed task", event_date=today)
         health_store.add_entry(today, "meal", "dinner salad", meal_type="dinner")
 
-        debrief = await daemon.gather_debrief_context()
+        debrief = await context.gather_debrief_context()
         assert "Completed task" in debrief
         assert "dinner salad" in debrief
 
@@ -150,7 +150,7 @@ class TestBuildRequestContextIntegration:
         vehicle_store.add_entry("2026-03-15", "oil_change", "Synthetic 5W-30",
                                mileage=145000)
 
-        ctx = await daemon.build_request_context("When was my last xterra oil change?")
+        ctx = await context.build_request_context("When was my last xterra oil change?")
         assert "oil_change" in ctx
         assert "145000" in ctx or "Synthetic" in ctx
 
@@ -159,7 +159,7 @@ class TestBuildRequestContextIntegration:
         future = (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%d")
         legal_store.add_entry(future, "court_date", "Hearing on motion")
 
-        ctx = await daemon.build_request_context("What's my next court date?")
+        ctx = await context.build_request_context("What's my next court date?")
         assert "court_date" in ctx
         assert "Hearing" in ctx
 
@@ -169,5 +169,5 @@ class TestBuildRequestContextIntegration:
         timer_store.add_timer("Laundry", fire_at, delivery="sms",
                               message="Laundry done!")
 
-        ctx = await daemon.build_request_context("How long is left on my timer?")
+        ctx = await context.build_request_context("How long is left on my timer?")
         assert "Laundry" in ctx
