@@ -33,7 +33,8 @@ class ClaudeSession:
     async def _spawn(self):
         """Spawn a fresh Claude CLI process with stream-json I/O."""
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        env["CLAUDE_CODE_EFFORT_LEVEL"] = "auto"
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = "high"
+        env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
 
         self._proc = await asyncio.create_subprocess_exec(
             config.CLAUDE_CLI,
@@ -44,6 +45,7 @@ class ClaudeSession:
             "--model", "opus",
             "--dangerously-skip-permissions",
             "--system-prompt", build_system_prompt(),
+            "--settings", '{"claudeMdExcludes": ["/home/user/aria/CLAUDE.md"]}',
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

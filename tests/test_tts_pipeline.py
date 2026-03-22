@@ -61,6 +61,90 @@ class TestTtsSync:
         call_kwargs = mock_kokoro.create.call_args
         assert "voice" in call_kwargs[1]
 
+    @patch("tts._get_kokoro")
+    def test_strips_markdown_before_kokoro(self, mock_get_kokoro):
+        import numpy as np
+        mock_kokoro = MagicMock()
+        mock_kokoro.create.return_value = (np.zeros(100, dtype=np.float32), 24000)
+        mock_get_kokoro.return_value = mock_kokoro
+
+        tts._tts_sync("**bold** and *italic*")
+        text_sent = mock_kokoro.create.call_args[0][0]
+        assert "**" not in text_sent
+        assert "*" not in text_sent
+        assert text_sent == "bold and italic"
+
+
+class TestPrepareForSpeech:
+    """Tests for markdown stripping before TTS."""
+
+    def test_strips_bold(self):
+        assert tts._prepare_for_speech("**hello**") == "hello"
+
+    def test_strips_italic(self):
+        assert tts._prepare_for_speech("*hello*") == "hello"
+
+    def test_strips_bold_and_italic(self):
+        assert tts._prepare_for_speech("**bold** and *italic*") == "bold and italic"
+
+    def test_strips_bold_italic_combined(self):
+        assert tts._prepare_for_speech("***bold italic***") == "bold italic"
+
+    def test_strips_inline_code(self):
+        assert tts._prepare_for_speech("use `foo` here") == "use foo here"
+
+    def test_strips_code_blocks(self):
+        text = "before\n```python\nprint('hi')\n```\nafter"
+        assert tts._prepare_for_speech(text) == "before. after"
+
+    def test_strips_headings(self):
+        assert tts._prepare_for_speech("## Summary\nContent") == "Summary Content"
+
+    def test_strips_bullet_points(self):
+        text = "Items:\n- first\n- second"
+        assert tts._prepare_for_speech(text) == "Items: first second"
+
+    def test_strips_numbered_list(self):
+        text = "Steps:\n1. first\n2. second"
+        assert tts._prepare_for_speech(text) == "Steps: first second"
+
+    def test_strips_markdown_links(self):
+        assert tts._prepare_for_speech("[click here](http://example.com)") == "click here"
+
+    def test_paragraph_breaks_become_pauses(self):
+        text = "First paragraph.\n\nSecond paragraph."
+        assert tts._prepare_for_speech(text) == "First paragraph.. Second paragraph."
+
+    def test_normalizes_whitespace(self):
+        assert tts._prepare_for_speech("too   many   spaces") == "too many spaces"
+
+    def test_plain_text_unchanged(self):
+        text = "Hello, how are you today?"
+        assert tts._prepare_for_speech(text) == text
+
+    def test_real_world_response(self):
+        """The response that triggered the original bug."""
+        text = (
+            "OK so you've got solid nutrition data. Here's what I have:\n\n"
+            "**Smoothie ingredients:** frozen banana, blueberries, cherries\n\n"
+            "**Dinner staples:** Spanish rice, canned salmon, broccoli\n\n"
+            "**Snacks:** Amy's burritos, Chomps beef sticks"
+        )
+        result = tts._prepare_for_speech(text)
+        assert "**" not in result
+        assert "Smoothie ingredients:" in result
+        assert "Dinner staples:" in result
+
+    def test_empty_string(self):
+        assert tts._prepare_for_speech("") == ""
+
+    def test_asterisk_bullet_not_confused_with_italic(self):
+        text = "List:\n* item one\n* item two"
+        result = tts._prepare_for_speech(text)
+        assert "item one" in result
+        assert "item two" in result
+        assert "*" not in result
+
 
 class TestGenerateTts:
     @pytest.mark.asyncio

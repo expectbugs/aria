@@ -312,6 +312,7 @@ async def _process_task(task_id: str, req: AskRequest, request: Request):
         audio = await _generate_tts(result.response)
         _tasks[task_id].update({"status": "done", "audio": audio})
     except Exception as e:
+        log.exception("Task %s failed: %s", task_id, e)
         _tasks[task_id].update({"status": "error", "error": str(e)})
 
 

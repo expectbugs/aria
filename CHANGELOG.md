@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.7] — 2026-03-22
+
+### Fixed
+
+- **TTS crash on long responses** — Kokoro TTS (kokoro-onnx v0.5.0) has an off-by-one bug: voice embedding array has 510 rows (indices 0-509) but `MAX_PHONEME_LENGTH=510` allows `voice[510]`. Patched at load time by setting `MAX_PHONEME_LENGTH = 509`. This caused "Something went wrong" errors on the phone for any response that produced a phoneme chunk of exactly 510 tokens.
+- **Markdown in TTS output** — Added `_prepare_for_speech()` to strip markdown formatting (bold, italic, code blocks, headings, bullets, links) before passing text to Kokoro. Claude uses markdown in ~80% of responses despite the system prompt requesting plain text, causing TTS to pronounce literal asterisks.
+- **Silent error swallowing in `/ask/start`** — `_process_task` caught exceptions but only stored them in the in-memory task dict without logging. Added `log.exception()` so background task errors (like the TTS crash) appear in `logs/aria.err` with full tracebacks.
+
+### Added
+
+- **`CLAUDE.md`** — Project rules for Claude Code: Rule Zero (do not implement without explicit permission), verify-before-execute, integrity, system environment, architecture constraints, testing safety, external API data handling.
+- **17 TTS tests** — `_prepare_for_speech()` unit tests covering bold, italic, code blocks, headings, bullets, numbered lists, links, real-world responses, and an integration test verifying markdown is stripped before reaching Kokoro.
+
+### Changed
+
+- **ARIA effort level: `auto` → `high`** — ARIA was running at medium effort (the Opus 4.6 default for "auto"), explaining shallow reasoning on complex queries. Now uses `high` for consistently deeper thinking.
+- **ARIA auto-memory disabled** — ARIA's subprocess was loading 200 lines of Claude Code's auto-memory (MEMORY.md) into context, which contained irrelevant/conflicting instructions (mock patching rules, "verify before execute", etc.). Disabled via `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. All critical reinforcements are already in ARIA's system prompt.
+- **ARIA excludes CLAUDE.md** — Added `--settings '{"claudeMdExcludes": [...]}'` to ARIA's subprocess invocation so Rule Zero (designed for interactive Claude Code) doesn't prevent ARIA from acting autonomously.
+- **Version** bumped to 0.4.7
+
+---
+
 ## [0.4.6] — 2026-03-21
 
 ### Refactored
