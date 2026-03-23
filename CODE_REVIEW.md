@@ -198,7 +198,7 @@ Currently, any message starting with "good morning" triggers a full morning brie
 All channels (voice, SMS, file, nudge, exercise coaching) share one `ClaudeSession` with a single lock. A slow image generation request blocks everything for up to 10 minutes.
 
 #### D4. Context builder can produce very large strings *(carried forward)*
-A morning briefing concatenates weather, calendar, reminders, news, vehicle, health patterns, nutrition, Fitbit data, Fitbit trends, location, and legal dates.
+A morning briefing concatenates weather, calendar, reminders, news, vehicle, health patterns, nutrition, Fitbit data, Fitbit trends, location, and legal dates. As of v0.4.8, `data/pantry.md` (~3KB) is also injected on nutrition queries alongside `data/diet_reference.md`.
 
 ---
 

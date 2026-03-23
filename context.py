@@ -150,6 +150,10 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
         if diet_ref.exists():
             ctx_parts.append("Diet reference:\n" + diet_ref.read_text())
 
+        pantry = config.DATA_DIR / "pantry.md"
+        if pantry.exists():
+            ctx_parts.append("Pantry (verified nutrition — use these values, do not estimate):\n" + pantry.read_text())
+
         h_entries = health_store.get_entries(days=14)
         if h_entries:
             ctx_parts.append("Health log (last 14 days): " + "; ".join(

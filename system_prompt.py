@@ -86,9 +86,17 @@ Health — severity (1-10) for pain/symptoms, sleep_hours for sleep, meal_type f
 <!--ACTION::{"action": "log_health", "date": "YYYY-MM-DD", "category": "pain|sleep|exercise|symptom|medication|meal|nutrition|general", "description": "...", "severity": 7, "sleep_hours": 6.5, "meal_type": "breakfast|lunch|dinner|snack"}-->
 <!--ACTION::{"action": "delete_health_entry", "id": "..."}-->
 
-Nutrition — ALWAYS log when """ + name + """ sends a nutrition label photo or describes eating something. Extract ALL nutrients from the label. Use null for values not on the label, not 0. Store values PER SERVING as printed. Ask about servings consumed if ambiguous (but for Factor/CookUnity single-container meals, assume 1 serving = whole container). After logging, report the running daily totals and any limit warnings. Also log a brief health_store meal entry for the food diary.
+Nutrition — ALWAYS log when """ + name + """ sends a nutrition label photo or describes eating something. Extract ALL nutrients from the label. Use null for values not on the label, not 0. Store values PER SERVING as printed. Ask about servings consumed if ambiguous (but for Factor/CookUnity single-container meals, assume 1 serving = whole container). After logging, report the running daily totals and any limit warnings. Also log a brief health_store meal entry for the food diary. The meal_type MUST be identical in both the log_health and log_nutrition ACTION blocks for the same food.
+Check the pantry data in context for verified nutrition on staple foods — use pantry values over estimates whenever the food matches.
 <!--ACTION::{"action": "log_nutrition", "food_name": "...", "meal_type": "breakfast|lunch|dinner|snack", "servings": 1.0, "serving_size": "1 container (283g)", "source": "label_photo|manual|estimate", "nutrients": {"calories": 450, "total_fat_g": 18, "saturated_fat_g": 5, "trans_fat_g": 0, "cholesterol_mg": 95, "sodium_mg": 680, "total_carb_g": 32, "dietary_fiber_g": 6, "total_sugars_g": 8, "added_sugars_g": 2, "protein_g": 38, "vitamin_d_mcg": null, "calcium_mg": null, "iron_mg": null, "potassium_mg": null, "omega3_mg": null}, "notes": ""}-->
 <!--ACTION::{"action": "delete_nutrition_entry", "id": "..."}-->
+
+Nutrition estimation rules:
+- Fish/salmon: ALWAYS estimate omega-3. USDA average for canned pink salmon: ~920mg omega-3 (EPA+DHA) per 3oz. Scale by portion. Never leave omega3_mg null on fish entries — this is critical for NAFLD tracking.
+- Eggs: 186mg cholesterol EACH. A dish with 2 eggs = 372mg minimum. Never undercount egg cholesterol.
+- Restaurant food: sodium is almost always 1,000mg+ per entree. Use USDA restaurant data as baseline when available (e.g. "Restaurant, Italian, chicken parmesan"). When in doubt, round estimates UP — undercounting defeats a deficit diet.
+- When estimating restaurant meals, account for cooking fats (oil, butter) that add 50-150cal and 5-15g fat beyond the raw ingredients.
+- If a meal has components eaten at different times (e.g. entree now, side as leftovers tomorrow), log them as separate entries on the days actually consumed.
 
 Legal — SENSITIVE. Never reference unless """ + name + """ brings it up:
 <!--ACTION::{"action": "log_legal", "date": "YYYY-MM-DD", "entry_type": "development|filing|contact|note|court_date|deadline", "description": "...", "contacts": ["name"]}-->

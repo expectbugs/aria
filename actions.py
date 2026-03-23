@@ -16,6 +16,76 @@ import fitbit_store
 log = logging.getLogger("aria")
 
 
+_FISH_KEYWORDS = re.compile(
+    r'\b(salmon|fish|tuna|sardine|mackerel|trout|cod|tilapia|halibut)\b', re.IGNORECASE
+)
+_EGG_KEYWORDS = re.compile(
+    r'\b(eggs?|omelet|omelette|frittata|quiche|scramble)\b', re.IGNORECASE
+)
+_EGG_FALSE_POSITIVES = re.compile(r'\b(eggplant)\b', re.IGNORECASE)
+
+_CORE_NUTRIENTS = [
+    "calories", "total_fat_g", "saturated_fat_g", "sodium_mg",
+    "total_carb_g", "dietary_fiber_g", "total_sugars_g", "protein_g",
+]
+
+
+def _validate_nutrition(nutrition_actions: list[dict],
+                        health_meal_types: list[str]) -> list[str]:
+    """Validate nutrition ACTION data quality. Returns list of warning strings."""
+    warnings = []
+
+    for action in nutrition_actions:
+        food = action.get("food_name", "")
+        nutrients = action.get("nutrients", {})
+        source = action.get("source", "")
+
+        # 1. Calories present and > 0
+        cal = nutrients.get("calories")
+        if cal is None or cal == 0:
+            warnings.append(f"No calories on '{food}' — verify entry.")
+
+        # 2. Fish/salmon must have omega-3
+        if _FISH_KEYWORDS.search(food):
+            omega3 = nutrients.get("omega3_mg")
+            if omega3 is None:
+                warnings.append(
+                    f"Omega-3 missing on '{food}' — estimate ~920mg per 3oz for canned salmon."
+                )
+
+        # 3. Egg dishes must have realistic cholesterol
+        if _EGG_KEYWORDS.search(food) and not _EGG_FALSE_POSITIVES.search(food):
+            chol = nutrients.get("cholesterol_mg")
+            if chol is not None and chol < 100:
+                warnings.append(
+                    f"Cholesterol only {chol}mg on '{food}' — eggs are 186mg each, verify."
+                )
+
+        # 4. Label photos should have most core nutrients
+        if source == "label_photo":
+            present = sum(1 for f in _CORE_NUTRIENTS
+                          if nutrients.get(f) is not None)
+            if present < 8:
+                missing = [f for f in _CORE_NUTRIENTS
+                           if nutrients.get(f) is None]
+                warnings.append(
+                    f"Label photo '{food}' only has {present}/8 core nutrients — "
+                    f"missing: {', '.join(missing)}."
+                )
+
+    # 5. Meal type consistency between log_health and log_nutrition
+    if health_meal_types:
+        nutr_meal_types = [a.get("meal_type", "snack") for a in nutrition_actions]
+        health_set = set(health_meal_types)
+        nutr_set = set(nutr_meal_types)
+        if health_set != nutr_set:
+            warnings.append(
+                f"Meal type mismatch — diary has {health_set} but nutrition has {nutr_set}."
+            )
+
+    return warnings
+
+
 def process_actions(response_text: str, expect_actions: list[str] | None = None,
                     metadata: dict | None = None,
                     log_fn=None) -> str:
@@ -36,6 +106,8 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
     actions = re.findall(r'<!--ACTION::(\{.*?\})-->', response_text, re.DOTALL)
     failures = []
     action_types_found = []
+    _nutrition_actions = []  # collected for post-validation
+    _health_meal_types = []  # collected for meal_type cross-check
 
     for action_json in actions:
         try:
@@ -92,6 +164,8 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
                     sleep_hours=action.get("sleep_hours"),
                     meal_type=action.get("meal_type"),
                 )
+                if action.get("category") == "meal" and action.get("meal_type"):
+                    _health_meal_types.append(action["meal_type"])
             elif act == "delete_health_entry":
                 if not health_store.delete_entry(action["id"]):
                     failures.append("Couldn't delete health entry — no entry found with that ID.")
@@ -142,6 +216,7 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
                     entry_date=action.get("date"),
                     entry_time=action.get("time"),
                 )
+                _nutrition_actions.append(action)
             elif act == "delete_nutrition_entry":
                 if not nutrition_store.delete_item(action["id"]):
                     failures.append("Couldn't delete nutrition entry — no entry found with that ID.")
@@ -167,6 +242,15 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
         if log_fn:
             log_fn("ACTION", "error", error="; ".join(failures))
         clean_response += "\n\nNote: Some actions failed — " + " ".join(failures)
+
+    # Post-log nutrition validation — catch common data quality issues
+    if _nutrition_actions:
+        validation_warnings = _validate_nutrition(_nutrition_actions, _health_meal_types)
+        if validation_warnings:
+            clean_response += "\n\n(Nutrition check: " + " ".join(validation_warnings) + ")"
+            if log_fn:
+                log_fn("NUTRITION_VALIDATION", "warning",
+                       error="; ".join(validation_warnings))
 
     # Validate: if specific actions were expected but not found, warn
     if expect_actions:

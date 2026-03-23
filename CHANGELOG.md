@@ -6,6 +6,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.8] — 2026-03-23
+
+### Added
+
+- **Pantry system** — `data/pantry.md` with verified nutrition data for 15+ staple foods (smoothie, Huel, nutpods, salmon, broccoli, cheddar, Amy's burritos, Chomps, Factor meals, Seeds of Change rice, condiments, drinks). Automatically injected into ARIA's context on nutrition-related queries via `context.py`. ARIA uses pantry values over estimates, eliminating day-to-day estimation drift on recurring meals.
+- **Nutrition validation** — `_validate_nutrition()` in `actions.py` runs 5 post-log checks after every `log_nutrition` ACTION: missing calories, fish without omega-3, egg dishes with low cholesterol, incomplete label photo nutrients, meal_type mismatch between health diary and nutrition entries. Warnings are appended to the response and logged for audit.
+- **14 nutrition validation tests** — covering all 5 checks plus edge cases (eggplant false positive, estimate vs label_photo, no health entry present).
+- **Amy's Dairy burrito** added to pantry (second variety alongside non-dairy).
+
+### Changed
+
+- **ARIA effort level: `high` → `max`** — for deeper reasoning on complex queries.
+- **System prompt: nutrition estimation rules** — added omega-3 estimation for fish (~920mg/3oz), egg cholesterol rule (186mg each), restaurant sodium baseline (1,000mg+), round-up guidance for deficit diet, separate-entry rule for split meals.
+- **System prompt: meal_type consistency** — explicit rule requiring identical meal_type in both `log_health` and `log_nutrition` ACTION blocks for the same food.
+- **System prompt: pantry reference** — instructs ARIA to check pantry data in context before estimating.
+- **Pantry context injection** — `context.py` now reads `data/pantry.md` alongside `data/diet_reference.md` when health/nutrition keywords trigger.
+- **Version** bumped to 0.4.8
+
+### Fixed
+
+- **Nutrition data audit** — comprehensive audit and correction of 7 days of meal/nutrition data (Mar 17-23). Fixes include: salmon entries swapped between Mar 19/20, omega-3 added to all salmon entries, meal_type inconsistencies between health diary and nutrition entries, source field corrections (label_photo → manual for composite entries), missing trans_fat on 3 entries, White Castle sodium corrected (1,900→2,735mg), restaurant meal estimates corrected using USDA data (chicken parm, vegetarian skillet, penne marinara), smoothie+Huel entries corrected for Huel sodium (45-85→260-290mg), broccoli+cheddar entries corrected from product labels, Amy's burrito corrected from product label.
+
+---
+
 ## [0.4.7] — 2026-03-22
 
 ### Fixed

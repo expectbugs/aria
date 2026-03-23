@@ -233,3 +233,154 @@ class TestActionBlockStripping:
         assert "<!--ACTION" not in result
         assert "Message one!" in result
         assert "Message two!" in result
+
+
+class TestNutritionValidation:
+    """Tests for post-log nutrition validation checks."""
+
+    @patch("actions.nutrition_store")
+    def test_warns_missing_calories(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Mystery food", '
+            '"nutrients": {"protein_g": 10}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Nutrition check" in result
+        assert "No calories" in result
+
+    @patch("actions.nutrition_store")
+    def test_warns_zero_calories(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Water", '
+            '"nutrients": {"calories": 0}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "No calories" in result
+
+    @patch("actions.nutrition_store")
+    def test_no_warning_on_valid_entry(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Chicken breast", '
+            '"meal_type": "lunch", "source": "estimate", '
+            '"nutrients": {"calories": 250, "protein_g": 40, "total_fat_g": 5, '
+            '"saturated_fat_g": 1, "sodium_mg": 300, "total_carb_g": 0, '
+            '"dietary_fiber_g": 0, "total_sugars_g": 0}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Nutrition check" not in result
+
+    @patch("actions.nutrition_store")
+    def test_warns_salmon_missing_omega3(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Canned salmon with rice", '
+            '"nutrients": {"calories": 400, "protein_g": 30, "omega3_mg": null}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Omega-3 missing" in result
+        assert "salmon" in result.lower()
+
+    @patch("actions.nutrition_store")
+    def test_no_omega3_warning_when_populated(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Salmon dinner", '
+            '"nutrients": {"calories": 400, "protein_g": 30, "omega3_mg": 1150}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Omega-3" not in result
+
+    @patch("actions.nutrition_store")
+    def test_warns_fish_keyword_variants(self, mock_ns):
+        for fish in ["tuna salad", "grilled fish tacos", "sardine snack"]:
+            response = (
+                f'Logged! <!--ACTION::{{"action": "log_nutrition", "food_name": "{fish}", '
+                f'"nutrients": {{"calories": 200, "omega3_mg": null}}}}-->'
+            )
+            result = actions.process_actions(response)
+            assert "Omega-3 missing" in result, f"Failed for: {fish}"
+
+    @patch("actions.nutrition_store")
+    def test_warns_egg_low_cholesterol(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Scrambled eggs and toast", '
+            '"nutrients": {"calories": 300, "cholesterol_mg": 30}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Cholesterol only 30mg" in result
+        assert "186mg" in result
+
+    @patch("actions.nutrition_store")
+    def test_no_egg_warning_when_cholesterol_high(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Veggie omelet", '
+            '"nutrients": {"calories": 400, "cholesterol_mg": 400}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Cholesterol only" not in result
+
+    @patch("actions.nutrition_store")
+    def test_no_egg_warning_for_eggplant(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Eggplant parmesan", '
+            '"nutrients": {"calories": 350, "cholesterol_mg": 20}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Cholesterol only" not in result
+
+    @patch("actions.nutrition_store")
+    def test_warns_label_photo_incomplete(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Some product", '
+            '"source": "label_photo", '
+            '"nutrients": {"calories": 200, "protein_g": 10, "total_fat_g": 5}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Nutrition check" in result
+        assert "3/8 core nutrients" in result
+
+    @patch("actions.nutrition_store")
+    def test_no_label_warning_for_estimates(self, mock_ns):
+        """Estimates are expected to have fewer nutrients — no warning."""
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Restaurant meal", '
+            '"source": "estimate", '
+            '"nutrients": {"calories": 500, "protein_g": 30}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "core nutrients" not in result
+
+    @patch("actions.nutrition_store")
+    @patch("actions.health_store")
+    def test_warns_meal_type_mismatch(self, mock_hs, mock_ns):
+        response = (
+            'Logged your lunch! '
+            '<!--ACTION::{"action": "log_health", "date": "2026-03-20", "category": "meal", '
+            '"description": "chicken", "meal_type": "lunch"}-->'
+            '<!--ACTION::{"action": "log_nutrition", "food_name": "Chicken", '
+            '"meal_type": "dinner", "nutrients": {"calories": 300}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Meal type mismatch" in result
+
+    @patch("actions.nutrition_store")
+    @patch("actions.health_store")
+    def test_no_warning_when_meal_types_match(self, mock_hs, mock_ns):
+        response = (
+            'Logged your lunch! '
+            '<!--ACTION::{"action": "log_health", "date": "2026-03-20", "category": "meal", '
+            '"description": "chicken", "meal_type": "lunch"}-->'
+            '<!--ACTION::{"action": "log_nutrition", "food_name": "Chicken", '
+            '"meal_type": "lunch", "nutrients": {"calories": 300}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Meal type mismatch" not in result
+
+    @patch("actions.nutrition_store")
+    @patch("actions.health_store")
+    def test_no_meal_type_check_without_health_entry(self, mock_hs, mock_ns):
+        """No meal_type warning if only log_nutrition was emitted (no diary entry)."""
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Snack", '
+            '"meal_type": "snack", "nutrients": {"calories": 100}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Meal type mismatch" not in result
