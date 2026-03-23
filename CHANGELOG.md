@@ -6,6 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.9] — 2026-03-23
+
+### Fixed
+
+- **TTS audio cut off mid-sentence on data-heavy responses** — Kokoro's phoneme batcher splits only on `[.,!?;]`. Data listings (nutrition summaries, daily totals) use colons and newlines between items, producing phoneme batches exceeding the 509-character limit. Kokoro silently truncates these, dropping words from the audio. Fixed with two changes in `_prepare_for_speech()`: (1) single newlines now become commas instead of spaces, giving Kokoro split points between data items; (2) new `_ensure_tts_splits()` safety net inserts commas at word boundaries when any text run exceeds 200 characters without Kokoro-friendly punctuation. The lookbehind `(?<![.,!?;:])` prevents redundant commas after lines already ending with punctuation.
+- **26 new TTS tests** — 9 newline→comma conversion tests, 9 safety-net split tests, 3 end-to-end truncation prevention tests, plus 5 updated existing tests for new comma behavior.
+
+### Changed
+
+- **Version** bumped to 0.4.9
+
+---
+
 ## [0.4.8] — 2026-03-23
 
 ### Added
