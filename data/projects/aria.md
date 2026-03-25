@@ -1,7 +1,7 @@
 # ARIA — Ambient Reasoning & Intelligence Assistant
 
 ## Status
-Phase 4 in progress (v0.4.25). **Swarm architecture complete.** ARIA Primary on Anthropic API, Action ARIA + Amnesia pool for background tasks, Redis dispatch + completion notifications. Slappy failover fully operational with auto-deploy, db sync, health monitoring.
+Phase 4 in progress (v0.4.26). **Swarm architecture complete.** ARIA Primary on Anthropic API, Action ARIA + Amnesia pool for background tasks, Redis dispatch + completion notifications. Slappy failover fully operational with auto-deploy, db sync, health monitoring.
 
 ## Architecture
 - FastAPI daemon on beardos (primary, RTX 3090) with slappy as warm failover
@@ -23,7 +23,7 @@ Phase 4 in progress (v0.4.25). **Swarm architecture complete.** ARIA Primary on 
 - SMS/MMS via Twilio (inbound working, outbound pending A2P verification)
 - Specialist logs: vehicle maintenance, health/physical, legal case
 - Diet/nutrition tracking with NAFLD-aware compliance, meal types, nutrition label photos
-- Structured per-item nutrition tracking with SQL aggregation, pantry system for verified staple food data, post-log validation checks
+- Structured per-item nutrition tracking with SQL aggregation (33 nutrients including expanded micronutrients), pantry system for verified staple food data, post-log validation checks, choline/magnesium/micronutrient daily tracking
 - Project status briefs
 - Autonomous timer/scheduler (SMS or voice delivery, priorities, quiet hours)
 - Proactive nudges (meal gaps, calendar warnings, overdue reminders, diet compliance, health patterns, legal deadlines, battery alerts)
