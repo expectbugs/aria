@@ -56,15 +56,18 @@ class TestFetchFeed:
         assert len(items) == 1
 
     @pytest.mark.asyncio
-    async def test_network_error_returns_empty(self):
+    async def test_network_error_returns_empty_and_logs(self):
         mock_http = AsyncMock()
         mock_http.get.side_effect = Exception("Network error")
         mock_http.__aenter__ = AsyncMock(return_value=mock_http)
         mock_http.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("news.httpx.AsyncClient", return_value=mock_http):
+        with patch("news.httpx.AsyncClient", return_value=mock_http), \
+             patch("news.log") as mock_log:
             items = await news.fetch_feed("tech", "https://down.example.com")
         assert items == []
+        mock_log.warning.assert_called_once()
+        assert "tech" in mock_log.warning.call_args[0][1]
 
 
 class TestGetNewsDigest:

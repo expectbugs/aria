@@ -1,10 +1,13 @@
 """News digest via RSS feeds."""
 
 import asyncio
+import logging
 
 import feedparser
 import httpx
 from config import NEWS_FEEDS
+
+log = logging.getLogger("aria")
 
 
 async def fetch_feed(name: str, url: str, max_items: int = 3) -> list[dict]:
@@ -18,10 +21,11 @@ async def fetch_feed(name: str, url: str, max_items: int = 3) -> list[dict]:
         for entry in feed.entries[:max_items]:
             items.append({
                 "title": entry.get("title", ""),
-                "summary": entry.get("summary", "")[:200] if entry.get("summary") else "",
+                "summary": entry.get("summary", "") or "",
             })
         return items
-    except Exception:
+    except Exception as e:
+        log.warning("Failed to fetch %s feed: %s", name, e)
         return []
 
 

@@ -104,7 +104,7 @@ class TestGetAlerts:
             result = await weather.get_alerts()
             assert len(result) == 1
             assert result[0]["event"] == "Wind Advisory"
-            assert len(result[0]["description"]) <= 300
+            assert "Winds up to 40 mph expected" in result[0]["description"]
 
     @pytest.mark.asyncio
     async def test_no_zone(self):

@@ -297,12 +297,18 @@ class FitbitClient:
         ]
 
         results = await asyncio.gather(*coros, return_exceptions=True)
+        failed = []
         for key, result in zip(keys, results):
             if isinstance(result, Exception):
                 log.warning("Failed to fetch %s: %s", key, result)
+                failed.append(key)
                 # Don't set key to None — would overwrite good data in JSONB merge
             else:
                 snapshot[key] = result
+
+        if failed:
+            log.warning("Incomplete snapshot for %s — missing: %s",
+                        day, ", ".join(failed))
 
         return snapshot
 

@@ -97,7 +97,7 @@ async def get_alerts(lat: float = WEATHER_LAT, lon: float = WEATHER_LON) -> list
             "event": f["properties"]["event"],
             "headline": f["properties"]["headline"],
             "severity": f["properties"]["severity"],
-            "description": f["properties"]["description"][:300],
+            "description": f["properties"]["description"],
         }
         for f in features
     ]

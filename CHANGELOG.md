@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.11] — 2026-03-24
+
+### Fixed
+
+- **News feed silent failure** — `fetch_feed()` had a bare `except Exception: return []` with zero logging. Feed failures (DNS, server errors, malformed RSS) silently produced an empty news digest with no indication anything broke. Now logs `WARNING` with feed name and error.
+- **Weather alert description truncation** — `get_alerts()` truncated NWS alert descriptions to 300 characters. This was dead code (context.py only uses event/headline/severity, not description), but now full descriptions are preserved for potential future use in briefings.
+- **News summary truncation** — `fetch_feed()` truncated RSS summaries to 200 characters. Also dead code (context.py only uses titles), but now full summaries are preserved.
+- **Fitbit incomplete snapshot not logged** — When individual Fitbit API calls failed during parallel fetch (e.g., HRV returns 403), each failure was logged individually but there was no summary showing which keys were missing from the snapshot. Now logs `WARNING: Incomplete snapshot for today — missing: hrv, vo2max`.
+
+### Changed
+
+- **Version** bumped to 0.4.11
+
+---
+
 ## [0.4.10] — 2026-03-24
 
 ### Added

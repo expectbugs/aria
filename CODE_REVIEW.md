@@ -104,13 +104,10 @@ Implementing "leave" requires tracking previous location state to detect departu
 
 ---
 
-#### S13. Fitbit snapshot merge overwrites good data with null on partial fetch failure *(NEW)*
-**File:** `fitbit_store.py:29-35`, `fitbit.py:300-305`
-**Priority:** Medium | **Effort:** Quick fix (filter nulls)
+#### S13. ~~Fitbit snapshot merge overwrites good data with null on partial fetch failure~~ **RESOLVED v0.4.3 + v0.4.11**
+**File:** `fitbit_store.py:28`, `fitbit.py:299-307`
 
-In `fitbit.py`, when a specific data type fetch fails, `snapshot[key] = None`. In `fitbit_store.save_snapshot`, `SET data = fitbit_snapshots.data || EXCLUDED.data` does a shallow JSONB merge — `{"spo2": null}` overwrites a previous successful `{"spo2": {...actual data...}}`. Data loss is temporary (until next successful poll, ~15 min) but avoidable.
-
-**Fix:** Filter null values before saving: `snapshot = {k: v for k, v in snapshot.items() if v is not None}`.
+Null filter added in `fitbit_store.save_snapshot()` (v0.4.3). Failed keys are now also skipped in `fetch_daily_snapshot()` (never set to None). In v0.4.11, added summary log showing which keys were missing from incomplete snapshots for observability.
 
 ---
 
