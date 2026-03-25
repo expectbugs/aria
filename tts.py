@@ -91,6 +91,8 @@ def _prepare_for_speech(text: str) -> str:
     text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
     # Links [text](url) → text
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    # Parentheses — Kokoro vocalizes these as audible artifacts (~250ms burst)
+    text = re.sub(r'[()]', '', text)
     # Paragraph breaks → sentence pauses for natural prosody
     text = re.sub(r'\n{2,}', '. ', text)
     # Single newlines → commas for Kokoro split points (data listings).

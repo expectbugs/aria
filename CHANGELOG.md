@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.10] — 2026-03-24
+
+### Added
+
+- **`fetch_page.py`** — web page fetcher with full JavaScript rendering via headless Chromium (Playwright). Works on JS-heavy sites, SPAs, and pages that block simple HTTP requests (Reddit, Wikipedia, Amazon, news sites). Supports `--selector` for targeted CSS extraction and `--timeout`/`--wait` options. Falls back gracefully from `networkidle` to `domcontentloaded` after 5s to avoid stalling on ad-heavy sites. Usable by both ARIA (system prompt) and Claude Code (CLAUDE.md).
+- **Playwright dependency** — `playwright` 1.58.0 + bundled Chromium for headless page rendering.
+
+### Fixed
+
+- **TTS parenthesis vocalization artifact** — Kokoro TTS generates a ~250ms audible burst when vocalizing `(` and `)` characters. System notes appended by the claim detector ended with `)`, producing a weird cutoff sound at the end of spoken responses. Fixed by stripping parentheses in `_prepare_for_speech()`.
+- **Request log response truncation** — `log_request()` hard-truncated responses to 500 characters, permanently losing conversation history. Removed the limit — full responses now stored. PostgreSQL handles large text fields efficiently, and truncation should only happen on read (query-side), never on write.
+- **Pre-existing test bug: `test_sugar_warning` failed after 7pm** — `evaluate_nudges()` calls `get_net_calories()` during evening hours, but the test didn't mock it, causing a MagicMock comparison error. Added `mock_net_cal.return_value`.
+- **3 new TTS tests** for parenthesis stripping (basic, system note, markdown link interaction).
+
+### Changed
+
+- **System prompt: `fetch_page.py` added to Tools** — ARIA now knows to use curl/lynx for fast fetches and fall back to fetch_page.py for JS-rendered pages.
+- **CLAUDE.md: web fetching guidance** — documents the curl/lynx → fetch_page.py fallback workflow.
+- **Version** bumped to 0.4.10
+
+---
+
 ## [0.4.9] — 2026-03-23
 
 ### Fixed

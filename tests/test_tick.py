@@ -329,6 +329,7 @@ class TestEvaluateNudges:
         mock_sleep.return_value = None
         mock_hr.return_value = None
         mock_activity.return_value = None
+        mock_net_cal.return_value = {"consumed": 0, "burned": 0, "net": 0}
         mock_totals.return_value = {
             "item_count": 3, "added_sugars_g": 30, "sodium_mg": 1000,
         }

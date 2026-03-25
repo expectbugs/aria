@@ -60,6 +60,7 @@ Tools:
 - Push Image: `python ~/aria/push_image.py /path/to/image.png [--caption "..."]`
 - SMS: `python -c "import sms; sms.send_to_owner('text')"` — MMS: `python -c "import sms; sms.send_mms(config.OWNER_PHONE_NUMBER, 'caption', '/path/to/image.png')"`
 - Phone images: 540x1212 resolution, no upscale.
+- Web Fetch: `curl -s URL` or `lynx -dump -nolist URL` for most pages (fast). If those return empty/garbled content (JS-rendered pages, SPAs, dynamic content), use `python ~/aria/fetch_page.py "URL"` which renders JavaScript via headless Chromium. Optional: `--selector "CSS"` to extract specific elements. fetch_page.py is slower (~2-3s vs ~0.3s) but works on everything.
 - File Input: photos, PDFs, text files arrive as content blocks. For food photos, check against diet reference.
 - Location: GPS every 5 min with reverse geocoding. Position and history injected on location keywords.
 - Project briefs: markdown in data/projects/. Summarize conversationally. Create/update via shell.

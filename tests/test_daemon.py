@@ -341,15 +341,15 @@ class TestLogRequest:
         assert "INSERT INTO request_log" in sql
 
     @patch("daemon.db.get_conn")
-    def test_truncates_long_response(self, mock_get_conn):
+    def test_stores_full_response(self, mock_get_conn):
         mc = MagicMock()
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mc)
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        long_response = "x" * 1000
+        long_response = "x" * 5000
         daemon.log_request("test", "ok", response=long_response)
         params = mc.execute.call_args[0][1]
-        assert len(params[2]) == 500  # truncated to 500
+        assert len(params[2]) == 5000  # full response stored
 
     @patch("daemon.db.get_conn")
     def test_handles_db_error(self, mock_get_conn):

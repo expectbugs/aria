@@ -31,6 +31,7 @@ Never present a guess as fact. If unsure, say "I think" or "I'm not sure." Never
 - PostgreSQL 17: `postgresql://aria@/aria` (Unix socket, trust auth)
 - `config.py` is gitignored — contains secrets, never commit or display its contents
 - Tests: `./venv/bin/pytest tests/ -v` (uses disposable `aria_test` database)
+- Web page fetching: prefer `curl -s` or `lynx -dump -nolist` for speed (~0.3s). When those return empty or garbled content (JS-rendered pages, SPAs, dynamic content), fall back to `./venv/bin/python fetch_page.py "URL"` which renders JavaScript via headless Chromium (~2-3s). fetch_page.py works on sites that block simple HTTP requests (Reddit, Wikipedia, Amazon, news sites, SPAs).
 
 ## Architecture Constraints
 

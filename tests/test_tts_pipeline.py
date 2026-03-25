@@ -138,6 +138,22 @@ class TestPrepareForSpeech:
         assert "Smoothie ingredients:" in result
         assert "Dinner staples:" in result
 
+    def test_strips_parentheses(self):
+        """Parentheses produce audible artifacts in Kokoro — strip them."""
+        assert tts._prepare_for_speech("I think (maybe) so") == "I think maybe so"
+
+    def test_strips_system_note_parentheses(self):
+        """The system note appended by claim detector should not vocalize parens."""
+        text = "Done.\n\n(System note: ARIA claimed to store data but no ACTION blocks were emitted.)"
+        result = tts._prepare_for_speech(text)
+        assert "(" not in result
+        assert ")" not in result
+        assert "System note:" in result
+
+    def test_markdown_links_still_work_with_paren_stripping(self):
+        """Link regex consumes parens before the paren stripper runs."""
+        assert tts._prepare_for_speech("[click here](http://example.com)") == "click here"
+
     def test_empty_string(self):
         assert tts._prepare_for_speech("") == ""
 

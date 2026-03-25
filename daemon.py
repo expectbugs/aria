@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.9", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.10", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -75,7 +75,7 @@ def log_request(text: str, status: str, response: str = "", error: str = "",
             conn.execute(
                 """INSERT INTO request_log (input, status, response, error, duration_s)
                    VALUES (%s, %s, %s, %s, %s)""",
-                (text, status, (response[:500] if response else ""),
+                (text, status, (response or ""),
                  error, round(duration, 2)),
             )
     except Exception as e:
