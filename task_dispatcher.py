@@ -14,6 +14,15 @@ import logging
 import config
 import redis_client
 from amnesia_pool import get_pool
+from action_aria import get_action_aria
+
+# Keywords that suggest a task needs Action ARIA (persistent, complex)
+_ACTION_ARIA_KEYWORDS = [
+    "generate", "image", "upscale", "4k", "flux", "imgen",
+    "create file", "write file", "modify file", "edit file",
+    "multi-step", "complex", "long task",
+    "push_image", "push_audio",
+]
 
 log = logging.getLogger("aria.dispatcher")
 
@@ -126,8 +135,14 @@ async def _handle_shell(task_id: str):
         redis_client.complete_task(task_id, error=str(e))
 
 
+def _needs_action_aria(brief: str) -> bool:
+    """Check if a task brief suggests it needs Action ARIA (complex/persistent)."""
+    brief_lower = brief.lower()
+    return any(kw in brief_lower for kw in _ACTION_ARIA_KEYWORDS)
+
+
 async def _handle_agentic(task_id: str):
-    """Handle an agentic mode task via the Amnesia pool."""
+    """Handle an agentic mode task — route to Action ARIA or Amnesia pool."""
     prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
     client = redis_client.get_client()
     if not client:
@@ -142,8 +157,15 @@ async def _handle_agentic(task_id: str):
         redis_client.complete_task(task_id, error="No task brief specified")
         return
 
-    pool = get_pool()
-    result = await pool.run_agentic(task_id, brief, context)
+    # Route: complex tasks → Action ARIA, quick tasks → Amnesia pool
+    if _needs_action_aria(brief):
+        log.info("Routing task %s to Action ARIA (complex)", task_id)
+        action = get_action_aria()
+        result = await action.execute(task_id, brief, context)
+    else:
+        log.info("Routing task %s to Amnesia pool (quick)", task_id)
+        pool = get_pool()
+        result = await pool.run_agentic(task_id, brief, context)
 
     if result.get("error"):
         redis_client.complete_task(task_id, error=result["error"])

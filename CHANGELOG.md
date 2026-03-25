@@ -6,6 +6,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.22] — 2026-03-25
+
+### Added
+
+- **Action ARIA** — New `action_aria.py` provides a persistent Claude Code worker for complex multi-step tasks (image generation, multi-step file operations, complex shell workflows). Fresh session per task, mutex for one-at-a-time execution. Task ID injected into system prompt for progress reporting.
+- **Intelligent task routing** — Dispatcher now routes agentic tasks based on brief content: image gen, file creation, and multi-step tasks → Action ARIA (persistent session). Quick lookups and simple tasks → Amnesia pool (stateless).
+- **Version** bumped to 0.4.22
+
+---
+
 ## [0.4.21] — 2026-03-25
 
 ### Added
