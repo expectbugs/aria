@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.25] — 2026-03-25
+
+### Added
+
+- **Auto-deploy to slappy** — Beardos cron polls every minute, compares slappy's HEAD to origin/main. On mismatch: `git pull`, `pip install -r requirements.txt`, `rc-service aria restart`. Max 1-minute delay after any push. No workflow changes needed.
+
+### Changed
+
+- **Version** bumped to 0.4.25
+
+---
+
 ## [0.4.24] — 2026-03-25
 
 ### Added

@@ -1,7 +1,7 @@
 # ARIA — Ambient Reasoning & Intelligence Assistant
 
 ## Status
-Phase 4 in progress (v0.4.23). **Swarm architecture complete** (all 7 steps). ARIA Primary on Anthropic API, Action ARIA + Amnesia pool for background tasks, Redis dispatch + completion notifications.
+Phase 4 in progress (v0.4.25). **Swarm architecture complete.** ARIA Primary on Anthropic API, Action ARIA + Amnesia pool for background tasks, Redis dispatch + completion notifications. Slappy failover fully operational with auto-deploy, db sync, health monitoring.
 
 ## Architecture
 - FastAPI daemon on beardos (primary, RTX 3090) with slappy as warm failover
@@ -33,8 +33,8 @@ Phase 4 in progress (v0.4.23). **Swarm architecture complete** (all 7 steps). AR
 - All data stores on PostgreSQL 17 (migrated from JSON in v0.4.0)
 - 760 automated tests (unit + integration)
 - File inbox (received files saved for future reference)
-- Automatic failover (beardos → slappy)
-- Data sync via rsync every 5 minutes
+- Automatic failover (beardos → slappy) with auto-deploy, db sync, health alerts
+- Data sync via rsync every 5 minutes, PostgreSQL backup/restore every 5 minutes, code auto-deploy every minute
 
 ## Next Steps
 1. Live swarm testing + tuning (dispatch from phone, image gen end-to-end)
