@@ -69,4 +69,4 @@ Historical queries ("what did I eat March 12th?") use Claude's tool access. Neve
 | 1 | v0.4.13 | Tier 1 always-inject, datetime consolidation, context logging | ✅ |
 | 2 | v0.4.14 | Health/nutrition scoping, 14-day dump removal (D4 fix) | ✅ |
 | 3 | v0.4.15 | Keyword refinement (word boundaries, false positive reduction) | ✅ |
-| 4 | v0.4.16 | Redis client, task status in Tier 1 | Planned |
+| 4 | v0.4.16 | Redis client, task status in Tier 1 | ✅ |

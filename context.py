@@ -66,6 +66,7 @@ import weather
 import news
 import fitbit_store
 import nutrition_store
+import redis_client
 
 
 def gather_always_context() -> str:
@@ -112,7 +113,11 @@ def gather_always_context() -> str:
         if coaching:
             parts.append(coaching)
 
-    # Task status from Redis (Step 4 will add real implementation)
+    # Active background tasks (from Redis — swarm task status)
+    active_tasks = redis_client.get_active_tasks()
+    task_status = redis_client.format_task_status(active_tasks)
+    if task_status:
+        parts.append(task_status)
 
     return "\n".join(parts)
 

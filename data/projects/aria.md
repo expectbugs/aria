@@ -1,7 +1,7 @@
 # ARIA — Ambient Reasoning & Intelligence Assistant
 
 ## Status
-Phase 4 in progress (v0.4.15). Fitbit, nutrition labels, and Whisper STT complete. Context builder upgrade in progress (D4 resolved, keywords refined, Redis next). Swarm architecture next.
+Phase 4 in progress (v0.4.16). Fitbit, nutrition labels, and Whisper STT complete. Context builder upgrade complete (D4 resolved, tiered injection, keyword refinement, Redis foundation). Swarm architecture next.
 
 ## Architecture
 - FastAPI daemon on beardos (primary, RTX 3090) with slappy as warm failover
@@ -31,14 +31,13 @@ Phase 4 in progress (v0.4.15). Fitbit, nutrition labels, and Whisper STT complet
 - Fitbit integration (HR, HRV, SpO2, sleep, activity, exercise coaching with HR zones)
 - Whisper STT (batch, voice pipeline, real-time WebSocket streaming)
 - All data stores on PostgreSQL 17 (migrated from JSON in v0.4.0)
-- 642 automated tests (unit + integration)
+- 663 automated tests (unit + integration)
 - File inbox (received files saved for future reference)
 - Automatic failover (beardos → slappy)
 - Data sync via rsync every 5 minutes
 
 ## Next Steps
-1. Context builder upgrade: health/nutrition scoping, keyword refinement, Redis integration (v0.4.14-0.4.16)
-2. Swarm architecture (API migration, Action ARIA, Amnesia pool)
+1. Swarm architecture (API migration, Action ARIA, Amnesia pool)
 3. Phase 4: Google Calendar integration
 4. Phase 4: Gmail integration
 5. Phase 4: Smart alarm + SMS announce

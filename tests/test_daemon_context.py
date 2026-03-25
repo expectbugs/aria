@@ -160,6 +160,60 @@ class TestGatherAlwaysContext:
         assert "Laundry" in ctx
         assert "Oven" in ctx
 
+    @patch("context.redis_client")
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_includes_task_status(self, mock_ts, mock_cal, mock_loc, mock_fs, mock_rc):
+        mock_ts.get_active.return_value = []
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = None
+        mock_rc.get_active_tasks.return_value = [
+            {"task_id": "t1", "description": "generating image",
+             "progress": 45, "status": "running",
+             "message": "upscaling", "eta_seconds": 120},
+        ]
+        mock_rc.format_task_status.return_value = "Background task [running]: generating image — 45%"
+
+        ctx = context.gather_always_context()
+        assert "Background task" in ctx
+        assert "generating image" in ctx
+
+    @patch("context.redis_client")
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_works_without_active_tasks(self, mock_ts, mock_cal, mock_loc, mock_fs, mock_rc):
+        mock_ts.get_active.return_value = []
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = None
+        mock_rc.get_active_tasks.return_value = []
+        mock_rc.format_task_status.return_value = ""
+
+        ctx = context.gather_always_context()
+        assert "Background task" not in ctx
+        assert "Current date and time:" in ctx
+
+    @patch("context.redis_client")
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_works_when_redis_unavailable(self, mock_ts, mock_cal, mock_loc, mock_fs, mock_rc):
+        mock_ts.get_active.return_value = []
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = None
+        mock_rc.get_active_tasks.return_value = []
+        mock_rc.format_task_status.return_value = ""
+
+        ctx = context.gather_always_context()
+        assert "Current date and time:" in ctx  # still works
+
 
 class TestBuildRequestContext:
     """Test keyword-triggered context injection."""

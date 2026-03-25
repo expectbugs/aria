@@ -44,6 +44,10 @@ AUTH_TOKEN = "your-token-here"  # Tasker sends this as Bearer token
 # --- Database ---
 DATABASE_URL = "postgresql://aria@/aria"  # local Unix socket, trust auth
 
+# --- Redis (task queue, swarm coordination) ---
+REDIS_URL = "redis://127.0.0.1:6379/0"    # Redis database URL
+REDIS_KEY_PREFIX = "aria:"                  # namespace for all ARIA keys
+
 # --- Weather (NWS API, free, no key needed) ---
 WEATHER_LAT = 42.58
 WEATHER_LON = -88.43

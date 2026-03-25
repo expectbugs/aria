@@ -21,6 +21,7 @@ import db
 import fitbit
 import fitbit_store
 import location_store
+import redis_client
 import sms
 
 from actions import process_actions
@@ -38,13 +39,15 @@ log = logging.getLogger("aria")
 async def lifespan(app: FastAPI):
     """Initialize and clean up resources."""
     db.get_pool()  # warm the connection pool
+    redis_client.get_client()  # warm Redis connection (non-fatal if down)
     await _claude_session._ensure_alive()  # warm Claude session
     yield
     await _claude_session._kill()
+    redis_client.close()
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.15", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.16", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -152,6 +155,13 @@ async def health():
 
     # TTS model
     checks["tts"] = "loaded" if _tts_module._kokoro is not None else "not loaded"
+
+    # Redis
+    try:
+        rc = redis_client.get_client()
+        checks["redis"] = "ok" if rc else "unavailable"
+    except Exception:
+        checks["redis"] = "error"
 
     # Whisper model (if enabled)
     if getattr(config, 'ENABLE_WHISPER', False):

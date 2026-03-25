@@ -6,6 +6,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.16] — 2026-03-25
+
+### Added
+
+- **Redis client** — New `redis_client.py` with lazy-initialized singleton, modeled on `db.py`. Graceful failure: if Redis is down, returns None and logs warning once (never crashes ARIA). `decode_responses=True`, 2s connect/socket timeouts for fast failure in critical path.
+- **Swarm task status in Tier 1 context** — `gather_always_context()` reads active tasks from Redis (`aria:active_tasks` set + `aria:task:{id}` hashes) and injects compact status lines. Foundation for the swarm architecture — when Action ARIA starts writing task state, the context builder picks it up automatically.
+- **Redis in daemon health check** — `/health` endpoint now reports Redis status (`ok`/`unavailable`). Redis unavailable does NOT cause degraded status (ARIA works without it).
+- **Redis in daemon lifespan** — Connection warmed on startup, closed on shutdown.
+- **Redis config** — `REDIS_URL` and `REDIS_KEY_PREFIX` in `config.example.py`.
+- **`redis` 7.4.0** added to requirements.txt.
+
+### Changed
+
+- **Version** bumped to 0.4.16
+
+---
+
 ## [0.4.15] — 2026-03-25
 
 ### Changed
