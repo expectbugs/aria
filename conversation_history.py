@@ -20,7 +20,11 @@ _CHANNEL_PREFIX = re.compile(
 
 # Max characters per turn to prevent a single long response from
 # dominating the history window
-MAX_CHARS_PER_TURN = 4000
+MAX_CHARS_PER_TURN = 3000
+
+# Strip processed ACTION blocks from history — they're persisted in the DB
+# and accessible via tool calls, so they just waste tokens in conversation context
+_ACTION_BLOCK = re.compile(r'<!--ACTION::.*?-->', re.DOTALL)
 
 
 def get_recent_turns(n: int | None = None) -> list[dict]:
@@ -34,7 +38,7 @@ def get_recent_turns(n: int | None = None) -> list[dict]:
     Truncates very long responses to MAX_CHARS_PER_TURN.
     """
     if n is None:
-        n = getattr(config, "ARIA_HISTORY_TURNS", 25)
+        n = getattr(config, "ARIA_HISTORY_TURNS", 10)
 
     with db.get_conn() as conn:
         rows = conn.execute(
@@ -54,6 +58,9 @@ def get_recent_turns(n: int | None = None) -> list[dict]:
     for row in reversed(rows):  # chronological order (oldest first)
         user_text = row["input"] or ""
         assistant_text = row["response"] or ""
+
+        # Strip ACTION blocks — already processed and persisted to DB
+        assistant_text = _ACTION_BLOCK.sub('', assistant_text).strip()
 
         # Skip STT-only entries (no Claude response)
         if user_text.startswith("[stt]"):

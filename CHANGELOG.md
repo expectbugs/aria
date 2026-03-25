@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.28] — 2026-03-25
+
+### Changed
+
+- **Prompt caching** — System prompt and tool definitions now use Anthropic's prompt caching (`cache_control: ephemeral`). Static content (~3,900 tokens) served at $0.50/MTok on cache hits instead of $5/MTok. Cache persists across tool-call rounds within a request, dramatically reducing cost on multi-round queries.
+- **Conversation history reduced to 10 turns** — Down from 25. ARIA has `query_conversations` tool for anything beyond the rolling window. Saves ~4,200 tokens per request.
+- **ACTION blocks stripped from history** — Processed ACTION blocks (often 500-1000+ chars each) are now removed from conversation history before sending to the API. They're already persisted in the database and accessible via tool calls.
+- **History truncation reduced to 3000 chars** — Down from 4000. Most responses fall under 3000 chars.
+- **Conditional extended thinking bypass** — Simple queries (timers, reminders, weather, greetings) skip the 64k thinking budget to save cost and latency. Two-tier keyword matching: starts-with for commands, exact-match for greetings. Defaults to thinking ON for everything else. `ARIA_ALWAYS_THINK` config flag to force thinking on all queries.
+- **System prompt tightened** — Merged duplicate delivery routing section, consolidated task dispatch narrative with ACTION examples, removed duplicate "unsure" guidance. ~160 tokens saved with zero behavioral change.
+- **Cache usage logging** — API token usage now logged with cache write/read stats for cost observability.
+- **Version** bumped to 0.4.28
+
+---
+
 ## [0.4.27] — 2026-03-25
 
 ### Added

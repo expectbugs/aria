@@ -1,7 +1,7 @@
 # ARIA — Ambient Reasoning & Intelligence Assistant
 
 ## Status
-Phase 4 in progress (v0.4.27). **Swarm architecture complete.** ARIA Primary on Anthropic API, Action ARIA + Amnesia pool for background tasks, Redis dispatch + completion notifications. Slappy failover fully operational with auto-deploy, db sync, health monitoring.
+Phase 4 in progress (v0.4.28). **Swarm architecture complete.** ARIA Primary on Anthropic API, Action ARIA + Amnesia pool for background tasks, Redis dispatch + completion notifications. Slappy failover fully operational with auto-deploy, db sync, health monitoring.
 
 ## Architecture
 - FastAPI daemon on beardos (primary, RTX 3090) with slappy as warm failover

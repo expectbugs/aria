@@ -39,6 +39,9 @@ Never present a guess as fact. If unsure, say "I think" or "I'm not sure." Never
 - All request paths use unified `build_request_context()` in context.py — never add context inline in individual endpoints
 - ACTION blocks (`<!--ACTION::{}-->`) are the ONLY persistent storage — Claude session memory is ephemeral, cleared on daemon restart
 - Delivery routing uses `set_delivery` ACTION block + handler enforcement — never keyword-parse user intent for critical decisions (keywords are fine for context injection where failure is benign)
+- **SMS → Image redirect (v0.4.27):** All outbound SMS is dead (A2P 10DLC carrier block). `SMS_REDIRECT_TO_IMAGE=True` in config.py renders outbound SMS as images pushed to phone via `push_image.py`. Intercepted at `send_sms()`, `send_long_sms()`, `send_mms()` in sms.py. Set `False` when A2P is approved.
+- **Prompt caching (v0.4.28):** System prompt passed as list of content blocks (static cached + dynamic context). Tools cached via `CACHED_TOOLS` with `cache_control` on last entry. Never pass system prompt as a plain string — always use the block-based format in `aria_api.py`.
+- **Extended thinking bypass (v0.4.28):** Simple queries (timers, weather, greetings) skip thinking via `_is_simple_query()`. Add new patterns to `_SIMPLE_QUERY_STARTS` or `_SIMPLE_QUERY_EXACT` in `aria_api.py`. Defaults to thinking ON.
 - New stores: table in `schema.sql`, `db.get_conn()`, `serialize_row()` dicts, function signatures return `list[dict]` with string dates
 
 ## Testing Safety

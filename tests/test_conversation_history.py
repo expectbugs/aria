@@ -159,3 +159,53 @@ class TestGetRecentTurns:
                 # Verify the SQL was called (we trust the n parameter passes through)
         finally:
             p.stop()
+
+    def test_strips_action_blocks(self):
+        """ACTION blocks should be stripped from assistant responses."""
+        response = (
+            'Logged your meal! '
+            '<!--ACTION::{"action": "log_health", "date": "2026-03-25", '
+            '"category": "meal", "description": "chicken"}-->'
+            ' Have a good one.'
+        )
+        rows = [{"input": "I had chicken", "response": response}]
+        p = self._mock_rows(rows)
+        try:
+            turns = conversation_history.get_recent_turns()
+            assert "Logged your meal!" in turns[1]["content"]
+            assert "Have a good one." in turns[1]["content"]
+            assert "ACTION" not in turns[1]["content"]
+        finally:
+            p.stop()
+
+    def test_strips_multiple_action_blocks(self):
+        """Multiple ACTION blocks in one response should all be stripped."""
+        response = (
+            'Done! '
+            '<!--ACTION::{"action": "log_health", "category": "meal"}-->'
+            ' '
+            '<!--ACTION::{"action": "log_nutrition", "food_name": "eggs"}-->'
+        )
+        rows = [{"input": "Log breakfast", "response": response}]
+        p = self._mock_rows(rows)
+        try:
+            turns = conversation_history.get_recent_turns()
+            assert "Done!" in turns[1]["content"]
+            assert "ACTION" not in turns[1]["content"]
+        finally:
+            p.stop()
+
+    def test_action_only_response_skipped(self):
+        """If stripping ACTIONs leaves empty text, the turn should be skipped."""
+        rows = [
+            {"input": "Real question", "response": "Real answer"},
+            {"input": "Do it", "response": '<!--ACTION::{"action": "set_delivery", "method": "voice"}-->'},
+        ]
+        p = self._mock_rows(rows)
+        try:
+            turns = conversation_history.get_recent_turns()
+            # Only the real question pair, ACTION-only pair is skipped
+            assert len(turns) == 2
+            assert "Real question" in turns[0]["content"]
+        finally:
+            p.stop()

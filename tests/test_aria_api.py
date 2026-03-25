@@ -26,7 +26,12 @@ def _make_tool_use_block(tool_id, name, input_data):
 
 
 def _make_response(content_blocks, stop_reason="end_turn"):
-    return SimpleNamespace(content=content_blocks, stop_reason=stop_reason)
+    usage = SimpleNamespace(
+        input_tokens=100, output_tokens=50,
+        cache_creation_input_tokens=0, cache_read_input_tokens=0,
+    )
+    return SimpleNamespace(content=content_blocks, stop_reason=stop_reason,
+                           usage=usage)
 
 
 @pytest.fixture(autouse=True)
@@ -191,8 +196,12 @@ class TestAskAria:
         await aria_api.ask_aria("test", extra_context="Weather: Sunny 55F")
 
         call_kwargs = mock_api.messages.create.call_args[1]
-        assert "Weather: Sunny 55F" in call_kwargs["system"]
-        assert "[CONTEXT]" in call_kwargs["system"]
+        system_blocks = call_kwargs["system"]
+        assert isinstance(system_blocks, list)
+        assert len(system_blocks) == 2  # static + context
+        assert any("Weather: Sunny 55F" in b["text"] for b in system_blocks)
+        assert any("[CONTEXT]" in b["text"] for b in system_blocks)
+        assert system_blocks[0].get("cache_control") == {"type": "ephemeral"}
 
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
@@ -331,6 +340,164 @@ class TestAskAria:
         assert "query_legal_log" in tool_names
         assert "query_calendar" in tool_names
         assert "query_conversations" in tool_names
+
+
+class TestPromptCaching:
+    """Verify prompt caching structure."""
+
+    @pytest.mark.asyncio
+    @patch("aria_api._get_client")
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
+    async def test_system_is_cached_blocks(self, mock_prompt, mock_history, mock_client):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("OK")], stop_reason="end_turn"
+        )
+
+        await aria_api.ask_aria("test query", extra_context="some context")
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        system = call_kwargs["system"]
+        assert isinstance(system, list)
+        assert system[0]["cache_control"] == {"type": "ephemeral"}
+        assert system[0]["text"] == "System prompt"
+
+    @pytest.mark.asyncio
+    @patch("aria_api._get_client")
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
+    async def test_no_context_single_block(self, mock_prompt, mock_history, mock_client):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("OK")], stop_reason="end_turn"
+        )
+
+        await aria_api.ask_aria("test query")
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        system = call_kwargs["system"]
+        assert len(system) == 1  # no context block
+
+    def test_cached_tools_have_cache_control(self):
+        assert "cache_control" in aria_api.CACHED_TOOLS[-1]
+        assert aria_api.CACHED_TOOLS[-1]["cache_control"] == {"type": "ephemeral"}
+        # Other tools should NOT have cache_control
+        for tool in aria_api.CACHED_TOOLS[:-1]:
+            assert "cache_control" not in tool
+
+    def test_cached_tools_preserve_originals(self):
+        """CACHED_TOOLS should not mutate the original TOOLS list."""
+        assert "cache_control" not in aria_api.TOOLS[-1]
+
+
+class TestSimpleQueryDetection:
+    """Test the _is_simple_query() function."""
+
+    def test_exact_timer(self):
+        assert aria_api._is_simple_query("set a timer for 30 minutes")
+
+    def test_exact_reminder(self):
+        assert aria_api._is_simple_query("Set a reminder to call mom")
+
+    def test_cancel_timer(self):
+        assert aria_api._is_simple_query("cancel the timer")
+
+    def test_remove_reminder(self):
+        assert aria_api._is_simple_query("remove the reminder")
+
+    def test_delete_appointment(self):
+        assert aria_api._is_simple_query("delete the appointment")
+
+    def test_weather(self):
+        assert aria_api._is_simple_query("What is the weather")
+
+    def test_greeting_exact(self):
+        assert aria_api._is_simple_query("hello")
+
+    def test_greeting_with_text_not_simple(self):
+        assert not aria_api._is_simple_query("hello I have a complex question about my diet")
+
+    def test_complex_query(self):
+        assert not aria_api._is_simple_query(
+            "what should I eat for dinner given my nutritional profile")
+
+    def test_health_query(self):
+        assert not aria_api._is_simple_query("how is my health looking")
+
+    def test_thanks_with_punctuation(self):
+        assert aria_api._is_simple_query("thanks!")
+
+    def test_good_morning_not_simple(self):
+        # good morning needs full thinking for briefing
+        assert not aria_api._is_simple_query("good morning")
+
+    def test_good_night_not_simple(self):
+        assert not aria_api._is_simple_query("good night")
+
+    def test_good_afternoon_exact_is_simple(self):
+        assert aria_api._is_simple_query("good afternoon")
+
+    def test_good_afternoon_with_text_not_simple(self):
+        assert not aria_api._is_simple_query("good afternoon can you look into my diet")
+
+    @pytest.mark.asyncio
+    @patch("aria_api._get_client")
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
+    async def test_simple_query_skips_thinking(self, mock_prompt, mock_history, mock_client):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("Timer set!")], stop_reason="end_turn"
+        )
+
+        await aria_api.ask_aria("set a timer for 10 minutes")
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        assert "thinking" not in call_kwargs
+
+    @pytest.mark.asyncio
+    @patch("aria_api._get_client")
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
+    async def test_complex_query_gets_thinking(self, mock_prompt, mock_history, mock_client):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("Here's my analysis")], stop_reason="end_turn"
+        )
+
+        await aria_api.ask_aria("what should I eat for dinner given my nutritional profile")
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        assert "thinking" in call_kwargs
+        assert call_kwargs["thinking"]["budget_tokens"] == 64000
+
+    @pytest.mark.asyncio
+    @patch("aria_api.config")
+    @patch("aria_api._get_client")
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
+    async def test_always_think_overrides_bypass(self, mock_prompt, mock_history,
+                                                  mock_client, mock_config):
+        mock_config.ARIA_MODEL = "claude-opus-4-6-20250610"
+        mock_config.ARIA_MAX_TOKENS = 16384
+        mock_config.ARIA_THINKING_BUDGET = 64000
+        mock_config.ARIA_ALWAYS_THINK = True
+
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("Timer set!")], stop_reason="end_turn"
+        )
+
+        await aria_api.ask_aria("set a timer for 10 minutes")
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        assert "thinking" in call_kwargs
 
 
 class TestToolDefinitions:

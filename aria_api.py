@@ -162,6 +162,106 @@ TOOLS = [
     },
 ]
 
+# Tools with cache_control on the last entry — Anthropic caches everything
+# up to the last cache_control breakpoint, so system prompt + all tools get cached
+CACHED_TOOLS = list(TOOLS)
+CACHED_TOOLS[-1] = {**TOOLS[-1], "cache_control": {"type": "ephemeral"}}
+
+
+# --- Simple Query Detection (skip extended thinking) ---
+
+# Two match modes:
+#   _SIMPLE_QUERY_STARTS — match if query starts with this phrase
+#   _SIMPLE_QUERY_EXACT  — match ONLY if query is exactly this phrase
+_SIMPLE_QUERY_STARTS = [
+    "how are you",
+    "how do you spell",
+    "what time is it",
+    "what is the date",
+    "what is the weather",
+    "what's the weather",
+    "how's the weather",
+    # Setting things
+    "set a timer",
+    "set a reminder",
+    "set an alarm",
+    "set an appointment",
+    "set an event",
+    "add a timer",
+    "add a reminder",
+    "add an alarm",
+    "add an appointment",
+    "add an event",
+    "create a timer",
+    "create a reminder",
+    "create an appointment",
+    "create an event",
+    # Cancelling / deleting / removing things
+    "cancel timer",
+    "cancel the timer",
+    "cancel a timer",
+    "cancel reminder",
+    "cancel the reminder",
+    "cancel a reminder",
+    "cancel appointment",
+    "cancel the appointment",
+    "cancel a appointment",
+    "cancel alarm",
+    "cancel the alarm",
+    "cancel my alarm",
+    "cancel event",
+    "cancel the event",
+    "delete timer",
+    "delete the timer",
+    "delete reminder",
+    "delete the reminder",
+    "delete appointment",
+    "delete the appointment",
+    "delete event",
+    "delete the event",
+    "remove timer",
+    "remove the timer",
+    "remove reminder",
+    "remove the reminder",
+    "remove appointment",
+    "remove the appointment",
+    "remove event",
+    "remove the event",
+    "quick question",
+    "thank you",
+    "thanks",
+    "never mind",
+    "nevermind",
+    "hey aria",
+]
+
+_SIMPLE_QUERY_EXACT = [
+    "hello",
+    "good afternoon",
+    "good evening",
+]
+
+
+def _is_simple_query(text: str) -> bool:
+    """Check if a query is simple enough to skip extended thinking.
+
+    Conservative: only matches specific phrases that are virtually certain
+    to not require deep reasoning. Defaults to thinking enabled.
+    """
+    text_lower = text.lower().strip()
+    # Exact-only matches (greetings that often precede longer prompts)
+    if text_lower in _SIMPLE_QUERY_EXACT:
+        return True
+    # Starts-with matches for phrases that begin a simple command
+    for pattern in _SIMPLE_QUERY_STARTS:
+        if text_lower == pattern or text_lower.startswith(pattern + " "):
+            return True
+        if (text_lower.startswith(pattern)
+                and len(text_lower) > len(pattern)
+                and text_lower[len(pattern)] in ".,!?"):
+            return True
+    return False
+
 
 # --- Tool Handlers ---
 
@@ -332,11 +432,18 @@ async def ask_aria(user_text: str, extra_context: str = "",
     model = getattr(config, "ARIA_MODEL", "claude-opus-4-6-20250610")
     max_tokens = getattr(config, "ARIA_MAX_TOKENS", 16384)
     thinking_budget = getattr(config, "ARIA_THINKING_BUDGET", 64000)
+    always_think = getattr(config, "ARIA_ALWAYS_THINK", False)
 
-    # Build system prompt with per-call context appended
-    system_prompt = build_primary_prompt()
+    # Build system prompt as cached static block + uncached dynamic context
+    static_prompt = build_primary_prompt()
+    system_blocks = [
+        {"type": "text", "text": static_prompt,
+         "cache_control": {"type": "ephemeral"}},
+    ]
     if extra_context:
-        system_prompt += f"\n\n[CONTEXT]\n{extra_context}\n[/CONTEXT]"
+        system_blocks.append(
+            {"type": "text",
+             "text": f"[CONTEXT]\n{extra_context}\n[/CONTEXT]"})
 
     # Build conversation history + current user message
     history = get_recent_turns()
@@ -350,21 +457,23 @@ async def ask_aria(user_text: str, extra_context: str = "",
 
     messages.append({"role": "user", "content": user_content})
 
-    # API call kwargs
+    # API call kwargs — system and tools are cached across tool-call rounds
     kwargs = {
         "model": model,
         "max_tokens": max_tokens,
-        "system": system_prompt,
+        "system": system_blocks,
         "messages": messages,
-        "tools": TOOLS,
+        "tools": CACHED_TOOLS,
     }
 
-    # Extended thinking (Opus only, budget > 0)
-    if thinking_budget > 0:
+    # Extended thinking — skip for simple queries to save cost
+    if thinking_budget > 0 and (always_think or not _is_simple_query(user_text)):
         kwargs["thinking"] = {
             "type": "enabled",
             "budget_tokens": thinking_budget,
         }
+
+    thinking_mode = "thinking" if "thinking" in kwargs else "direct"
 
     # Tool call loop — keep calling until we get a final text response
     max_tool_rounds = 10  # safety limit
@@ -375,6 +484,14 @@ async def ask_aria(user_text: str, extra_context: str = "",
             raise RuntimeError("Anthropic API timed out")
         except anthropic.APIError as e:
             raise RuntimeError(f"Anthropic API error: {e}")
+
+        # Log token usage and cache stats
+        if hasattr(response, 'usage') and response.usage:
+            u = response.usage
+            cache_write = getattr(u, 'cache_creation_input_tokens', 0) or 0
+            cache_read = getattr(u, 'cache_read_input_tokens', 0) or 0
+            log.info("API tokens: in=%d out=%d cache_write=%d cache_read=%d",
+                     u.input_tokens, u.output_tokens, cache_write, cache_read)
 
         # Check if we need to handle tool calls
         if response.stop_reason == "tool_use":
@@ -407,8 +524,8 @@ async def ask_aria(user_text: str, extra_context: str = "",
             # Skip thinking blocks — they're internal reasoning
 
         result = "\n".join(text_parts)
-        log.info("API response: %d chars, %d tool rounds, model=%s",
-                 len(result), _round, model)
+        log.info("API response: %d chars, %d tool rounds, model=%s, mode=%s",
+                 len(result), _round, model, thinking_mode)
         return result
 
     # Safety: too many tool rounds
