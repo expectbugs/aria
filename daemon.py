@@ -32,6 +32,12 @@ from context import (build_request_context, _get_context_for_text,
 from tts import _generate_tts, _tts_sync, _get_kokoro
 import tts as _tts_module
 
+# Configure the aria logger so app-level log.info() calls are visible
+# (uvicorn only configures its own loggers, not the app's)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
 log = logging.getLogger("aria")
 
 
