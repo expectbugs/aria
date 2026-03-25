@@ -1,7 +1,7 @@
 # ARIA — Ambient Reasoning & Intelligence Assistant
 
 ## Status
-Phase 4 in progress (v0.4.22). Swarm architecture in progress — all workers built (Steps 1-6 of 7). End-to-end integration next.
+Phase 4 in progress (v0.4.23). **Swarm architecture complete** (all 7 steps). ARIA Primary on Anthropic API, Action ARIA + Amnesia pool for background tasks, Redis dispatch + completion notifications.
 
 ## Architecture
 - FastAPI daemon on beardos (primary, RTX 3090) with slappy as warm failover
@@ -31,13 +31,13 @@ Phase 4 in progress (v0.4.22). Swarm architecture in progress — all workers bu
 - Fitbit integration (HR, HRV, SpO2, sleep, activity, exercise coaching with HR zones)
 - Whisper STT (batch, voice pipeline, real-time WebSocket streaming)
 - All data stores on PostgreSQL 17 (migrated from JSON in v0.4.0)
-- 752 automated tests (unit + integration)
+- 760 automated tests (unit + integration)
 - File inbox (received files saved for future reference)
 - Automatic failover (beardos → slappy)
 - Data sync via rsync every 5 minutes
 
 ## Next Steps
-1. Swarm architecture (API migration, Action ARIA, Amnesia pool)
+1. Live swarm testing + tuning (dispatch from phone, image gen end-to-end)
 3. Phase 4: Google Calendar integration
 4. Phase 4: Gmail integration
 5. Phase 4: Smart alarm + SMS announce

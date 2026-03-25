@@ -12,7 +12,14 @@ import config
 
 @pytest.fixture
 def client():
-    with patch("daemon.db.get_pool"), patch("daemon.db.close"):
+    with patch("daemon.db.get_pool"), patch("daemon.db.close"), \
+         patch("daemon.task_dispatcher.start_dispatcher"), \
+         patch("daemon.task_dispatcher.stop_dispatcher"), \
+         patch("daemon.completion_listener.start_listener"), \
+         patch("daemon.completion_listener.stop_listener"), \
+         patch("daemon.get_amnesia_pool") as mock_pool:
+        mock_pool.return_value.start = AsyncMock()
+        mock_pool.return_value.stop = AsyncMock()
         with TestClient(daemon.app) as c:
             yield c
 

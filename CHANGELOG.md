@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.23] — 2026-03-25
+
+### Added
+
+- **Completion listener** — New `completion_listener.py` subscribes to Redis Pub/Sub for task completion events. When `notify=true`, composes a natural response via ARIA Primary and delivers via TTS+push (voice) or SMS (fallback). Runs as background asyncio task.
+- **Full swarm pipeline** — End-to-end: ARIA Primary dispatches task → dispatcher routes to worker → worker executes → result in Redis → completion listener fires → ARIA composes response → user notified.
+- **Version** bumped to 0.4.23 — **Swarm architecture complete.**
+
+### Changed
+
+- **Daemon lifespan** — Now starts/stops task dispatcher, completion listener, and amnesia pool.
+- **Test fixtures** — All TestClient fixtures updated to mock swarm lifespan components (dispatcher, listener, pool) to prevent test hangs.
+
+---
+
 ## [0.4.22] — 2026-03-25
 
 ### Added
