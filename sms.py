@@ -68,7 +68,7 @@ def _render_sms_image(body: str, header: str = "ARIA") -> str:
 
     from PIL import Image, ImageDraw, ImageFont
 
-    WIDTH = 540
+    WIDTH = 470
     PADDING = 24
     TEXT_WIDTH = WIDTH - 2 * PADDING
     BG_COLOR = "#FFFFFF"

@@ -23,7 +23,7 @@ class TestRenderSmsImage:
             assert os.path.exists(path)
             img = Image.open(path)
             assert img.format == "PNG"
-            assert img.width == 540
+            assert img.width == 470
         finally:
             os.unlink(path)
 
@@ -66,7 +66,7 @@ class TestRenderSmsImage:
         try:
             assert os.path.exists(path)
             img = Image.open(path)
-            assert img.width == 540
+            assert img.width == 470
         finally:
             os.unlink(path)
 
@@ -100,7 +100,7 @@ class TestRenderSmsImage:
         path = sms._render_sms_image(body)
         try:
             img = Image.open(path)
-            assert img.width == 540
+            assert img.width == 470
         finally:
             os.unlink(path)
 
