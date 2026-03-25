@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.17] — 2026-03-25
+
+### Added
+
+- **Anthropic API client** — New `aria_api.py` wraps the Anthropic Messages API for ARIA Primary. Includes tool call loop, extended thinking support, file block handling, and config-driven model selection. API key read from `data/api_key.txt` (gitignored). Same function signature as `ask_claude()` for drop-in replacement.
+- **Conversation history** — New `conversation_history.py` pulls rolling history from `request_log` as Anthropic API messages array. Strips channel prefixes, filters errors, truncates long responses. Configurable window (default 25 turns).
+- **Read-only data access tools** — Six tool definitions for API-based historical queries: `query_health_log`, `query_nutrition_log`, `query_vehicle_log`, `query_legal_log`, `query_calendar`, `query_conversations`. Each wraps existing store functions with formatted text output. Replaces the CLI's implicit shell access for Tier 3 queries.
+- **`anthropic` 0.86.0** added to requirements.txt.
+
+### Changed
+
+- **Config** — Added `ANTHROPIC_API_KEY_FILE`, `ARIA_MODEL`, `ARIA_MAX_TOKENS`, `ARIA_HISTORY_TURNS`, `ARIA_THINKING_BUDGET` to `config.example.py`. Claude CLI section renamed to clarify it's for Action ARIA + Amnesia pool.
+- **Version** bumped to 0.4.17
+
+---
+
 ## [0.4.16] — 2026-03-25
 
 ### Added

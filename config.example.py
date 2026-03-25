@@ -34,9 +34,17 @@ LOGS_DIR = BASE_DIR / "logs"
 TAILSCALE_IP = "100.x.x.x"   # this machine's Tailscale IP
 PORT = 8450
 
-# --- Claude ---
+# --- Claude Code CLI (Action ARIA + Amnesia pool) ---
 CLAUDE_CLI = "/usr/bin/claude"  # or /home/user/.local/bin/claude
 CLAUDE_TIMEOUT = 600            # seconds per CLI invocation (10 min — image gen can take a while)
+
+# --- Anthropic API (ARIA Primary) ---
+ANTHROPIC_API_KEY_FILE = DATA_DIR / "api_key.txt"  # or set ANTHROPIC_API_KEY directly
+ANTHROPIC_API_KEY = ""                              # fallback if file doesn't exist
+ARIA_MODEL = "claude-opus-4-0-20250115"             # model for primary ARIA
+ARIA_MAX_TOKENS = 16384                             # max response tokens
+ARIA_HISTORY_TURNS = 25                             # rolling conversation history window
+ARIA_THINKING_BUDGET = 10000                        # extended thinking token budget (0 to disable)
 
 # --- Auth ---
 AUTH_TOKEN = "your-token-here"  # Tasker sends this as Bearer token
