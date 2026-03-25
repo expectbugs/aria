@@ -1,8 +1,10 @@
 """Twilio SMS/MMS integration for ARIA."""
 
 import logging
+import os
 import re
 import shutil
+import textwrap
 import uuid
 from pathlib import Path
 
@@ -51,8 +53,132 @@ def stage_media(local_path: str) -> str:
     return public_url
 
 
+# --- SMS → Image Redirect (temporary — while A2P 10DLC is pending) ---
+
+_FONT_REGULAR = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+_FONT_BOLD = "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"
+
+
+def _render_sms_image(body: str, header: str = "ARIA") -> str:
+    """Render SMS text as a phone-readable PNG image.
+
+    Returns path to a temp PNG file. Caller must delete after use.
+    """
+    from datetime import datetime
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    WIDTH = 540
+    PADDING = 24
+    TEXT_WIDTH = WIDTH - 2 * PADDING
+    BG_COLOR = "#FFFFFF"
+    HEADER_COLOR = "#1a1a2e"
+    TIME_COLOR = "#888888"
+    BODY_COLOR = "#333333"
+    LINE_COLOR = "#E0E0E0"
+
+    # Load fonts with fallback
+    try:
+        font_header = ImageFont.truetype(_FONT_BOLD, 22)
+        font_time = ImageFont.truetype(_FONT_REGULAR, 13)
+        font_body = ImageFont.truetype(_FONT_REGULAR, 17)
+    except OSError:
+        log.warning("DejaVu fonts not found, using default")
+        font_header = ImageFont.load_default()
+        font_time = ImageFont.load_default()
+        font_body = ImageFont.load_default()
+
+    # Calculate chars per line from font metrics
+    avg_char_width = font_body.getlength("x")
+    chars_per_line = max(20, int(TEXT_WIDTH / avg_char_width))
+
+    # Wrap text: preserve existing newlines, wrap each paragraph
+    wrapped_lines = []
+    for line in (body or "").split("\n"):
+        if line.strip():
+            wrapped_lines.extend(
+                textwrap.wrap(line, width=chars_per_line, break_long_words=True)
+            )
+        else:
+            wrapped_lines.append("")
+
+    if not wrapped_lines:
+        wrapped_lines = [""]
+
+    # Calculate dimensions
+    body_line_height = 22
+    header_block = 70  # header + timestamp + separator + spacing
+    body_height = len(wrapped_lines) * body_line_height
+    total_height = PADDING + header_block + body_height + PADDING
+
+    # Create image
+    img = Image.new("RGB", (WIDTH, total_height), BG_COLOR)
+    draw = ImageDraw.Draw(img)
+
+    y = PADDING
+    # Header
+    draw.text((PADDING, y), header, font=font_header, fill=HEADER_COLOR)
+    y += 28
+    # Timestamp
+    timestamp = datetime.now().strftime("%I:%M %p \u00b7 %b %d, %Y")
+    draw.text((PADDING, y), timestamp, font=font_time, fill=TIME_COLOR)
+    y += 22
+    # Separator
+    draw.line([(PADDING, y), (WIDTH - PADDING, y)], fill=LINE_COLOR, width=1)
+    y += 20
+    # Body
+    for line in wrapped_lines:
+        draw.text((PADDING, y), line, font=font_body, fill=BODY_COLOR)
+        y += body_line_height
+
+    # Save to temp file
+    tmp_path = config.DATA_DIR / f"sms_img_{uuid.uuid4().hex[:8]}.png"
+    img.save(str(tmp_path), "PNG")
+    return str(tmp_path)
+
+
+def _redirect_to_image(to: str, body: str, media_url: str | None = None) -> str:
+    """Redirect an outbound SMS to an image push. Returns a fake SID."""
+    fake_sid = f"IMG_{uuid.uuid4().hex[:8]}"
+
+    if not body or not body.strip():
+        log.warning("SMS redirect: empty body to %s, skipping image push", to)
+    else:
+        try:
+            img_path = _render_sms_image(body)
+            try:
+                import push_image
+                success = push_image.push_image(img_path, caption="ARIA")
+                if not success:
+                    log.error("SMS redirect: push_image failed for message to %s", to)
+            finally:
+                try:
+                    os.unlink(img_path)
+                except OSError:
+                    pass
+        except Exception as e:
+            log.error("SMS redirect: failed to render/push image for %s: %s", to, e)
+
+    # Log to sms_outbound for audit trail
+    try:
+        with db.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO sms_outbound (to_number, body, media_url, sid)
+                   VALUES (%s, %s, %s, %s)""",
+                (to, body, media_url, fake_sid),
+            )
+    except Exception as e:
+        log.error("Failed to log redirected SMS: %s", e)
+
+    log.info("SMS redirected to image push (to=%s, sid=%s)", to, fake_sid)
+    return fake_sid
+
+
 def send_sms(to: str, body: str, media_url: str | None = None) -> str:
     """Send an SMS or MMS message. Returns the message SID."""
+    if getattr(config, "SMS_REDIRECT_TO_IMAGE", False):
+        return _redirect_to_image(to, body, media_url)
+
     client = get_client()
     kwargs = {
         "messaging_service_sid": config.TWILIO_MESSAGING_SID,
@@ -138,6 +264,10 @@ def _find_sentence_break(text: str, max_length: int) -> int:
 
 def send_long_sms(to: str, body: str, media_url: str | None = None) -> list[str]:
     """Send a potentially long SMS as multiple messages. Returns list of SIDs."""
+    if getattr(config, "SMS_REDIRECT_TO_IMAGE", False):
+        # No splitting — render full message as one image
+        return [send_sms(to, body, media_url)]
+
     parts = split_sms(body)
     sids = []
     for i, part in enumerate(parts):
@@ -154,6 +284,11 @@ def send_long_to_owner(body: str, media_url: str | None = None) -> list[str]:
 
 def send_mms(to: str, body: str, local_path: str) -> str:
     """Send an MMS with a local file. Stages the file and sends via Twilio."""
+    if getattr(config, "SMS_REDIRECT_TO_IMAGE", False):
+        import push_image as _pi
+        _pi.push_image(local_path, caption="Attachment")
+        return _redirect_to_image(to, body)
+
     public_url = stage_media(local_path)
     return send_sms(to, body, media_url=public_url)
 

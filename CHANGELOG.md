@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.27] — 2026-03-25
+
+### Added
+
+- **SMS → Image redirect** — All outbound SMS/MMS rendered as formatted images and pushed to phone via Tasker, bypassing dead A2P 10DLC carrier channel (error 30034). Single config flag (`SMS_REDIRECT_TO_IMAGE`) controls the redirect — set `False` when A2P is approved. Renders with Pillow + DejaVu Sans at 540px width, dynamic height. Full messages rendered as single images (no SMS splitting). Intercepts `send_sms()`, `send_long_sms()`, and `send_mms()`. Audit trail preserved in `sms_outbound` table.
+
+### Changed
+
+- **Version** bumped to 0.4.27
+
+---
+
 ## [0.4.26] — 2026-03-25
 
 ### Added

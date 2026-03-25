@@ -104,6 +104,10 @@ TWILIO_PHONE_NUMBER = "+1XXXXXXXXXX"                  # ARIA's phone number
 TWILIO_WEBHOOK_URL = "https://host.tail.ts.net/webhook/sms"  # Public funnel URL for signature validation
 OWNER_PHONE_NUMBER = "+1XXXXXXXXXX"                   # Your personal phone number
 
+# --- SMS Redirect (temporary — remove when A2P 10DLC is approved) ---
+SMS_REDIRECT_TO_IMAGE = True   # True = render SMS as image + push to phone (SMS is dead)
+                                # False = normal Twilio SMS delivery
+
 # --- Fitbit (Web API — Personal app, register at dev.fitbit.com) ---
 FITBIT_CLIENT_ID = "your-client-id"               # OAuth 2.0 Client ID
 FITBIT_CLIENT_SECRET = "your-client-secret"         # Client Secret
