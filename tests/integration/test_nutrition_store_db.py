@@ -24,6 +24,7 @@ class TestNutritionRoundtrip:
                 "added_sugars_g": 0, "protein_g": 52,
                 "vitamin_d_mcg": None, "calcium_mg": None,
                 "iron_mg": 2.0, "potassium_mg": 350, "omega3_mg": None,
+                "choline_mg": 147, "magnesium_mg": 25, "zinc_mg": 2.5,
             },
             servings=1.0,
             serving_size="8 oz",
@@ -33,6 +34,8 @@ class TestNutritionRoundtrip:
         assert item["nutrients"]["calories"] == 350
         assert item["nutrients"]["protein_g"] == 52
         assert item["nutrients"]["vitamin_d_mcg"] is None  # NULL preserved
+        assert item["nutrients"]["choline_mg"] == 147
+        assert item["nutrients"]["magnesium_mg"] == 25
 
     def test_add_item_sparse_nutrients(self):
         """Items may have only a few known nutrients (e.g., estimates)."""
@@ -131,6 +134,26 @@ class TestDailyTotalsSQL:
             assert field in totals
             assert totals[field] == 1.0
 
+    def test_micronutrient_summing(self):
+        """Verify new micronutrient fields aggregate correctly with null handling."""
+        today = date.today().isoformat()
+        nutrition_store.add_item(
+            "Eggs", entry_date=today,
+            nutrients={"calories": 156, "choline_mg": 294, "magnesium_mg": 10},
+            servings=1.0,
+        )
+        nutrition_store.add_item(
+            "Multivitamin", entry_date=today,
+            nutrients={"calories": 0, "magnesium_mg": 100,
+                       "zinc_mg": 15, "selenium_mcg": 70},
+            servings=1.0,
+        )
+        totals = nutrition_store.get_daily_totals(today)
+        assert totals["choline_mg"] == 294.0  # only eggs (multivitamin has no choline)
+        assert totals["magnesium_mg"] == 110.0  # 10 + 100
+        assert totals["zinc_mg"] == 15.0
+        assert totals["selenium_mcg"] == 70.0
+
     def test_empty_day_returns_zeros(self):
         totals = nutrition_store.get_daily_totals("2099-01-01")
         assert totals["item_count"] == 0
@@ -180,6 +203,31 @@ class TestCheckLimitsIntegration:
         assert any("Fiber on track" in w for w in warnings)
 
 
+class TestCheckLimitsCholine:
+    @patch("nutrition_store.fitbit_store.get_activity_summary")
+    def test_choline_positive_note(self, mock_activity):
+        today = date.today().isoformat()
+        nutrition_store.add_item(
+            "Eggs", entry_date=today,
+            nutrients={"calories": 156, "choline_mg": 294},
+        )
+        nutrition_store.add_item(
+            "Broccoli", entry_date=today,
+            nutrients={"calories": 105, "choline_mg": 57},
+        )
+        nutrition_store.add_item(
+            "Multivitamin", entry_date=today,
+            nutrients={"calories": 0},
+        )
+        nutrition_store.add_item(
+            "Huel smoothie", entry_date=today,
+            nutrients={"calories": 280, "choline_mg": 200},
+        )
+        mock_activity.return_value = None
+        warnings = nutrition_store.check_limits(today)
+        assert any("Choline on track" in w for w in warnings)
+
+
 class TestContextIntegration:
     @patch("nutrition_store.fitbit_store.get_activity_summary")
     def test_context_string_with_real_data(self, mock_activity):
@@ -210,12 +258,15 @@ class TestWeeklySummaryIntegration:
             nutrition_store.add_item(
                 f"Meal day {i}", entry_date=d,
                 nutrients={"calories": 1800, "protein_g": 100,
-                           "dietary_fiber_g": 25, "added_sugars_g": 8},
+                           "dietary_fiber_g": 25, "added_sugars_g": 8,
+                           "choline_mg": 400, "magnesium_mg": 300},
             )
 
         summary = nutrition_store.get_weekly_summary()
         assert "3 days logged" in summary
         assert "Avg calories" in summary
+        assert "Avg choline" in summary
+        assert "Avg magnesium" in summary
 
 
 class TestGetItems:

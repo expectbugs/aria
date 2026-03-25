@@ -21,6 +21,8 @@ import fitbit_store
 log = logging.getLogger("aria.nutrition")
 
 # Daily targets from diet_reference.md — used for limit checking
+# Micronutrient max values use UL (tolerable upper limit) so check_limits()
+# only warns on genuinely excessive intake, not on exceeding the RDA.
 DAILY_TARGETS = {
     "calories": {"min": 1600, "max": 1900, "unit": "kcal", "label": "Calories"},
     "protein_g": {"min": 100, "max": 130, "unit": "g", "label": "Protein"},
@@ -30,15 +32,27 @@ DAILY_TARGETS = {
     "sodium_mg": {"min": 1200, "max": 1800, "unit": "mg", "label": "Sodium"},
     "saturated_fat_g": {"min": 0, "max": 15, "unit": "g", "label": "Saturated fat"},
     "total_sugars_g": {"min": 0, "max": 36, "unit": "g", "label": "Total sugars"},
+    "choline_mg": {"min": 400, "max": 3500, "unit": "mg", "label": "Choline"},
+    "magnesium_mg": {"min": 310, "max": 420, "unit": "mg", "label": "Magnesium"},
+    "zinc_mg": {"min": 8, "max": 40, "unit": "mg", "label": "Zinc"},
+    "vitamin_c_mg": {"min": 60, "max": 2000, "unit": "mg", "label": "Vitamin C"},
+    "selenium_mcg": {"min": 40, "max": 400, "unit": "mcg", "label": "Selenium"},
 }
 
-# All tracked nutrients (matches FDA label + omega-3 for NAFLD)
+# All tracked nutrients — FDA label macros + omega-3 + expanded micronutrients
 NUTRIENT_FIELDS = [
+    # FDA Nutrition Facts (original 16)
     "calories", "total_fat_g", "saturated_fat_g", "trans_fat_g",
     "cholesterol_mg", "sodium_mg", "total_carb_g", "dietary_fiber_g",
     "total_sugars_g", "added_sugars_g", "protein_g",
     "vitamin_d_mcg", "calcium_mg", "iron_mg", "potassium_mg",
     "omega3_mg",
+    # Expanded micronutrients (17 new)
+    "magnesium_mg", "zinc_mg", "selenium_mcg", "choline_mg",
+    "vitamin_a_mcg", "vitamin_c_mg", "vitamin_k_mcg",
+    "vitamin_b12_mcg", "folate_mcg_dfe",
+    "thiamin_mg", "riboflavin_mg", "niacin_mg", "vitamin_b6_mg",
+    "vitamin_e_mg", "manganese_mg", "copper_mg", "phosphorus_mg",
 ]
 
 
@@ -210,6 +224,8 @@ def check_limits(day: str | None = None) -> list[str]:
         warnings.append(f"Fiber on track: {totals['dietary_fiber_g']}g (target 25-35g)")
     if totals.get("protein_g", 0) >= 100:
         warnings.append(f"Protein on track: {totals['protein_g']}g (target 100-130g)")
+    if totals.get("choline_mg", 0) >= 550:
+        warnings.append(f"Choline on track: {totals['choline_mg']:.0f}mg (target 550mg for NAFLD)")
 
     return warnings
 
@@ -248,6 +264,18 @@ def get_context(day: str | None = None) -> str:
 
     if totals.get("omega3_mg", 0) > 0:
         parts.append(f"  Omega-3: {totals['omega3_mg']:.0f}mg")
+    if totals.get("choline_mg", 0) > 0:
+        parts.append(f"  Choline: {totals['choline_mg']:.0f}mg / 550mg target")
+    if totals.get("magnesium_mg", 0) > 0:
+        parts.append(f"  Magnesium: {totals['magnesium_mg']:.0f}mg / 400-420mg")
+    if totals.get("zinc_mg", 0) > 0:
+        parts.append(f"  Zinc: {totals['zinc_mg']:.0f}mg / 11mg")
+    if totals.get("vitamin_c_mg", 0) > 0:
+        parts.append(f"  Vitamin C: {totals['vitamin_c_mg']:.0f}mg / 90mg")
+    if totals.get("selenium_mcg", 0) > 0:
+        parts.append(f"  Selenium: {totals['selenium_mcg']:.0f}mcg / 55mcg")
+    if totals.get("vitamin_k_mcg", 0) > 0:
+        parts.append(f"  Vitamin K: {totals['vitamin_k_mcg']:.0f}mcg / 120mcg")
 
     # Net calorie balance
     net = get_net_calories(day)
@@ -289,7 +317,11 @@ def get_weekly_summary() -> str:
                 COALESCE(SUM(CASE WHEN nutrients->>'added_sugars_g' IS NOT NULL
                     THEN (nutrients->>'added_sugars_g')::float * servings END), 0) AS added_sugars_g,
                 COALESCE(SUM(CASE WHEN nutrients->>'omega3_mg' IS NOT NULL
-                    THEN (nutrients->>'omega3_mg')::float * servings END), 0) AS omega3_mg
+                    THEN (nutrients->>'omega3_mg')::float * servings END), 0) AS omega3_mg,
+                COALESCE(SUM(CASE WHEN nutrients->>'choline_mg' IS NOT NULL
+                    THEN (nutrients->>'choline_mg')::float * servings END), 0) AS choline_mg,
+                COALESCE(SUM(CASE WHEN nutrients->>'magnesium_mg' IS NOT NULL
+                    THEN (nutrients->>'magnesium_mg')::float * servings END), 0) AS magnesium_mg
             FROM nutrition_entries
             WHERE date >= %s
             GROUP BY date""",
@@ -320,5 +352,15 @@ def get_weekly_summary() -> str:
         parts.append(f"  Omega-3 days: {omega_days}/7 (target: 3-4)")
     else:
         parts.append(f"  No omega-3 logged this week (target: 3-4 fish meals)")
+
+    choline_totals = [r["choline_mg"] for r in rows]
+    if any(c > 0 for c in choline_totals):
+        avg = sum(choline_totals) / len(choline_totals)
+        parts.append(f"  Avg choline: {avg:.0f}mg / 550mg target")
+
+    mag_totals = [r["magnesium_mg"] for r in rows]
+    if any(m > 0 for m in mag_totals):
+        avg = sum(mag_totals) / len(mag_totals)
+        parts.append(f"  Avg magnesium: {avg:.0f}mg / 400-420mg")
 
     return "\n".join(parts)

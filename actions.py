@@ -63,6 +63,15 @@ def _validate_nutrition(nutrition_actions: list[dict],
                     f"Cholesterol only {chol}mg on '{food}' — eggs are 186mg each, verify."
                 )
 
+        # 3b. Egg dishes should also have choline (147mg per egg, critical for NAFLD)
+        if _EGG_KEYWORDS.search(food) and not _EGG_FALSE_POSITIVES.search(food):
+            choline = nutrients.get("choline_mg")
+            if choline is None:
+                warnings.append(
+                    f"Choline missing on '{food}' — eggs have ~147mg choline each "
+                    f"(critical for NAFLD, target 550mg/day)."
+                )
+
         # 4. Label photos should have most core nutrients
         if source == "label_photo":
             present = sum(1 for f in _CORE_NUTRIENTS

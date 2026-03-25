@@ -262,6 +262,19 @@ class TestCheckLimits:
 
     @patch("nutrition_store.get_net_calories")
     @patch("nutrition_store.get_daily_totals")
+    def test_choline_positive_note(self, mock_totals, mock_net):
+        mock_totals.return_value = {
+            "item_count": 3, "calories": 1700, "protein_g": 80,
+            "dietary_fiber_g": 15, "added_sugars_g": 5,
+            "sodium_mg": 1400, "saturated_fat_g": 10, "total_sugars_g": 15,
+            "choline_mg": 600,
+        }
+        mock_net.return_value = {"consumed": 1700, "burned": 0, "net": 1700}
+        warnings = nutrition_store.check_limits("2026-03-20")
+        assert any("Choline on track" in w for w in warnings)
+
+    @patch("nutrition_store.get_net_calories")
+    @patch("nutrition_store.get_daily_totals")
     def test_calorie_surplus_warning(self, mock_totals, mock_net):
         mock_totals.return_value = {
             "item_count": 3, "calories": 2500, "protein_g": 80,
@@ -311,6 +324,36 @@ class TestGetContext:
         assert "Omega-3:" in ctx
         assert "Fiber on track" in ctx
 
+    @patch("nutrition_store.check_limits")
+    @patch("nutrition_store.get_net_calories")
+    @patch("nutrition_store.get_items")
+    @patch("nutrition_store.get_daily_totals")
+    def test_displays_micronutrients_when_nonzero(self, mock_totals, mock_items,
+                                                   mock_net, mock_limits):
+        mock_totals.return_value = {
+            "item_count": 2, "calories": 1200, "protein_g": 80,
+            "total_fat_g": 30, "saturated_fat_g": 8, "trans_fat_g": 0,
+            "cholesterol_mg": 150, "sodium_mg": 1000,
+            "total_carb_g": 100, "dietary_fiber_g": 20,
+            "total_sugars_g": 15, "added_sugars_g": 5,
+            "vitamin_d_mcg": 0, "calcium_mg": 0, "iron_mg": 0,
+            "potassium_mg": 0, "omega3_mg": 0,
+            "choline_mg": 294, "magnesium_mg": 200, "zinc_mg": 16,
+            "vitamin_c_mg": 180, "selenium_mcg": 70, "vitamin_k_mcg": 430,
+        }
+        mock_items.return_value = []
+        mock_net.return_value = {"consumed": 1200, "burned": 0, "net": 1200,
+                                 "on_track": None}
+        mock_limits.return_value = []
+
+        ctx = nutrition_store.get_context("2026-03-20")
+        assert "Choline: 294mg / 550mg target" in ctx
+        assert "Magnesium: 200mg / 400-420mg" in ctx
+        assert "Zinc: 16mg / 11mg" in ctx
+        assert "Vitamin C: 180mg / 90mg" in ctx
+        assert "Selenium: 70mcg / 55mcg" in ctx
+        assert "Vitamin K: 430mcg / 120mcg" in ctx
+
     @patch("nutrition_store.get_daily_totals")
     def test_empty_returns_empty_string(self, mock_totals):
         mock_totals.return_value = {"item_count": 0}
@@ -323,10 +366,12 @@ class TestGetWeeklySummary:
         mc.execute.return_value.fetchall.return_value = [
             {"date": date(2026, 3, 19), "item_count": 4,
              "calories": 1800.0, "protein_g": 110.0,
-             "dietary_fiber_g": 28.0, "added_sugars_g": 8.0, "omega3_mg": 500.0},
+             "dietary_fiber_g": 28.0, "added_sugars_g": 8.0, "omega3_mg": 500.0,
+             "choline_mg": 450.0, "magnesium_mg": 350.0},
             {"date": date(2026, 3, 20), "item_count": 3,
              "calories": 1700.0, "protein_g": 105.0,
-             "dietary_fiber_g": 25.0, "added_sugars_g": 6.0, "omega3_mg": 0.0},
+             "dietary_fiber_g": 25.0, "added_sugars_g": 6.0, "omega3_mg": 0.0,
+             "choline_mg": 294.0, "magnesium_mg": 200.0},
         ]
         try:
             summary = nutrition_store.get_weekly_summary()
@@ -334,6 +379,8 @@ class TestGetWeeklySummary:
             assert "Avg calories" in summary
             assert "Avg protein" in summary
             assert "Omega-3 days: 1/7" in summary
+            assert "Avg choline" in summary
+            assert "Avg magnesium" in summary
         finally:
             p.stop()
 
@@ -360,9 +407,19 @@ class TestConstants:
         assert "calories" in nutrition_store.NUTRIENT_FIELDS
         assert "protein_g" in nutrition_store.NUTRIENT_FIELDS
         assert "omega3_mg" in nutrition_store.NUTRIENT_FIELDS
-        assert len(nutrition_store.NUTRIENT_FIELDS) == 16
+        assert "choline_mg" in nutrition_store.NUTRIENT_FIELDS
+        assert "magnesium_mg" in nutrition_store.NUTRIENT_FIELDS
+        assert len(nutrition_store.NUTRIENT_FIELDS) == 33
 
     def test_added_sugar_has_hard_limit(self):
         target = nutrition_store.DAILY_TARGETS["added_sugars_g"]
         assert target["hard_limit"] == 36
         assert target["warn"] == 25
+
+    def test_micronutrient_daily_targets(self):
+        for name in ["choline_mg", "magnesium_mg", "zinc_mg",
+                      "vitamin_c_mg", "selenium_mcg"]:
+            assert name in nutrition_store.DAILY_TARGETS
+            t = nutrition_store.DAILY_TARGETS[name]
+            assert "min" in t and "max" in t and "unit" in t and "label" in t
+        assert len(nutrition_store.DAILY_TARGETS) == 12

@@ -327,6 +327,34 @@ class TestNutritionValidation:
         assert "Cholesterol only" not in result
 
     @patch("actions.nutrition_store")
+    def test_warns_egg_missing_choline(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Scrambled eggs", '
+            '"nutrients": {"calories": 300, "cholesterol_mg": 372, "protein_g": 25}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Choline missing" in result
+        assert "147mg" in result
+
+    @patch("actions.nutrition_store")
+    def test_no_choline_warning_when_present(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Scrambled eggs", '
+            '"nutrients": {"calories": 300, "cholesterol_mg": 372, "choline_mg": 294}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Choline missing" not in result
+
+    @patch("actions.nutrition_store")
+    def test_no_choline_warning_for_eggplant(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Eggplant parmesan", '
+            '"nutrients": {"calories": 350}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "Choline missing" not in result
+
+    @patch("actions.nutrition_store")
     def test_warns_label_photo_incomplete(self, mock_ns):
         response = (
             'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Some product", '

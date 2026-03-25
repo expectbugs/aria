@@ -6,6 +6,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.26] — 2026-03-25
+
+### Added
+
+- **Expanded micronutrient tracking** — 17 new nutrient fields (33 total): magnesium, zinc, selenium, choline, vitamins A/C/K/B12, folate, thiamin, riboflavin, niacin, B6, E, manganese, copper, phosphorus. Daily targets for 5 key micronutrients (choline, magnesium, zinc, vitamin C, selenium). Context display and weekly summaries now show choline, magnesium, zinc, vitamin C, selenium, vitamin K when nonzero.
+- **Choline tracking for NAFLD** — Choline (target 550mg/day) is critical for liver fat export. Positive note in check_limits() when daily choline reaches target. Egg choline validation warns when egg dishes are missing choline data (~147mg per egg).
+- **Magnesium supplement pantry entry** — Nature Made Magnesium Oxide capsules: 100mg elemental magnesium per capsule (not 200mg oxide weight).
+- **Micronutrient backfill script** — `backfill_micronutrients.py` for retroactive pantry micronutrient data on existing entries. Dry-run by default, `--apply` to execute.
+- **Health keyword expansion** — Queries about magnesium, choline, zinc, selenium, micronutrients, and supplements now trigger health context injection.
+
+### Fixed
+
+- **Corrected 2026-03-24 magnesium log** — Entry corrected from 200mg (oxide weight) to 100mg (elemental), magnesium_mg added to nutrients JSONB.
+- **Corrected 2026-03-23 rice+Huel calories** — Seeds of Change rice pouch was logged at 370cal (old estimate) instead of 470cal (verified from label). Entry corrected from 570 to 670 total calories.
+- **Seeds of Change rice pantry data** — Updated from estimated ~370cal to label-verified 470cal per pouch (240g). Calcium corrected from 32mg to 20mg, potassium from 400mg to 390mg.
+- **Pantry label verification** — Added label-verified micronutrients for Amy's burritos (both varieties) and shredded cheddar. All pantry updates cross-referenced against actual product label photos.
+
+### Changed
+
+- **Version** bumped to 0.4.26
+
+---
+
 ## [0.4.25] — 2026-03-25
 
 ### Added

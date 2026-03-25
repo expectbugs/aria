@@ -37,6 +37,8 @@ _HEALTH_SUBSTRINGS = [
     "fitbit", "vo2", "cardio", "workout", "diet", "nutrition",
     "calories", "nafld", "liver", "protein", "fiber", "sodium",
     "vitamin", "omega", "label", "deficit", "surplus", "smoothie",
+    "magnesium", "choline", "zinc", "selenium", "micronutrient",
+    "supplement",
 ]
 _HEALTH_REGEX = re.compile(
     r'\b(body|pain|sleep|slept|exercise|symptom|headache|sore|medication|'

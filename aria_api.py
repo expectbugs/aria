@@ -212,6 +212,13 @@ def _handle_tool_call(name: str, params: dict) -> str:
             lines.append(f"  Sodium: {totals.get('sodium_mg', 0):.0f}mg")
             if totals.get("omega3_mg", 0) > 0:
                 lines.append(f"  Omega-3: {totals['omega3_mg']:.0f}mg")
+            for field, label, unit in [
+                ("choline_mg", "Choline", "mg"), ("magnesium_mg", "Magnesium", "mg"),
+                ("zinc_mg", "Zinc", "mg"), ("vitamin_c_mg", "Vitamin C", "mg"),
+                ("selenium_mcg", "Selenium", "mcg"), ("vitamin_k_mcg", "Vitamin K", "mcg"),
+            ]:
+                if totals.get(field, 0) > 0:
+                    lines.append(f"  {label}: {totals[field]:.0f}{unit}")
             return "\n".join(lines)
 
         elif name == "query_vehicle_log":
