@@ -10,6 +10,7 @@ venv/
 
 # Data & logs (personal data)
 data/
+!data/projects/
 logs/
 
 # TTS models (large binaries)
