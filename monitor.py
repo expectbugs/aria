@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 
+#!/usr/bin/env python3
 """ARIA system health monitor — pushes SVG alerts to phone on failure.
 
 Runs every 5 minutes via cron on both beardos and slappy.
@@ -262,3 +262,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# Auto-deploy test marker
