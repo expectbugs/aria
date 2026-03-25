@@ -5,9 +5,53 @@ Tier 2 (keyword): weather, calendar expansion, health/nutrition, vehicle, legal,
 """
 
 import logging
+import re
 from datetime import datetime, date, timedelta
 
 log = logging.getLogger("aria")
+
+
+# --- Keyword matching infrastructure ---
+
+def _match_keywords(text: str, substrings: list[str],
+                    pattern: re.Pattern | None = None) -> bool:
+    """Match via substring check + optional word-boundary regex."""
+    if any(kw in text for kw in substrings):
+        return True
+    return bool(pattern and pattern.search(text))
+
+
+# Compiled patterns for each category — word-boundary matching for ambiguous single words
+_WEATHER_SUBSTRINGS = ["weather", "temperature", "forecast", "umbrella",
+                       "jacket", "coat", "humid", "degrees", "sunny", "cloudy"]
+_WEATHER_REGEX = re.compile(r'\b(rain|snow|storm|wind|freeze)\b', re.IGNORECASE)
+
+_CALENDAR_SUBSTRINGS = ["calendar", "schedule", "appointment",
+                        "my week", "this week", "next week"]
+_CALENDAR_REGEX = re.compile(
+    r'\b(tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b',
+    re.IGNORECASE)
+
+_HEALTH_SUBSTRINGS = [
+    "health", "body log", "heart rate", "hrv", "spo2", "oxygen",
+    "fitbit", "vo2", "cardio", "workout", "diet", "nutrition",
+    "calories", "nafld", "liver", "protein", "fiber", "sodium",
+    "vitamin", "omega", "label", "deficit", "surplus", "smoothie",
+]
+_HEALTH_REGEX = re.compile(
+    r'\b(body|pain|sleep|slept|exercise|symptom|headache|sore|medication|'
+    r'steps|resting|food|eat|ate|meals?|lunch|dinner|breakfast|snack|'
+    r'carbs?|weight)\b',
+    re.IGNORECASE)
+
+_VEHICLE_SUBSTRINGS = ["xterra", "vehicle", "maintenance", "mileage",
+                       "oil change", "tire pressure"]
+_VEHICLE_REGEX = re.compile(r'\b(truck|brake|tire)\b', re.IGNORECASE)
+
+_LEGAL_SUBSTRINGS = ["legal", "court", "lawyer", "attorney", "walworth",
+                     "case update", "legal case", "court case",
+                     "court date", "lawsuit"]
+_LEGAL_REGEX = re.compile(r'\b(filing)\b', re.IGNORECASE)
 
 import config
 import db
@@ -110,7 +154,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
 
     Returns the context string.
     """
-    text_lower = text.lower()
+    text_lower = text.lower().replace("-", " ")  # normalize hyphens for keyword matching
     ctx_parts = []
 
     # --- Tier 1: Always-inject ---
@@ -119,11 +163,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
         ctx_parts.append(always_ctx)
 
     # --- Weather ---
-    weather_keywords = ["weather", "temperature", "forecast", "rain",
-                        "snow", "storm", "wind", "cold", "hot", "warm",
-                        "outside", "umbrella", "jacket", "coat", "humid",
-                        "degrees", "sunny", "cloudy", "ice", "freeze"]
-    if any(kw in text_lower for kw in weather_keywords):
+    if _match_keywords(text_lower, _WEATHER_SUBSTRINGS, _WEATHER_REGEX):
         try:
             current = await weather.get_current_conditions()
             forecast = await weather.get_forecast()
@@ -152,11 +192,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
     week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
-    calendar_keywords = ["calendar", "schedule", "week", "appointment",
-                         "event", "plan", "busy", "free", "available",
-                         "tomorrow", "tonight", "monday", "tuesday",
-                         "wednesday", "thursday", "friday", "saturday", "sunday"]
-    if any(kw in text_lower for kw in calendar_keywords):
+    if _match_keywords(text_lower, _CALENDAR_SUBSTRINGS, _CALENDAR_REGEX):
         events = calendar_store.get_events(start=today, end=week_end)
     else:
         events = calendar_store.get_events(start=today, end=today)
@@ -169,9 +205,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
         ))
 
     # --- Vehicle ---
-    vehicle_keywords = ["xterra", "vehicle", "car", "truck", "oil",
-                        "maintenance", "mileage", "tire", "brake"]
-    if any(kw in text_lower for kw in vehicle_keywords):
+    if _match_keywords(text_lower, _VEHICLE_SUBSTRINGS, _VEHICLE_REGEX):
         v_entries = vehicle_store.get_entries(limit=10)
         if v_entries:
             ctx_parts.append("Vehicle log: " + "; ".join(
@@ -187,18 +221,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
             ))
 
     # --- Health + Nutrition + Fitness (unified) ---
-    health_nutrition_keywords = [
-        "health", "body", "pain", "sleep", "slept", "exercise",
-        "symptom", "headache", "back", "sore", "body log", "medication",
-        "heart rate", "heart", "hrv", "spo2", "oxygen", "steps",
-        "active", "fitbit", "vo2", "cardio", "resting", "workout",
-        "diet", "food", "eat", "ate", "meal", "lunch", "dinner",
-        "breakfast", "snack", "smoothie", "nutrition", "calories",
-        "factor", "nafld", "liver", "sugar", "protein", "fiber",
-        "sodium", "fat", "carb", "vitamin", "omega", "label",
-        "weight", "deficit", "surplus", "burn",
-    ]
-    if is_image or any(kw in text_lower for kw in health_nutrition_keywords):
+    if is_image or _match_keywords(text_lower, _HEALTH_SUBSTRINGS, _HEALTH_REGEX):
         health_ctx = gather_health_context()
         if health_ctx:
             ctx_parts.append(health_ctx)
@@ -251,10 +274,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
             ))
 
     # --- Legal ---
-    legal_keywords = ["legal", "court", "lawyer", "attorney",
-                      "walworth", "filing", "case update", "legal case",
-                      "court case", "court date", "lawsuit"]
-    if any(kw in text_lower for kw in legal_keywords):
+    if _match_keywords(text_lower, _LEGAL_SUBSTRINGS, _LEGAL_REGEX):
         l_entries = legal_store.get_entries(limit=10)
         if l_entries:
             ctx_parts.append("Legal case log: " + "; ".join(

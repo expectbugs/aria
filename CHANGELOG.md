@@ -6,6 +6,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.15] — 2026-03-25
+
+### Changed
+
+- **Keyword matching: hybrid substring + word-boundary regex** — Ambiguous single words now use `\b` word-boundary matching instead of substring matching. New `_match_keywords()` helper combines both approaches per category. Follows the `re.compile` pattern already established in `actions.py`.
+- **Removed false-positive keywords** — Weather: "cold", "hot", "warm", "outside", "ice". Health: "back", "heart", "active", "sugar", "fat", "burn". Vehicle: "oil" (bare), "car". Calendar: "week" (bare), "event", "plan", "busy", "free", "available". These no longer trigger irrelevant context injection.
+- **Hyphens normalized** — Input text normalizes hyphens to spaces before matching, so "heart-rate" matches "heart rate" substring.
+- **Version** bumped to 0.4.15
+
+---
+
 ## [0.4.14] — 2026-03-25
 
 ### Changed
