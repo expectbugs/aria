@@ -1,4 +1,8 @@
-"""ARIA context building — keyword-triggered data injection for requests."""
+"""ARIA context building — tiered data injection for requests.
+
+Tier 1 (always): datetime, timers, reminders, location, battery, exercise state
+Tier 2 (keyword): weather, calendar expansion, health/nutrition, vehicle, legal, projects
+"""
 
 import logging
 from datetime import datetime, date, timedelta
@@ -18,6 +22,55 @@ import weather
 import news
 import fitbit_store
 import nutrition_store
+
+
+def gather_always_context() -> str:
+    """Tier 1 context — always injected on every call regardless of query.
+
+    Returns a compact string with data ARIA should always have:
+    datetime, active timers, active reminders, location/battery, exercise state.
+    """
+    now = datetime.now()
+    parts = [f"Current date and time: {now.strftime('%A, %B %d, %Y at %I:%M %p')}"]
+
+    # Active timers
+    active_timers = timer_store.get_active()
+    if active_timers:
+        parts.append("Active timers: " + "; ".join(
+            f"[id={t['id']}] {t['label']} — fires at {t['fire_at'][11:16]}"
+            f" ({t['delivery']})"
+            for t in active_timers
+        ))
+
+    # Active reminders
+    reminders = calendar_store.get_reminders()
+    if reminders:
+        parts.append("Active reminders: " + "; ".join(
+            f"[id={r['id']}] {r['text']}"
+            + (f" (due {r['due']})" if r.get('due') else "")
+            for r in reminders
+        ))
+
+    # Latest location + battery
+    loc = location_store.get_latest()
+    if loc:
+        loc_name = loc.get("location", f"{loc['lat']:.4f}, {loc['lon']:.4f}")
+        parts.append(
+            f"Location: {loc_name} (as of {loc['timestamp'][11:16]})"
+        )
+        if loc.get("battery_pct") is not None:
+            parts.append(f"Phone battery: {loc['battery_pct']}%")
+
+    # Exercise mode
+    exercise = fitbit_store.get_exercise_state()
+    if exercise:
+        coaching = fitbit_store.get_exercise_coaching_context()
+        if coaching:
+            parts.append(coaching)
+
+    # Task status from Redis (Step 4 will add real implementation)
+
+    return "\n".join(parts)
 
 
 def _get_today_requests() -> list[dict]:
@@ -60,6 +113,11 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     text_lower = text.lower()
     ctx_parts = []
 
+    # --- Tier 1: Always-inject ---
+    always_ctx = gather_always_context()
+    if always_ctx:
+        ctx_parts.append(always_ctx)
+
     # --- Weather ---
     weather_keywords = ["weather", "temperature", "forecast", "rain",
                         "snow", "storm", "wind", "cold", "hot", "warm",
@@ -90,7 +148,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
         except Exception as e:
             ctx_parts.append(f"Weather data unavailable: {e}")
 
-    # --- Calendar & Reminders (always injected) ---
+    # --- Calendar (reminders are in Tier 1) ---
     today = datetime.now().strftime("%Y-%m-%d")
     week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
@@ -103,18 +161,11 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     else:
         events = calendar_store.get_events(start=today, end=today)
 
-    reminders = calendar_store.get_reminders()
     if events:
         ctx_parts.append("Events: " + "; ".join(
             f"[id={e['id']}] {e['date']} {e['title']}"
             + (f" at {e['time']}" if e.get('time') else "")
             for e in events
-        ))
-    if reminders:
-        ctx_parts.append("Active reminders: " + "; ".join(
-            f"[id={r['id']}] {r['text']}"
-            + (f" (due {r['due']})" if r.get('due') else "")
-            for r in reminders
         ))
 
     # --- Vehicle ---
@@ -189,43 +240,20 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
             ctx_parts.append("No project briefs found in data/projects/. "
                              "Create one by writing a markdown file there.")
 
-    # --- Timers ---
-    timer_keywords = ["timer", "alarm", "remind me in", "tell me when",
-                      "set a timer", "cancel timer", "wake me",
-                      "how long", "minutes", "countdown"]
-    if any(kw in text_lower for kw in timer_keywords):
-        active_timers = timer_store.get_active()
-        if active_timers:
-            ctx_parts.append("Active timers: " + "; ".join(
-                f"[id={t['id']}] {t['label']} — fires at {t['fire_at'][11:16]}"
-                f" ({t['delivery']})"
-                for t in active_timers
-            ))
-
-    # --- Location ---
+    # --- Location history (basic location is Tier 1, movement trail is keyword-gated) ---
     location_keywords = ["where am i", "where i am", "location",
                          "how far", "near me", "close to",
                          "my location", "where are you"]
     if any(kw in text_lower for kw in location_keywords):
-        loc = location_store.get_latest()
-        if loc:
-            loc_name = loc.get("location", f"{loc['lat']:.4f}, {loc['lon']:.4f}")
-            ctx_parts.append(
-                f"User's last known location: {loc_name}"
-                f" ({loc['lat']:.4f}, {loc['lon']:.4f})"
-                f" (as of {loc['timestamp'][11:16]})"
-            )
-            if loc.get("battery_pct") is not None:
-                ctx_parts.append(f"Phone battery: {loc['battery_pct']}%")
-            history = location_store.get_history(hours=4)
-            if len(history) > 1:
-                def _loc_label(h):
-                    name = h.get("location")
-                    return name if name else f"{h['lat']:.4f},{h['lon']:.4f}"
-                ctx_parts.append("Recent movement (last 4 hours): " + "; ".join(
-                    f"{h['timestamp'][11:16]} → {_loc_label(h)}"
-                    for h in history[-12:]
-                ))
+        history = location_store.get_history(hours=4)
+        if len(history) > 1:
+            def _loc_label(h):
+                name = h.get("location")
+                return name if name else f"{h['lat']:.4f},{h['lon']:.4f}"
+            ctx_parts.append("Recent movement (last 4 hours): " + "; ".join(
+                f"{h['timestamp'][11:16]} → {_loc_label(h)}"
+                for h in history[-12:]
+            ))
 
     # --- Legal ---
     legal_keywords = ["legal", "court", "lawyer", "attorney",
@@ -253,6 +281,10 @@ async def _get_context_for_text(text: str, is_image: bool = False) -> str:
     Detects morning briefings and evening debriefs, otherwise uses
     keyword-triggered context. Single source of truth — used by /ask,
     /ask/voice, and /sms instead of repeating detection logic.
+
+    Tier 1 (always-inject) data is included on every path:
+    - Regular requests: build_request_context() calls gather_always_context()
+    - Briefing/debrief: prepended here before the specialized context
     """
     text_lower = text.lower()
     briefing_triggers = ["good morning", "morning brief", "briefing", "start my day"]
@@ -261,13 +293,23 @@ async def _get_context_for_text(text: str, is_image: bool = False) -> str:
         repeat_words = ["again", "repeat", "one more time", "redo"]
         is_repeat = any(w in text_lower for w in repeat_words)
         if is_repeat or not _briefing_delivered_today():
-            return await gather_briefing_context()
+            always = gather_always_context()
+            briefing = await gather_briefing_context()
+            ctx = always + "\n" + briefing if always else briefing
+            log.info("Context: %d chars, path=briefing", len(ctx))
+            return ctx
         # Already delivered today — fall through to normal context
     if any(text_lower.startswith(p)
            for p in ["good night", "end my day", "nightly debrief",
                       "evening debrief", "wrap up my day"]):
-        return await gather_debrief_context()
-    return await build_request_context(text, is_image=is_image)
+        always = gather_always_context()
+        debrief = await gather_debrief_context()
+        ctx = always + "\n" + debrief if always else debrief
+        log.info("Context: %d chars, path=debrief", len(ctx))
+        return ctx
+    ctx = await build_request_context(text, is_image=is_image)
+    log.info("Context: %d chars, path=regular", len(ctx))
+    return ctx
 
 
 def gather_health_context() -> str:
@@ -338,13 +380,16 @@ def gather_health_context() -> str:
 
 
 async def gather_debrief_context() -> str:
-    """Gather context for a good-night debrief."""
+    """Gather context for a good-night debrief.
+
+    Note: datetime, reminders, location, and battery are in Tier 1
+    (gather_always_context), prepended by _get_context_for_text().
+    """
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
     tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
     parts = []
-    parts.append(f"Current date and time: {now.strftime('%A, %B %d, %Y at %I:%M %p')}")
 
     # Today's ARIA interactions
     today_requests = _get_today_requests()
@@ -374,14 +419,6 @@ async def gather_debrief_context() -> str:
         for e in tomorrow_events:
             time_str = f" at {e['time']}" if e.get('time') else ""
             parts.append(f"  - {e['title']}{time_str}")
-
-    # Active reminders
-    reminders = calendar_store.get_reminders()
-    if reminders:
-        parts.append("\nActive reminders carried forward:")
-        for r in reminders:
-            due = f" (due: {r['due']})" if r.get('due') else ""
-            parts.append(f"  - {r['text']}{due}")
 
     # Specialist log activity today
     vehicle_today = [v for v in vehicle_store.get_entries()
@@ -452,14 +489,17 @@ async def gather_debrief_context() -> str:
 
 
 async def gather_briefing_context() -> str:
-    """Gather all context data for a morning briefing."""
+    """Gather all context data for a morning briefing.
+
+    Note: datetime, reminders, location, and battery are in Tier 1
+    (gather_always_context), prepended by _get_context_for_text().
+    """
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
     tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
     week_end = (now + timedelta(days=7)).strftime("%Y-%m-%d")
 
     parts = []
-    parts.append(f"Current date and time: {now.strftime('%A, %B %d, %Y at %I:%M %p')}")
 
     # Weather
     try:
@@ -508,14 +548,6 @@ async def gather_briefing_context() -> str:
         for e in upcoming:
             parts.append(f"  - [id={e['id']}] {e['date']}: {e['title']}")
 
-    # Reminders
-    reminders = calendar_store.get_reminders()
-    if reminders:
-        parts.append("\nActive reminders:")
-        for r in reminders:
-            due = f" (due: {r['due']})" if r.get('due') else ""
-            parts.append(f"  - [id={r['id']}] {r['text']}{due}")
-
     # News digest
     try:
         digest = await news.get_news_digest(max_per_feed=3)
@@ -562,14 +594,6 @@ async def gather_briefing_context() -> str:
     fitbit_trend = fitbit_store.get_trend(days=7)
     if fitbit_trend:
         parts.append(f"\n{fitbit_trend}")
-
-    # Location — latest known position
-    loc = location_store.get_latest()
-    if loc:
-        loc_name = loc.get("location", f"{loc['lat']:.4f}, {loc['lon']:.4f}")
-        parts.append(f"\nLast known location: {loc_name} (as of {loc['timestamp'][11:16]})")
-        if loc.get("battery_pct") is not None:
-            parts.append(f"  Phone battery: {loc['battery_pct']}%")
 
     # Legal — upcoming dates only (don't surface case details unprompted)
     legal_upcoming = legal_store.get_upcoming_dates()

@@ -57,11 +57,11 @@ class TestTimerTomorrowLogic:
 
 class TestLongInputs:
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
     @patch("context.gather_health_context", return_value="")
     @patch("context.calendar_store")
-    async def test_very_long_query(self, mock_cal, mock_hc):
+    async def test_very_long_query(self, mock_cal, mock_hc, mock_always):
         mock_cal.get_events.return_value = []
-        mock_cal.get_reminders.return_value = []
 
         long_text = "x" * 10000
         # Should not crash
@@ -109,11 +109,11 @@ class TestEmptyAndWhitespace:
         assert result.strip() == ""
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
     @patch("context.gather_health_context", return_value="")
     @patch("context.calendar_store")
-    async def test_whitespace_query(self, mock_cal, mock_hc):
+    async def test_whitespace_query(self, mock_cal, mock_hc, mock_always):
         mock_cal.get_events.return_value = []
-        mock_cal.get_reminders.return_value = []
         ctx = await context.build_request_context("   ")
         assert isinstance(ctx, str)
 
@@ -220,21 +220,23 @@ class TestBriefingEdgeCases:
     @patch("context.gather_briefing_context", new_callable=AsyncMock,
            return_value="Briefing")
     @patch("context._briefing_delivered_today", return_value=False)
-    async def test_case_insensitive_trigger(self, mock_delivered, mock_brief):
+    @patch("context.gather_always_context", return_value="Tier 1")
+    async def test_case_insensitive_trigger(self, mock_always, mock_delivered, mock_brief):
         ctx = await context._get_context_for_text("GOOD MORNING!")
         # text_lower check should catch this
-        assert ctx == "Briefing"
+        assert "Briefing" in ctx
 
     @pytest.mark.asyncio
     @patch("context.gather_briefing_context", new_callable=AsyncMock,
            return_value="Briefing")
     @patch("context._briefing_delivered_today", return_value=True)
-    async def test_repeat_phrases(self, mock_delivered, mock_brief):
+    @patch("context.gather_always_context", return_value="Tier 1")
+    async def test_repeat_phrases(self, mock_always, mock_delivered, mock_brief):
         """Explicit repeat request should bypass the 'already delivered' check."""
         for phrase in ["Good morning again", "Morning briefing repeat",
                        "Briefing one more time"]:
             ctx = await context._get_context_for_text(phrase)
-            assert ctx == "Briefing"
+            assert "Briefing" in ctx
 
 
 class TestClaimDetectionEdgeCases:

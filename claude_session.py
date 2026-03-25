@@ -82,12 +82,11 @@ class ClaudeSession:
         async with self._lock:
             await self._ensure_alive()
 
-            # Build prompt with fresh datetime
-            now = datetime.now()
-            parts = [f"Current date and time: {now.strftime('%A, %B %d, %Y at %I:%M %p')}"]
+            # Build prompt — datetime is now in gather_always_context() (Tier 1)
+            parts = []
             if extra_context:
-                parts.append(f"\n[CONTEXT]\n{extra_context}\n[/CONTEXT]")
-            parts.append(f"\nUser says: {user_text}")
+                parts.append(f"[CONTEXT]\n{extra_context}\n[/CONTEXT]")
+            parts.append(f"User says: {user_text}")
             prompt = "\n".join(parts)
 
             # Build message content — text-only or multimodal

@@ -26,8 +26,8 @@ import sms
 from actions import process_actions
 from claude_session import ClaudeSession, _claude_session, ask_claude
 from context import (build_request_context, _get_context_for_text,
-                     gather_briefing_context, gather_debrief_context,
-                     gather_health_context)
+                     gather_always_context, gather_briefing_context,
+                     gather_debrief_context, gather_health_context)
 from tts import _generate_tts, _tts_sync, _get_kokoro
 import tts as _tts_module
 
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.10", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.13", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}

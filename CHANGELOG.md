@@ -6,6 +6,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.13] — 2026-03-25
+
+### Added
+
+- **Tier 1 always-inject context** — New `gather_always_context()` function injects datetime, active timers, active reminders, location/battery, and exercise state on every call regardless of query keywords. Users no longer need to say "timer" to see their timers or "where am I" to see their location.
+- **Context size logging** — `_get_context_for_text()` now logs context size and path (briefing/debrief/regular) at INFO level for observability.
+
+### Changed
+
+- **Datetime ownership consolidated** — `gather_always_context()` is now the single source of datetime injection. Removed from `claude_session.py` (was duplicated on every query), `gather_briefing_context()`, and `gather_debrief_context()`.
+- **Reminders moved to Tier 1** — Active reminders are now always-injected instead of being separately included in briefing/debrief/regular paths. Eliminates duplication.
+- **Location moved to Tier 1** — Basic location and battery always present. Movement history (4-hour trail) remains keyword-gated.
+- **Timers moved to Tier 1** — Active timers always present, no longer require timer keywords.
+- **Version** bumped to 0.4.13 (also fixes stale 0.4.10 in daemon.py)
+
+---
+
 ## [0.4.12] — 2026-03-25
 
 ### Added

@@ -122,7 +122,7 @@ class TestBriefingContextIntegration:
         briefing = await context.gather_briefing_context()
         assert "Doctor" in briefing
         assert "Meeting" in briefing  # tomorrow's prep
-        assert "Buy groceries" in briefing
+        # Note: "Buy groceries" is now in Tier 1 (gather_always_context), not briefing
         assert "Sunny" in briefing
         assert "inspection" in briefing or "Annual check" in briefing
 

@@ -4,7 +4,8 @@ SAFETY: All store lookups and external APIs are mocked.
 """
 
 from datetime import datetime, date, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock, AsyncMock, call
+import logging
 
 import pytest
 
@@ -13,13 +14,161 @@ import system_prompt
 import daemon
 
 
+# --- Helper: mock all Tier 1 stores to empty (used by tests that don't care about Tier 1) ---
+def _patch_tier1_empty():
+    """Return a dict of patches that make gather_always_context() return just datetime."""
+    return {
+        "context.timer_store.get_active": MagicMock(return_value=[]),
+        "context.calendar_store.get_reminders": MagicMock(return_value=[]),
+        "context.location_store.get_latest": MagicMock(return_value=None),
+        "context.fitbit_store.get_exercise_state": MagicMock(return_value=None),
+    }
+
+
+class TestGatherAlwaysContext:
+    """Test the Tier 1 always-inject context function."""
+
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_always_returns_datetime(self, mock_ts, mock_cal, mock_loc, mock_fs):
+        mock_ts.get_active.return_value = []
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = None
+
+        ctx = context.gather_always_context()
+        assert "Current date and time:" in ctx
+        # Should contain day of week and year
+        now = datetime.now()
+        assert str(now.year) in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_includes_active_timers(self, mock_ts, mock_cal, mock_loc, mock_fs):
+        mock_ts.get_active.return_value = [
+            {"id": "t1", "label": "Laundry", "fire_at": "2026-03-20T15:30:00",
+             "delivery": "sms"},
+        ]
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = None
+
+        ctx = context.gather_always_context()
+        assert "Laundry" in ctx
+        assert "15:30" in ctx
+        assert "t1" in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_includes_reminders(self, mock_ts, mock_cal, mock_loc, mock_fs):
+        mock_ts.get_active.return_value = []
+        mock_cal.get_reminders.return_value = [
+            {"id": "r1", "text": "Buy milk", "due": "2026-03-25"},
+        ]
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = None
+
+        ctx = context.gather_always_context()
+        assert "Buy milk" in ctx
+        assert "r1" in ctx
+        assert "2026-03-25" in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_includes_location_and_battery(self, mock_ts, mock_cal, mock_loc, mock_fs):
+        mock_ts.get_active.return_value = []
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = {
+            "lat": 42.58, "lon": -88.43,
+            "location": "Rapids Trail, Waukesha",
+            "timestamp": "2026-03-20T14:00:00",
+            "battery_pct": 85,
+        }
+        mock_fs.get_exercise_state.return_value = None
+
+        ctx = context.gather_always_context()
+        assert "Rapids Trail" in ctx
+        assert "85%" in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_includes_exercise_state(self, mock_ts, mock_cal, mock_loc, mock_fs):
+        mock_ts.get_active.return_value = []
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = {"active": True}
+        mock_fs.get_exercise_coaching_context.return_value = "EXERCISE MODE ACTIVE: stationary_bike"
+
+        ctx = context.gather_always_context()
+        assert "EXERCISE MODE ACTIVE" in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_no_exercise_when_inactive(self, mock_ts, mock_cal, mock_loc, mock_fs):
+        mock_ts.get_active.return_value = []
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = None
+
+        ctx = context.gather_always_context()
+        assert "EXERCISE" not in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_compact_when_all_empty(self, mock_ts, mock_cal, mock_loc, mock_fs):
+        mock_ts.get_active.return_value = []
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = None
+
+        ctx = context.gather_always_context()
+        # Only datetime line
+        lines = [l for l in ctx.strip().split("\n") if l.strip()]
+        assert len(lines) == 1
+        assert "Current date and time:" in lines[0]
+
+    @patch("context.fitbit_store")
+    @patch("context.location_store")
+    @patch("context.calendar_store")
+    @patch("context.timer_store")
+    def test_multiple_timers(self, mock_ts, mock_cal, mock_loc, mock_fs):
+        mock_ts.get_active.return_value = [
+            {"id": "t1", "label": "Laundry", "fire_at": "2026-03-20T15:30:00",
+             "delivery": "sms"},
+            {"id": "t2", "label": "Oven", "fire_at": "2026-03-20T16:00:00",
+             "delivery": "voice"},
+        ]
+        mock_cal.get_reminders.return_value = []
+        mock_loc.get_latest.return_value = None
+        mock_fs.get_exercise_state.return_value = None
+
+        ctx = context.gather_always_context()
+        assert "Laundry" in ctx
+        assert "Oven" in ctx
+
+
 class TestBuildRequestContext:
     """Test keyword-triggered context injection."""
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
     @patch("context.gather_health_context", return_value="")
     @patch("context.weather")
-    async def test_weather_keywords(self, mock_weather, mock_hc):
+    async def test_weather_keywords(self, mock_weather, mock_hc, mock_always):
         mock_weather.get_current_conditions = AsyncMock(return_value={
             "description": "Sunny", "temperature_f": 55,
             "humidity": 40, "wind_mph": 10,
@@ -34,10 +183,10 @@ class TestBuildRequestContext:
             assert "55°F" in ctx or "Sunny" in ctx
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
     @patch("context.calendar_store")
-    async def test_calendar_keywords_expand_range(self, mock_cal):
+    async def test_calendar_keywords_expand_range(self, mock_cal, mock_always):
         mock_cal.get_events.return_value = []
-        mock_cal.get_reminders.return_value = []
 
         await context.build_request_context("What's my schedule this week?")
         # Should query full week, not just today
@@ -51,10 +200,10 @@ class TestBuildRequestContext:
         assert (end_date - start_date).days == 7
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
     @patch("context.calendar_store")
-    async def test_default_calendar_today_only(self, mock_cal):
+    async def test_default_calendar_today_only(self, mock_cal, mock_always):
         mock_cal.get_events.return_value = []
-        mock_cal.get_reminders.return_value = []
 
         await context.build_request_context("Hello how are you?")
         call_args = mock_cal.get_events.call_args
@@ -63,8 +212,9 @@ class TestBuildRequestContext:
         assert start == end  # today only
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
     @patch("context.vehicle_store")
-    async def test_vehicle_keywords(self, mock_vs):
+    async def test_vehicle_keywords(self, mock_vs, mock_always):
         mock_vs.get_entries.return_value = [
             {"id": "v1", "date": "2026-03-15", "event_type": "oil_change",
              "description": "Synthetic", "mileage": 145000},
@@ -73,22 +223,21 @@ class TestBuildRequestContext:
 
         with patch("context.calendar_store") as mock_cal:
             mock_cal.get_events.return_value = []
-            mock_cal.get_reminders.return_value = []
             ctx = await context.build_request_context("When was my last xterra oil change?")
 
         assert "oil_change" in ctx
         assert "145000" in ctx
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
     @patch("context.gather_health_context")
-    async def test_health_keywords(self, mock_hc):
+    async def test_health_keywords(self, mock_hc, mock_always):
         mock_hc.return_value = "Health data here"
 
         with patch("context.calendar_store") as mock_cal, \
              patch("context.config") as mock_cfg, \
              patch("context.fitbit_store") as mock_fs:
             mock_cal.get_events.return_value = []
-            mock_cal.get_reminders.return_value = []
             mock_cfg.DATA_DIR = MagicMock()
             mock_cfg.DATA_DIR.__truediv__ = MagicMock(
                 return_value=MagicMock(exists=MagicMock(return_value=False))
@@ -103,43 +252,60 @@ class TestBuildRequestContext:
         assert "Health data here" in ctx
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="datetime here")
     @patch("context.timer_store")
-    async def test_timer_keywords(self, mock_ts):
-        mock_ts.get_active.return_value = [
-            {"id": "t1", "label": "Laundry", "fire_at": "2026-03-20T15:30:00",
-             "delivery": "sms"},
-        ]
+    async def test_timers_always_in_context(self, mock_ts, mock_always):
+        """Timers are now Tier 1 — present even without timer keywords."""
+        mock_always.return_value = "Active timers: [id=t1] Laundry — fires at 15:30 (sms)"
 
         with patch("context.calendar_store") as mock_cal:
             mock_cal.get_events.return_value = []
-            mock_cal.get_reminders.return_value = []
-            ctx = await context.build_request_context("Set a timer for 30 minutes")
+            # Query with NO timer keywords
+            ctx = await context.build_request_context("Hello how are you?")
 
         assert "Laundry" in ctx
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context")
     @patch("context.location_store")
-    async def test_location_keywords(self, mock_loc):
-        mock_loc.get_latest.return_value = {
-            "lat": 42.58, "lon": -88.43,
-            "location": "Rapids Trail, Waukesha",
-            "timestamp": "2026-03-20T14:00:00",
-            "battery_pct": 85,
-        }
+    async def test_location_always_in_context(self, mock_loc, mock_always):
+        """Basic location is now Tier 1 — present even without location keywords."""
+        mock_always.return_value = "Location: Rapids Trail, Waukesha (as of 14:00)\nPhone battery: 85%"
         mock_loc.get_history.return_value = []
 
         with patch("context.calendar_store") as mock_cal:
             mock_cal.get_events.return_value = []
-            mock_cal.get_reminders.return_value = []
-            ctx = await context.build_request_context("Where am I?")
+            ctx = await context.build_request_context("Hello how are you?")
 
         assert "Rapids Trail" in ctx
         assert "85%" in ctx
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
+    @patch("context.location_store")
+    async def test_location_history_keyword_gated(self, mock_loc, mock_always):
+        """Movement trail requires location keywords, basic location is Tier 1."""
+        mock_loc.get_history.return_value = [
+            {"timestamp": "2026-03-20T13:00:00", "location": "Home"},
+            {"timestamp": "2026-03-20T14:00:00", "location": "Work"},
+        ]
+
+        with patch("context.calendar_store") as mock_cal:
+            mock_cal.get_events.return_value = []
+
+            # Without location keywords — no movement trail
+            ctx = await context.build_request_context("Hello there")
+            assert "Recent movement" not in ctx
+
+            # With location keywords — movement trail present
+            ctx = await context.build_request_context("Where am I?")
+            assert "Recent movement" in ctx
+
+    @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
     @patch("context.gather_health_context", return_value="")
     @patch("context.legal_store")
-    async def test_legal_keywords(self, mock_ls, mock_hc):
+    async def test_legal_keywords(self, mock_ls, mock_hc, mock_always):
         mock_ls.get_entries.return_value = [
             {"id": "l1", "date": "2026-03-18", "entry_type": "court_date",
              "description": "Hearing"},
@@ -148,33 +314,32 @@ class TestBuildRequestContext:
 
         with patch("context.calendar_store") as mock_cal:
             mock_cal.get_events.return_value = []
-            mock_cal.get_reminders.return_value = []
             ctx = await context.build_request_context("What's my next court date?")
 
         assert "court_date" in ctx
 
     @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
     @patch("context.projects")
-    async def test_project_keywords(self, mock_proj):
+    async def test_project_keywords(self, mock_proj, mock_always):
         mock_proj.list_projects.return_value = ["aria"]
         mock_proj.find_project.return_value = ("aria", "# ARIA status")
 
         with patch("context.calendar_store") as mock_cal:
             mock_cal.get_events.return_value = []
-            mock_cal.get_reminders.return_value = []
             ctx = await context.build_request_context("Project status for aria")
 
         assert "ARIA status" in ctx
 
     @pytest.mark.asyncio
-    async def test_is_image_triggers_health_context(self):
+    @patch("context.gather_always_context", return_value="")
+    async def test_is_image_triggers_health_context(self, mock_always):
         with patch("context.gather_health_context", return_value="image health ctx"), \
              patch("context.calendar_store") as mock_cal, \
              patch("context.config") as mock_cfg, \
              patch("context.fitbit_store") as mock_fs, \
              patch("context.health_store") as mock_hs:
             mock_cal.get_events.return_value = []
-            mock_cal.get_reminders.return_value = []
             mock_cfg.DATA_DIR = MagicMock()
             mock_cfg.DATA_DIR.__truediv__ = MagicMock(
                 return_value=MagicMock(exists=MagicMock(return_value=False))
@@ -195,12 +360,15 @@ class TestGetContextForText:
     @pytest.mark.asyncio
     @patch("context.gather_briefing_context", new_callable=AsyncMock)
     @patch("context._briefing_delivered_today")
-    async def test_morning_briefing_trigger(self, mock_delivered, mock_brief):
+    @patch("context.gather_always_context")
+    async def test_morning_briefing_trigger(self, mock_always, mock_delivered, mock_brief):
+        mock_always.return_value = "Tier 1 datetime"
         mock_delivered.return_value = False
         mock_brief.return_value = "Briefing context"
 
         ctx = await context._get_context_for_text("Good morning!")
-        assert ctx == "Briefing context"
+        assert "Tier 1 datetime" in ctx
+        assert "Briefing context" in ctx
 
     @pytest.mark.asyncio
     @patch("context.build_request_context", new_callable=AsyncMock)
@@ -215,22 +383,54 @@ class TestGetContextForText:
     @pytest.mark.asyncio
     @patch("context.gather_briefing_context", new_callable=AsyncMock)
     @patch("context._briefing_delivered_today")
-    async def test_briefing_repeat_request(self, mock_delivered, mock_brief):
+    @patch("context.gather_always_context")
+    async def test_briefing_repeat_request(self, mock_always, mock_delivered, mock_brief):
+        mock_always.return_value = "Tier 1"
         mock_delivered.return_value = True
         mock_brief.return_value = "Briefing again"
 
         ctx = await context._get_context_for_text("Good morning again")
-        assert ctx == "Briefing again"
+        assert "Briefing again" in ctx
 
     @pytest.mark.asyncio
     @patch("context.gather_debrief_context", new_callable=AsyncMock)
-    async def test_debrief_trigger(self, mock_debrief):
+    @patch("context.gather_always_context")
+    async def test_debrief_trigger(self, mock_always, mock_debrief):
+        mock_always.return_value = "Tier 1 datetime"
         mock_debrief.return_value = "Debrief context"
 
         for phrase in ["Good night", "End my day", "Nightly debrief",
                        "Evening debrief", "Wrap up my day"]:
             ctx = await context._get_context_for_text(phrase)
-            assert ctx == "Debrief context"
+            assert "Tier 1 datetime" in ctx
+            assert "Debrief context" in ctx
+
+    @pytest.mark.asyncio
+    @patch("context.build_request_context", new_callable=AsyncMock)
+    async def test_context_size_logged(self, mock_build, caplog):
+        mock_build.return_value = "x" * 500
+
+        with caplog.at_level(logging.INFO, logger="aria"):
+            await context._get_context_for_text("Hello")
+
+        assert any("Context:" in r.message and "path=regular" in r.message
+                    for r in caplog.records)
+
+    @pytest.mark.asyncio
+    @patch("context.gather_briefing_context", new_callable=AsyncMock)
+    @patch("context._briefing_delivered_today")
+    @patch("context.gather_always_context")
+    async def test_briefing_context_size_logged(self, mock_always, mock_delivered,
+                                                  mock_brief, caplog):
+        mock_always.return_value = "datetime"
+        mock_delivered.return_value = False
+        mock_brief.return_value = "briefing data"
+
+        with caplog.at_level(logging.INFO, logger="aria"):
+            await context._get_context_for_text("Good morning!")
+
+        assert any("Context:" in r.message and "path=briefing" in r.message
+                    for r in caplog.records)
 
 
 class TestBriefingDeliveredToday:

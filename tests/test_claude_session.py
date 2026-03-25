@@ -200,6 +200,8 @@ class TestClaudeSessionQuery:
         content = str(msgs[0]["message"]["content"])
         assert "Weather: Sunny 55F" in content
         assert "[CONTEXT]" in content
+        # Datetime is now in gather_always_context (Tier 1), not injected by ClaudeSession
+        assert "Current date and time:" not in content.split("[CONTEXT]")[0]
 
     @pytest.mark.asyncio
     async def test_file_blocks_multimodal(self):
