@@ -353,6 +353,34 @@ class TestBuildRequestContext:
             )
         assert "image health ctx" in ctx
 
+    @pytest.mark.asyncio
+    @patch("context.gather_always_context", return_value="")
+    @patch("context.gather_health_context", return_value="today health data")
+    async def test_14_day_dump_removed(self, mock_hc, mock_always):
+        """The raw 14-day health entry dump was removed in v0.4.14."""
+        with patch("context.calendar_store") as mock_cal, \
+             patch("context.config") as mock_cfg, \
+             patch("context.fitbit_store") as mock_fs, \
+             patch("context.health_store") as mock_hs:
+            mock_cal.get_events.return_value = []
+            mock_cfg.DATA_DIR = MagicMock()
+            mock_cfg.DATA_DIR.__truediv__ = MagicMock(
+                return_value=MagicMock(exists=MagicMock(return_value=False))
+            )
+            mock_cfg.DIET_START_DATE = "2026-03-17"
+            mock_fs.get_trend.return_value = ""
+            mock_hs.get_entries.return_value = [
+                {"id": "h1", "date": "2026-03-10", "category": "pain",
+                 "description": "back pain", "severity": 5, "sleep_hours": None},
+            ]
+
+            ctx = await context.build_request_context("How's my health?")
+
+        assert "today health data" in ctx
+        assert "Health log (last 14 days)" not in ctx
+        # health_store.get_entries should NOT be called for 14-day dump
+        mock_hs.get_entries.assert_not_called()
+
 
 class TestGetContextForText:
     """Test the routing function that detects briefings/debriefs."""
@@ -452,6 +480,15 @@ class TestBriefingDeliveredToday:
 
 
 class TestGatherHealthContext:
+
+    def _mock_yesterday_empty(self, mock_ns, mock_fs):
+        """Set up mocks so yesterday returns no data."""
+        mock_ns.get_daily_totals.return_value = {"item_count": 0, "calories": 0,
+            "protein_g": 0, "dietary_fiber_g": 0}
+        mock_fs.get_sleep_summary.return_value = None
+        mock_fs.get_heart_summary.return_value = None
+        mock_fs.get_activity_summary.return_value = None
+
     @patch("context.fitbit_store")
     @patch("context.nutrition_store")
     @patch("context.health_store")
@@ -473,6 +510,7 @@ class TestGatherHealthContext:
 
         mock_fs.get_briefing_context.return_value = "Fitbit: 65 bpm"
         mock_fs.get_exercise_state.return_value = None
+        self._mock_yesterday_empty(mock_ns, mock_fs)
 
         ctx = context.gather_health_context()
         assert "Meals consumed today" in ctx
@@ -493,8 +531,200 @@ class TestGatherHealthContext:
         mock_ns.get_net_calories.return_value = {"consumed": 0, "burned": 0, "net": 0}
         mock_fs.get_briefing_context.return_value = ""
         mock_fs.get_exercise_state.return_value = None
+        self._mock_yesterday_empty(mock_ns, mock_fs)
 
         assert context.gather_health_context() == ""
+
+    @patch("context.fitbit_store")
+    @patch("context.nutrition_store")
+    @patch("context.health_store")
+    @patch("context.config")
+    def test_yesterday_nutrition_totals_present(self, mock_cfg, mock_hs, mock_ns, mock_fs):
+        mock_cfg.DIET_START_DATE = "2026-03-17"
+        mock_hs.get_entries.return_value = []
+        mock_hs.get_patterns.return_value = []
+        mock_ns.get_context.return_value = ""
+        mock_ns.get_items.return_value = []
+        mock_ns.get_net_calories.return_value = {"consumed": 0, "burned": 0, "net": 0}
+        mock_fs.get_briefing_context.return_value = ""
+        mock_fs.get_exercise_state.return_value = None
+
+        # Yesterday has nutrition data
+        mock_ns.get_daily_totals.return_value = {
+            "item_count": 3, "calories": 1847, "protein_g": 112, "dietary_fiber_g": 28,
+        }
+        mock_fs.get_sleep_summary.return_value = None
+        mock_fs.get_heart_summary.return_value = None
+        mock_fs.get_activity_summary.return_value = None
+
+        ctx = context.gather_health_context()
+        assert "Yesterday's nutrition:" in ctx
+        assert "1847" in ctx
+        assert "112" in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.nutrition_store")
+    @patch("context.health_store")
+    @patch("context.config")
+    def test_yesterday_nutrition_omitted_when_empty(self, mock_cfg, mock_hs, mock_ns, mock_fs):
+        mock_cfg.DIET_START_DATE = "2026-03-17"
+        mock_hs.get_entries.return_value = []
+        mock_hs.get_patterns.return_value = []
+        mock_ns.get_context.return_value = ""
+        mock_ns.get_items.return_value = []
+        mock_ns.get_net_calories.return_value = {"consumed": 0, "burned": 0, "net": 0}
+        mock_fs.get_briefing_context.return_value = ""
+        mock_fs.get_exercise_state.return_value = None
+        self._mock_yesterday_empty(mock_ns, mock_fs)
+
+        ctx = context.gather_health_context()
+        assert "Yesterday's" not in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.nutrition_store")
+    @patch("context.health_store")
+    @patch("context.config")
+    def test_yesterday_calorie_balance_present(self, mock_cfg, mock_hs, mock_ns, mock_fs):
+        mock_cfg.DIET_START_DATE = "2026-03-17"
+        mock_hs.get_entries.return_value = []
+        mock_hs.get_patterns.return_value = []
+        mock_ns.get_context.return_value = ""
+        mock_ns.get_items.return_value = []
+        mock_fs.get_briefing_context.return_value = ""
+        mock_fs.get_exercise_state.return_value = None
+        mock_fs.get_sleep_summary.return_value = None
+        mock_fs.get_heart_summary.return_value = None
+        mock_fs.get_activity_summary.return_value = None
+
+        # get_net_calories returns different values for today vs yesterday
+        def net_side_effect(day=None):
+            if day and day != datetime.now().strftime("%Y-%m-%d"):
+                return {"consumed": 1800, "burned": 2400, "net": -600}
+            return {"consumed": 0, "burned": 0, "net": 0}
+        mock_ns.get_net_calories.side_effect = net_side_effect
+        mock_ns.get_daily_totals.return_value = {"item_count": 0, "calories": 0,
+            "protein_g": 0, "dietary_fiber_g": 0}
+
+        ctx = context.gather_health_context()
+        assert "Yesterday's calorie balance:" in ctx
+        assert "1800" in ctx
+        assert "2400" in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.nutrition_store")
+    @patch("context.health_store")
+    @patch("context.config")
+    def test_yesterday_calorie_balance_omitted_no_burn(self, mock_cfg, mock_hs, mock_ns, mock_fs):
+        mock_cfg.DIET_START_DATE = "2026-03-17"
+        mock_hs.get_entries.return_value = []
+        mock_hs.get_patterns.return_value = []
+        mock_ns.get_context.return_value = ""
+        mock_ns.get_items.return_value = []
+        mock_ns.get_net_calories.return_value = {"consumed": 0, "burned": 0, "net": 0}
+        mock_fs.get_briefing_context.return_value = ""
+        mock_fs.get_exercise_state.return_value = None
+        self._mock_yesterday_empty(mock_ns, mock_fs)
+
+        ctx = context.gather_health_context()
+        assert "Yesterday's calorie balance" not in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.nutrition_store")
+    @patch("context.health_store")
+    @patch("context.config")
+    def test_yesterday_fitbit_compact(self, mock_cfg, mock_hs, mock_ns, mock_fs):
+        mock_cfg.DIET_START_DATE = "2026-03-17"
+        mock_hs.get_entries.return_value = []
+        mock_hs.get_patterns.return_value = []
+        mock_ns.get_context.return_value = ""
+        mock_ns.get_items.return_value = []
+        mock_ns.get_net_calories.return_value = {"consumed": 0, "burned": 0, "net": 0}
+        mock_fs.get_briefing_context.return_value = ""
+        mock_fs.get_exercise_state.return_value = None
+        mock_ns.get_daily_totals.return_value = {"item_count": 0, "calories": 0,
+            "protein_g": 0, "dietary_fiber_g": 0}
+
+        mock_fs.get_sleep_summary.return_value = {"duration_hours": 7.2}
+        mock_fs.get_heart_summary.return_value = {"resting_hr": 65}
+        mock_fs.get_activity_summary.return_value = {"steps": 8432}
+
+        ctx = context.gather_health_context()
+        assert "Yesterday's Fitbit:" in ctx
+        assert "Sleep 7.2h" in ctx
+        assert "65 bpm" in ctx
+        assert "8,432 steps" in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.nutrition_store")
+    @patch("context.health_store")
+    @patch("context.config")
+    def test_yesterday_fitbit_partial(self, mock_cfg, mock_hs, mock_ns, mock_fs):
+        """Only sleep data, no HR/activity — shows only sleep."""
+        mock_cfg.DIET_START_DATE = "2026-03-17"
+        mock_hs.get_entries.return_value = []
+        mock_hs.get_patterns.return_value = []
+        mock_ns.get_context.return_value = ""
+        mock_ns.get_items.return_value = []
+        mock_ns.get_net_calories.return_value = {"consumed": 0, "burned": 0, "net": 0}
+        mock_fs.get_briefing_context.return_value = ""
+        mock_fs.get_exercise_state.return_value = None
+        mock_ns.get_daily_totals.return_value = {"item_count": 0, "calories": 0,
+            "protein_g": 0, "dietary_fiber_g": 0}
+
+        mock_fs.get_sleep_summary.return_value = {"duration_hours": 6.5}
+        mock_fs.get_heart_summary.return_value = None
+        mock_fs.get_activity_summary.return_value = None
+
+        ctx = context.gather_health_context()
+        assert "Yesterday's Fitbit: Sleep 6.5h" in ctx
+        assert "bpm" not in ctx.split("Yesterday's Fitbit:")[1] if "Yesterday's Fitbit:" in ctx else True
+
+    @patch("context.fitbit_store")
+    @patch("context.nutrition_store")
+    @patch("context.health_store")
+    @patch("context.config")
+    def test_yesterday_fitbit_omitted_when_no_data(self, mock_cfg, mock_hs, mock_ns, mock_fs):
+        mock_cfg.DIET_START_DATE = "2026-03-17"
+        mock_hs.get_entries.return_value = []
+        mock_hs.get_patterns.return_value = []
+        mock_ns.get_context.return_value = ""
+        mock_ns.get_items.return_value = []
+        mock_ns.get_net_calories.return_value = {"consumed": 0, "burned": 0, "net": 0}
+        mock_fs.get_briefing_context.return_value = ""
+        mock_fs.get_exercise_state.return_value = None
+        self._mock_yesterday_empty(mock_ns, mock_fs)
+
+        ctx = context.gather_health_context()
+        assert "Yesterday's Fitbit" not in ctx
+
+    @patch("context.fitbit_store")
+    @patch("context.nutrition_store")
+    @patch("context.health_store")
+    @patch("context.config")
+    def test_today_data_unchanged(self, mock_cfg, mock_hs, mock_ns, mock_fs):
+        """Regression guard: all today sections still present after Step 2 changes."""
+        mock_cfg.DIET_START_DATE = "2026-03-17"
+        mock_hs.get_entries.return_value = [
+            {"date": datetime.now().strftime("%Y-%m-%d"),
+             "meal_type": "dinner", "description": "salmon"},
+        ]
+        mock_hs.get_patterns.return_value = ["fish meals: 2 days"]
+        mock_ns.get_context.return_value = "Nutrition today (3 items logged):"
+        mock_ns.get_items.return_value = [{"notes": ""}]
+        mock_ns.get_net_calories.return_value = {
+            "consumed": 1500, "burned": 2200, "net": -700,
+        }
+        mock_fs.get_briefing_context.return_value = "Fitbit health data:\n  - Resting heart rate: 64 bpm"
+        mock_fs.get_exercise_state.return_value = None
+        self._mock_yesterday_empty(mock_ns, mock_fs)
+
+        ctx = context.gather_health_context()
+        assert "Meals consumed today" in ctx
+        assert "salmon" in ctx
+        assert "Nutrition today" in ctx
+        assert "Calorie balance:" in ctx
+        assert "Health patterns (7d):" in ctx
+        assert "Diet day" in ctx
 
 
 class TestBuildFileContent:

@@ -6,6 +6,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.14] — 2026-03-25
+
+### Changed
+
+- **Health/nutrition context scoped to today+yesterday** — `gather_health_context()` now includes yesterday's nutrition totals, calorie balance, and Fitbit highlights (sleep, HR, steps) as compact one-liners. Provides day-over-day comparison without tool calls.
+- **14-day raw health dump removed** — The `health_store.get_entries(days=14)` block that dumped every raw health entry with descriptions, severity, and sleep hours has been deleted. This was the largest variable-size context payload (~2,000-5,000 chars). 7-day patterns (computed summaries) remain. Historical queries use tool calls.
+- **Version** bumped to 0.4.14
+
+### Fixed
+
+- **D4: Context window overflow on health conversations** — RESOLVED. The combination of Tier 1 deduplication (v0.4.13) and 14-day dump removal (v0.4.14) eliminates the "Prompt is too long" errors that occurred during extended health/nutrition conversations.
+
+---
+
 ## [0.4.13] — 2026-03-25
 
 ### Added

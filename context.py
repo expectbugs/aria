@@ -211,14 +211,9 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
         if pantry.exists():
             ctx_parts.append("Pantry (verified nutrition — use these values, do not estimate):\n" + pantry.read_text())
 
-        h_entries = health_store.get_entries(days=14)
-        if h_entries:
-            ctx_parts.append("Health log (last 14 days): " + "; ".join(
-                f"[id={h['id']}] {h['date']} {h['category']}: {h['description']}"
-                + (f" (severity {h['severity']}/10)" if h.get("severity") else "")
-                + (f" ({h['sleep_hours']}h sleep)" if h.get("sleep_hours") else "")
-                for h in h_entries
-            ))
+        # Note: 14-day raw health dump removed in v0.4.14 (D4 fix).
+        # Today + yesterday are in gather_health_context(). 7-day patterns
+        # are computed summaries. Historical queries use tool calls.
 
         fitbit_trend = fitbit_store.get_trend(days=7)
         if fitbit_trend:
@@ -356,6 +351,37 @@ def gather_health_context() -> str:
             f"Calorie balance: {net['consumed']} consumed - {net['burned']} burned "
             f"= {net['net']} net (target deficit: 500-1,000)"
         )
+
+    # Yesterday's summary (compact — totals only, no individual items)
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    yesterday_totals = nutrition_store.get_daily_totals(yesterday)
+    if yesterday_totals.get("item_count", 0) > 0:
+        parts.append(
+            f"Yesterday's nutrition: {yesterday_totals['calories']:.0f} cal, "
+            f"{yesterday_totals['protein_g']:.0f}g protein, "
+            f"{yesterday_totals['dietary_fiber_g']:.0f}g fiber"
+        )
+
+    yesterday_net = nutrition_store.get_net_calories(yesterday)
+    if yesterday_net["consumed"] > 0 and yesterday_net["burned"] > 0:
+        parts.append(
+            f"Yesterday's calorie balance: {yesterday_net['consumed']} consumed "
+            f"- {yesterday_net['burned']} burned = {yesterday_net['net']} net"
+        )
+
+    yesterday_fitbit_parts = []
+    yesterday_sleep = fitbit_store.get_sleep_summary(yesterday)
+    if yesterday_sleep:
+        yesterday_fitbit_parts.append(f"Sleep {yesterday_sleep['duration_hours']}h")
+    yesterday_hr = fitbit_store.get_heart_summary(yesterday)
+    if yesterday_hr and yesterday_hr.get("resting_hr"):
+        yesterday_fitbit_parts.append(f"Resting HR {yesterday_hr['resting_hr']} bpm")
+    yesterday_activity = fitbit_store.get_activity_summary(yesterday)
+    if yesterday_activity:
+        yesterday_fitbit_parts.append(f"{yesterday_activity['steps']:,} steps")
+    if yesterday_fitbit_parts:
+        parts.append("Yesterday's Fitbit: " + ", ".join(yesterday_fitbit_parts))
 
     # Health patterns (last 7 days)
     patterns = health_store.get_patterns(days=7)

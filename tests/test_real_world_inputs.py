@@ -155,9 +155,14 @@ class TestContextStressTest:
             mock_ns.get_context.return_value = ""
             mock_ns.get_items.return_value = []
             mock_ns.get_net_calories.return_value = {"consumed": 0, "burned": 0, "net": 0}
+            mock_ns.get_daily_totals.return_value = {"item_count": 0, "calories": 0,
+                "protein_g": 0, "dietary_fiber_g": 0}
             mock_fs.get_briefing_context.return_value = ""
             mock_fs.get_trend.return_value = ""
             mock_fs.get_exercise_state.return_value = None
+            mock_fs.get_sleep_summary.return_value = None
+            mock_fs.get_heart_summary.return_value = None
+            mock_fs.get_activity_summary.return_value = None
             mock_ts.get_active.return_value = []
             mock_loc.get_latest.return_value = None
             mock_ls.get_entries.return_value = []
