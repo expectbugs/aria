@@ -41,10 +41,10 @@ CLAUDE_TIMEOUT = 600            # seconds per CLI invocation (10 min — image g
 # --- Anthropic API (ARIA Primary) ---
 ANTHROPIC_API_KEY_FILE = DATA_DIR / "api_key.txt"  # or set ANTHROPIC_API_KEY directly
 ANTHROPIC_API_KEY = ""                              # fallback if file doesn't exist
-ARIA_MODEL = "claude-opus-4-20250514"             # model for primary ARIA
+ARIA_MODEL = "claude-opus-4-6-20250610"            # model for primary ARIA
 ARIA_MAX_TOKENS = 16384                             # max response tokens
 ARIA_HISTORY_TURNS = 25                             # rolling conversation history window
-ARIA_THINKING_BUDGET = 10000                        # extended thinking token budget (0 to disable)
+ARIA_THINKING_BUDGET = 64000                        # extended thinking token budget (0 to disable)
 
 # --- Auth ---
 AUTH_TOKEN = "your-token-here"  # Tasker sends this as Bearer token

@@ -125,7 +125,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **ARIA Primary switched to Anthropic API** — The conversational brain now uses the Anthropic Messages API directly instead of a Claude Code CLI subprocess. This is the critical swarm architecture milestone. All existing functionality preserved: ACTION blocks, briefing/debrief, nutrition tracking, delivery routing, file processing, SMS, voice pipeline.
 - **Rolling conversation history** — Each API call includes the last 25 turns from `request_log` with timestamps, so ARIA maintains conversational continuity and time awareness across stateless calls.
 - **Read-only tool calls for Tier 3** — Historical queries ("what did I eat March 19th?") now use Anthropic API tool calls instead of CLI shell access. Six tools defined for data store access.
-- **Extended thinking enabled** — Opus with 10,000-token thinking budget for deep reasoning on complex queries.
+- **Extended thinking enabled** — Opus with 64,000-token thinking budget for deep reasoning on complex queries.
 - **Conversation history timestamps** — Each historical turn is prefixed with its timestamp so ARIA can distinguish time gaps (e.g., last night's dinner vs this morning's query).
 - **Health check updated** — `/health` now reports `api: ok` instead of `claude: ok/down`.
 - **CLI subprocess removed from lifespan** — No longer spawned on startup or killed on shutdown. `claude_session.py` kept for Action ARIA (Step 6).

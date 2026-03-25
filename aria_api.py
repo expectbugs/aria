@@ -329,9 +329,9 @@ async def ask_aria(user_text: str, extra_context: str = "",
     """
     client = _get_client()
 
-    model = getattr(config, "ARIA_MODEL", "claude-opus-4-20250514")
+    model = getattr(config, "ARIA_MODEL", "claude-opus-4-6-20250610")
     max_tokens = getattr(config, "ARIA_MAX_TOKENS", 16384)
-    thinking_budget = getattr(config, "ARIA_THINKING_BUDGET", 10000)
+    thinking_budget = getattr(config, "ARIA_THINKING_BUDGET", 64000)
 
     # Build system prompt with per-call context appended
     system_prompt = build_primary_prompt()
