@@ -79,9 +79,9 @@ def _render_sms_image(body: str, header: str = "ARIA") -> str:
 
     # Load fonts with fallback
     try:
-        font_header = ImageFont.truetype(_FONT_BOLD, 22)
-        font_time = ImageFont.truetype(_FONT_REGULAR, 13)
-        font_body = ImageFont.truetype(_FONT_REGULAR, 17)
+        font_header = ImageFont.truetype(_FONT_BOLD, 26)
+        font_time = ImageFont.truetype(_FONT_REGULAR, 15)
+        font_body = ImageFont.truetype(_FONT_REGULAR, 20)
     except OSError:
         log.warning("DejaVu fonts not found, using default")
         font_header = ImageFont.load_default()
@@ -106,8 +106,8 @@ def _render_sms_image(body: str, header: str = "ARIA") -> str:
         wrapped_lines = [""]
 
     # Calculate dimensions
-    body_line_height = 22
-    header_block = 70  # header + timestamp + separator + spacing
+    body_line_height = 26
+    header_block = 80  # header + timestamp + separator + spacing
     body_height = len(wrapped_lines) * body_line_height
     total_height = PADDING + header_block + body_height + PADDING
 
@@ -118,11 +118,11 @@ def _render_sms_image(body: str, header: str = "ARIA") -> str:
     y = PADDING
     # Header
     draw.text((PADDING, y), header, font=font_header, fill=HEADER_COLOR)
-    y += 28
+    y += 34
     # Timestamp
     timestamp = datetime.now().strftime("%I:%M %p \u00b7 %b %d, %Y")
     draw.text((PADDING, y), timestamp, font=font_time, fill=TIME_COLOR)
-    y += 22
+    y += 24
     # Separator
     draw.line([(PADDING, y), (WIDTH - PADDING, y)], fill=LINE_COLOR, width=1)
     y += 20
