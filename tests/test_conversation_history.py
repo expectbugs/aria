@@ -13,7 +13,15 @@ import conversation_history
 class TestGetRecentTurns:
 
     def _mock_rows(self, rows):
-        """Set up mock DB returning given rows (newest first, as SQL returns)."""
+        """Set up mock DB returning given rows (newest first, as SQL returns).
+
+        Each row should have 'timestamp', 'input', 'response'.
+        If timestamp is omitted, a default is used.
+        """
+        from datetime import datetime
+        for r in rows:
+            if "timestamp" not in r:
+                r["timestamp"] = datetime(2026, 3, 25, 14, 0, 0)
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchall.return_value = rows
         patcher = patch("conversation_history.db.get_conn")
@@ -23,19 +31,21 @@ class TestGetRecentTurns:
         return patcher
 
     def test_basic_history(self):
+        from datetime import datetime
         # Newest first (as SQL ORDER BY DESC returns)
         rows = [
-            {"input": "How are you?", "response": "I'm great!"},
-            {"input": "Hello", "response": "Hi there!"},
+            {"timestamp": datetime(2026, 3, 25, 14, 5), "input": "How are you?", "response": "I'm great!"},
+            {"timestamp": datetime(2026, 3, 25, 14, 0), "input": "Hello", "response": "Hi there!"},
         ]
         p = self._mock_rows(rows)
         try:
             turns = conversation_history.get_recent_turns(n=10)
             # Should be chronological (oldest first)
             assert len(turns) == 4  # 2 user + 2 assistant
-            assert turns[0] == {"role": "user", "content": "Hello"}
+            assert "Hello" in turns[0]["content"]
+            assert "2026-03-25" in turns[0]["content"]  # timestamp prepended
             assert turns[1] == {"role": "assistant", "content": "Hi there!"}
-            assert turns[2] == {"role": "user", "content": "How are you?"}
+            assert "How are you?" in turns[2]["content"]
             assert turns[3] == {"role": "assistant", "content": "I'm great!"}
         finally:
             p.stop()
@@ -53,7 +63,8 @@ class TestGetRecentTurns:
         p = self._mock_rows(rows)
         try:
             turns = conversation_history.get_recent_turns()
-            assert turns[0]["content"] == "What time is it?"
+            assert "What time is it?" in turns[0]["content"]
+            assert "[voice]" not in turns[0]["content"]
         finally:
             p.stop()
 
@@ -62,7 +73,8 @@ class TestGetRecentTurns:
         p = self._mock_rows(rows)
         try:
             turns = conversation_history.get_recent_turns()
-            assert turns[0]["content"] == "Hey there"
+            assert "Hey there" in turns[0]["content"]
+            assert "[sms:" not in turns[0]["content"]
         finally:
             p.stop()
 
@@ -71,7 +83,20 @@ class TestGetRecentTurns:
         p = self._mock_rows(rows)
         try:
             turns = conversation_history.get_recent_turns()
-            assert turns[0]["content"] == "Here's a photo"
+            assert "Here's a photo" in turns[0]["content"]
+            assert "[file:" not in turns[0]["content"]
+        finally:
+            p.stop()
+
+    def test_timestamps_prepended(self):
+        """Each user message should have a timestamp so ARIA sees time gaps."""
+        from datetime import datetime
+        rows = [{"timestamp": datetime(2026, 3, 25, 21, 30), "input": "Good night", "response": "Sleep well!"}]
+        p = self._mock_rows(rows)
+        try:
+            turns = conversation_history.get_recent_turns()
+            assert "[2026-03-25T21:30:00]" in turns[0]["content"]
+            assert "Good night" in turns[0]["content"]
         finally:
             p.stop()
 
@@ -85,7 +110,7 @@ class TestGetRecentTurns:
             turns = conversation_history.get_recent_turns()
             # Only the real question, not the STT entry
             assert len(turns) == 2
-            assert turns[0]["content"] == "Real question"
+            assert "Real question" in turns[0]["content"]
         finally:
             p.stop()
 

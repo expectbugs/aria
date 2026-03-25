@@ -38,7 +38,7 @@ def get_recent_turns(n: int | None = None) -> list[dict]:
 
     with db.get_conn() as conn:
         rows = conn.execute(
-            """SELECT input, response FROM request_log
+            """SELECT timestamp, input, response FROM request_log
                WHERE status = 'ok'
                AND input IS NOT NULL AND input != ''
                AND response IS NOT NULL AND response != ''
@@ -68,6 +68,12 @@ def get_recent_turns(n: int | None = None) -> list[dict]:
         # Truncate very long responses
         if len(assistant_text) > MAX_CHARS_PER_TURN:
             assistant_text = assistant_text[:MAX_CHARS_PER_TURN] + "..."
+
+        # Prepend timestamp so ARIA can see time gaps between messages
+        ts = row.get("timestamp")
+        if ts:
+            ts = db.serialize_row({"t": ts})["t"]  # convert to naive local string
+            user_text = f"[{ts}] {user_text}"
 
         messages.append({"role": "user", "content": user_text})
         messages.append({"role": "assistant", "content": assistant_text})

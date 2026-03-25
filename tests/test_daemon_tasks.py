@@ -13,13 +13,8 @@ import config
 @pytest.fixture
 def client():
     with patch("daemon.db.get_pool"), patch("daemon.db.close"):
-        original_kill = daemon._claude_session._kill
-        daemon._claude_session._kill = AsyncMock()
-        try:
-            with TestClient(daemon.app) as c:
-                yield c
-        finally:
-            daemon._claude_session._kill = original_kill
+        with TestClient(daemon.app) as c:
+            yield c
 
 
 @pytest.fixture(autouse=True)

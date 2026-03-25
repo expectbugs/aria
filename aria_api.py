@@ -40,7 +40,10 @@ def _get_client() -> anthropic.Anthropic:
             api_key = getattr(config, "ANTHROPIC_API_KEY", "")
         if not api_key:
             raise RuntimeError("No Anthropic API key configured")
-        _client = anthropic.Anthropic(api_key=api_key)
+        _client = anthropic.Anthropic(
+            api_key=api_key,
+            timeout=600.0,  # 10 min — matches CLAUDE_TIMEOUT for extended thinking
+        )
         log.info("Anthropic API client initialized")
     return _client
 
@@ -319,7 +322,7 @@ async def ask_aria(user_text: str, extra_context: str = "",
     """
     client = _get_client()
 
-    model = getattr(config, "ARIA_MODEL", "claude-opus-4-0-20250115")
+    model = getattr(config, "ARIA_MODEL", "claude-opus-4-20250514")
     max_tokens = getattr(config, "ARIA_MAX_TOKENS", 16384)
     thinking_budget = getattr(config, "ARIA_THINKING_BUDGET", 10000)
 

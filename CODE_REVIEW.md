@@ -191,8 +191,8 @@ Currently, any message starting with "good morning" triggers a full morning brie
 
 ---
 
-#### D2. Single Claude session serializes all requests *(carried forward)*
-All channels (voice, SMS, file, nudge, exercise coaching) share one `ClaudeSession` with a single lock. A slow image generation request blocks everything for up to 10 minutes.
+#### D2. ~~Single Claude session serializes all requests~~ **RESOLVED v0.4.19**
+ARIA Primary switched to Anthropic API — stateless per call, no subprocess lock. Concurrent requests no longer blocked.
 
 #### D4. ~~Context builder can produce very large strings~~ **RESOLVED v0.4.13-v0.4.14**
 v0.4.13: Tier 1 always-inject, datetime consolidation, context size logging. v0.4.14: Removed 14-day raw health dump (~2-5K chars), scoped health context to today+yesterday+7d summaries. Context overflow on health conversations eliminated.

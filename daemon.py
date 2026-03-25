@@ -25,7 +25,8 @@ import redis_client
 import sms
 
 from actions import process_actions
-from claude_session import ClaudeSession, _claude_session, ask_claude
+from aria_api import ask_aria as ask_claude  # API-powered primary (drop-in replacement)
+from claude_session import ClaudeSession  # kept for Action ARIA (Step 6)
 from context import (build_request_context, _get_context_for_text,
                      gather_always_context, gather_briefing_context,
                      gather_debrief_context, gather_health_context)
@@ -46,14 +47,14 @@ async def lifespan(app: FastAPI):
     """Initialize and clean up resources."""
     db.get_pool()  # warm the connection pool
     redis_client.get_client()  # warm Redis connection (non-fatal if down)
-    await _claude_session._ensure_alive()  # warm Claude session
+    # ARIA Primary is now API-powered — no CLI subprocess to warm
+    # ClaudeSession kept for Action ARIA (Step 6)
     yield
-    await _claude_session._kill()
     redis_client.close()
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.18", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.19", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
@@ -156,8 +157,13 @@ async def health():
     except Exception:
         checks["database"] = "error"
 
-    # Claude CLI process
-    checks["claude"] = "ok" if _claude_session._is_alive() else "down"
+    # Anthropic API (ARIA Primary)
+    try:
+        from aria_api import _get_client
+        _get_client()  # validates key exists, creates client
+        checks["api"] = "ok"
+    except Exception as e:
+        checks["api"] = f"error: {e}"
 
     # TTS model
     checks["tts"] = "loaded" if _tts_module._kokoro is not None else "not loaded"
@@ -177,7 +183,7 @@ async def health():
         except Exception:
             checks["whisper"] = "error"
 
-    degraded = checks.get("database") != "ok" or checks.get("claude") != "ok"
+    degraded = checks.get("database") != "ok" or checks.get("api") != "ok"
 
     return {
         "status": "degraded" if degraded else "ok",

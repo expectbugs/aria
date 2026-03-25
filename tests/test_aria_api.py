@@ -46,7 +46,9 @@ class TestGetClient:
 
         with patch("aria_api.anthropic.Anthropic") as mock_anthropic:
             client = aria_api._get_client()
-            mock_anthropic.assert_called_once_with(api_key="sk-ant-test-key")
+            mock_anthropic.assert_called_once_with(
+                api_key="sk-ant-test-key", timeout=600.0
+            )
 
     @patch("aria_api.Path")
     def test_raises_without_key(self, mock_path):

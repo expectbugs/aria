@@ -23,14 +23,8 @@ def client():
     """TestClient with lifespan dependencies mocked."""
     with patch("daemon.db.get_pool"), \
          patch("daemon.db.close"):
-        # Mock _claude_session._kill which is called in lifespan shutdown
-        original_kill = daemon._claude_session._kill
-        daemon._claude_session._kill = AsyncMock()
-        try:
-            with TestClient(daemon.app) as c:
-                yield c
-        finally:
-            daemon._claude_session._kill = original_kill
+        with TestClient(daemon.app) as c:
+            yield c
 
 
 AUTH = {"Authorization": f"Bearer {config.AUTH_TOKEN}"}
@@ -63,7 +57,7 @@ class TestHealthEndpoint:
             resp = client.get("/health")
         checks = resp.json()["checks"]
         assert "database" in checks
-        assert "claude" in checks
+        assert "api" in checks
         assert "tts" in checks
 
 
