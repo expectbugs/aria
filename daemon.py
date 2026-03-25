@@ -366,7 +366,7 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         # Handle delivery routing
         if delivery == "sms":
             try:
-                sms.send_to_owner(response)
+                sms.send_long_to_owner(response)
             except Exception as se:
                 log.error("SMS delivery from file request failed: %s", se)
             # No voice output — user explicitly requested SMS
@@ -556,7 +556,7 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
         if delivery == "sms":
             # User asked for text delivery — send SMS, no voice output
             try:
-                sms.send_to_owner(response)
+                sms.send_long_to_owner(response)
             except Exception as se:
                 log.error("SMS delivery from voice request failed: %s", se)
 
@@ -641,7 +641,7 @@ async def ws_stt(websocket: WebSocket):
     try:
         while True:
             message = await asyncio.wait_for(
-                websocket.receive(), timeout=30.0
+                websocket.receive(), timeout=120.0
             )
 
             if "text" in message:
@@ -757,7 +757,7 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
         )
 
         # SMS channel note — affects RESPONSE FORMAT only, not available context
-        sms_note = f"This message arrived via SMS from {from_number}. Respond concisely — SMS has character limits. Do not use markdown or special formatting."
+        sms_note = f"This message arrived via SMS from {from_number}. Respond naturally — long responses are split into multiple messages automatically. Do not use markdown or special formatting."
         if extra_context:
             extra_context = sms_note + "\n" + extra_context
         else:
@@ -781,13 +781,11 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
             except Exception as ve:
                 log.error("Voice delivery failed, falling back to SMS: %s", ve)
                 if response.strip():
-                    sms.send_sms(from_number, response[:1597] + "..." if len(response) > 1600 else response)
+                    sms.send_long_sms(from_number, response)
         else:
             # Default SMS delivery
             if response.strip():
-                if len(response) > 1600:
-                    response = response[:1597] + "..."
-                sms.send_sms(from_number, response)
+                sms.send_long_sms(from_number, response)
 
         duration = time.time() - start
         log_request(f"[sms:{from_number}] {user_text}", "ok",

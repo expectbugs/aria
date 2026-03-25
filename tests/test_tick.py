@@ -341,7 +341,7 @@ class TestEvaluateNudges:
 
 class TestRunNudgeEvaluation:
     @patch("tick.save_cooldowns")
-    @patch("tick.sms.send_to_owner")
+    @patch("tick.sms.send_long_to_owner")
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
     @patch("tick.is_quiet_hours", return_value=False)

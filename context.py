@@ -1,6 +1,9 @@
 """ARIA context building — keyword-triggered data injection for requests."""
 
+import logging
 from datetime import datetime, date, timedelta
+
+log = logging.getLogger("aria")
 
 import config
 import db
@@ -78,9 +81,12 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
                 for p in forecast
             ))
             if alerts:
-                ctx_parts.append("Alerts: " + "; ".join(
-                    f"{a['event']}: {a['headline']}" for a in alerts
-                ))
+                alert_lines = []
+                for a in alerts:
+                    alert_lines.append(f"  {a['event']} ({a['severity']}): {a['headline']}")
+                    if a.get("description"):
+                        alert_lines.append(f"    {a['description']}")
+                ctx_parts.append("Alerts:\n" + "\n".join(alert_lines))
         except Exception as e:
             ctx_parts.append(f"Weather data unavailable: {e}")
 
@@ -471,6 +477,8 @@ async def gather_briefing_context() -> str:
             parts.append("\nWeather Alerts:")
             for a in alerts:
                 parts.append(f"  {a['severity']}: {a['headline']}")
+                if a.get("description"):
+                    parts.append(f"    Details: {a['description']}")
     except Exception as e:
         parts.append(f"\nWeather unavailable: {e}")
 
@@ -516,9 +524,10 @@ async def gather_briefing_context() -> str:
             for category, items in digest.items():
                 parts.append(f"  {category.title()}:")
                 for item in items:
-                    parts.append(f"    - {item['title']}")
-    except Exception:
-        pass  # News is non-critical
+                    summary = f" — {item['summary']}" if item.get("summary") else ""
+                    parts.append(f"    - {item['title']}{summary}")
+    except Exception as e:
+        log.warning("News digest unavailable: %s", e)
 
     # Vehicle maintenance — last 3 entries + latest per type
     vehicle_entries = vehicle_store.get_entries(limit=3)

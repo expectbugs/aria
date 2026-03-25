@@ -6,6 +6,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.12] — 2026-03-25
+
+### Added
+
+- **SMS message splitting** — Long SMS responses are now split at natural break points (paragraphs, sentences, words) into multiple messages instead of being silently truncated at 1600 chars. New `split_sms()`, `send_long_sms()`, `send_long_to_owner()` in `sms.py`. All SMS delivery paths (daemon, tick, exercise coaching) updated to use splitting.
+- **Weather alert descriptions in context** — `build_request_context()` and `gather_briefing_context()` now include full NWS alert descriptions with severity level, giving Claude detailed safety information for weather queries and morning briefings.
+- **News summaries in briefing context** — Morning briefings now include RSS feed summaries alongside headlines, giving Claude more context for news synthesis.
+- **14 new SMS tests** — `split_sms()` edge cases, `send_long_sms()` multi-part delivery, media URL handling.
+
+### Fixed
+
+- **SMS 300-char artificial limit** — System prompt told Aria to keep SMS responses under 300 chars. Removed — Aria now responds naturally via SMS with automatic message splitting.
+- **WebSocket STT idle timeout too aggressive** — Increased from 30s to 120s. Users can now pause for up to 2 minutes during real-time transcription without disconnection.
+- **Nudge composition timeout too short** — Increased from 30s to 300s (5 minutes), allowing Aria to do web research, image generation, or other complex work when composing nudges. Added overlap prevention by writing `last_nudge_check` before the call to prevent duplicate evaluations from concurrent tick instances.
+- **Reverse geocode failures invisible** — Nominatim geocoding errors were logged at DEBUG (invisible in production). Changed to WARNING.
+- **News context exception silent** — `gather_briefing_context()` news digest exception was bare `except: pass`. Now logs WARNING.
+
+### Changed
+
+- **System prompt: SMS guidance** — "keep responses under 300 chars" → "respond naturally, long responses split automatically"
+- **SMS context note** — "respond concisely, SMS has character limits" → "respond naturally, long responses split automatically"
+- **Version** bumped to 0.4.12
+
+---
+
 ## [0.4.11] — 2026-03-24
 
 ### Fixed

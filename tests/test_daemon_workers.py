@@ -83,7 +83,7 @@ class TestProcessFileTask:
 
     @pytest.mark.asyncio
     @patch("daemon.log_request")
-    @patch("daemon.sms.send_to_owner")
+    @patch("daemon.sms.send_long_to_owner")
     @patch("daemon.process_actions")
     @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="Result")
     @patch("daemon.build_request_context", new_callable=AsyncMock, return_value="")
@@ -143,7 +143,7 @@ class TestProcessVoiceTask:
 
     @pytest.mark.asyncio
     @patch("daemon.log_request")
-    @patch("daemon.sms.send_to_owner")
+    @patch("daemon.sms.send_long_to_owner")
     @patch("daemon.process_actions")
     @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="SMS response")
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
@@ -190,22 +190,22 @@ class TestProcessSms:
     @pytest.mark.asyncio
     @patch("daemon.db.get_conn")
     @patch("daemon.log_request")
-    @patch("daemon.sms.send_sms")
+    @patch("daemon.sms.send_long_sms")
     @patch("daemon.process_actions", return_value="I see the label.")
     @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="I see the label.")
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
-    async def test_long_response_truncated(self, mock_ctx, mock_claude,
-                                             mock_actions, mock_send,
-                                             mock_log, mock_conn):
+    async def test_long_response_split(self, mock_ctx, mock_claude,
+                                       mock_actions, mock_send_long,
+                                       mock_log, mock_conn):
         mc = MagicMock()
         mock_conn.return_value.__enter__ = MagicMock(return_value=mc)
         mock_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        mock_actions.return_value = "x" * 2000  # over 1600 char limit
+        long_response = "x" * 2000
+        mock_actions.return_value = long_response
 
         await daemon._process_sms("+15551234567", "test", [])
-        sent_text = mock_send.call_args[0][1]
-        assert len(sent_text) <= 1600
+        mock_send_long.assert_called_once_with("+15551234567", long_response)
 
     @pytest.mark.asyncio
     @patch("daemon.db.get_conn")

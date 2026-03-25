@@ -1,6 +1,7 @@
 """Twilio SMS/MMS integration for ARIA."""
 
 import logging
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -76,6 +77,79 @@ def send_sms(to: str, body: str, media_url: str | None = None) -> str:
         log.error("Failed to log outbound SMS: %s", e)
 
     return message.sid
+
+
+def split_sms(body: str, max_length: int = 1500) -> list[str]:
+    """Split a long message into chunks at natural break points.
+
+    Splitting priority: paragraph boundaries > sentence boundaries >
+    word boundaries > hard cut.
+    """
+    if not body:
+        return [""]
+    if len(body) <= max_length:
+        return [body]
+
+    chunks = []
+    remaining = body
+
+    while remaining:
+        if len(remaining) <= max_length:
+            chunks.append(remaining)
+            break
+
+        # Try paragraph boundary (double newline)
+        cut = _find_break(remaining, max_length, "\n\n")
+        if cut == -1:
+            # Try sentence boundary (. ! ? followed by space)
+            cut = _find_sentence_break(remaining, max_length)
+        if cut == -1:
+            # Try word boundary (space)
+            cut = _find_break(remaining, max_length, " ")
+        if cut == -1:
+            # Hard cut
+            cut = max_length
+
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+
+    return chunks
+
+
+def _find_break(text: str, max_length: int, delimiter: str) -> int:
+    """Find the last occurrence of delimiter within max_length."""
+    segment = text[:max_length]
+    pos = segment.rfind(delimiter)
+    if pos > 0:
+        return pos + len(delimiter)
+    return -1
+
+
+def _find_sentence_break(text: str, max_length: int) -> int:
+    """Find the last sentence boundary within max_length."""
+    segment = text[:max_length]
+    # Match . ! ? followed by a space (end of sentence)
+    matches = list(re.finditer(r'[.!?]\s', segment))
+    if matches:
+        last = matches[-1]
+        return last.end()
+    return -1
+
+
+def send_long_sms(to: str, body: str, media_url: str | None = None) -> list[str]:
+    """Send a potentially long SMS as multiple messages. Returns list of SIDs."""
+    parts = split_sms(body)
+    sids = []
+    for i, part in enumerate(parts):
+        # Only attach media to the first message
+        url = media_url if i == 0 else None
+        sids.append(send_sms(to, part, media_url=url))
+    return sids
+
+
+def send_long_to_owner(body: str, media_url: str | None = None) -> list[str]:
+    """Send a potentially long SMS/MMS to the owner's phone number."""
+    return send_long_sms(config.OWNER_PHONE_NUMBER, body, media_url)
 
 
 def send_mms(to: str, body: str, local_path: str) -> str:

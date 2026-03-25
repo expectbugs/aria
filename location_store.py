@@ -61,7 +61,7 @@ async def _reverse_geocode(lat: float, lon: float) -> str:
                 _geocode_cache[cache_key] = location_str
                 return location_str
     except Exception as e:
-        log.debug("Reverse geocode failed: %s", e)
+        log.warning("Reverse geocode failed: %s", e)
 
     return f"{lat:.4f}, {lon:.4f}"
 

@@ -434,12 +434,12 @@ def run_nudge_evaluation():
             f"{DAEMON_URL}/nudge",
             json={"triggers": descriptions},
             headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
-            timeout=30,
+            timeout=300,
         )
         if resp.status_code == 200:
             message = resp.json().get("message", "")
             if message:
-                sms.send_to_owner(message)
+                sms.send_long_to_owner(message)
                 log.info("Nudge sent: %s", descriptions)
 
                 # Update cooldowns for all triggered types
@@ -522,10 +522,10 @@ def send_exercise_nudge(triggers: list[str], context: str):
                         log.info("Exercise coaching (voice): %s", triggers)
                     else:
                         # Fall back to SMS if voice push fails
-                        sms.send_to_owner(message)
+                        sms.send_long_to_owner(message)
                         log.info("Exercise coaching (SMS fallback): %s", triggers)
                 else:
-                    sms.send_to_owner(message)
+                    sms.send_long_to_owner(message)
                     log.info("Exercise coaching (SMS, TTS failed): %s", triggers)
     except Exception as e:
         log.error("Exercise nudge failed: %s", e)
@@ -641,9 +641,12 @@ def main():
         cutoff = (datetime.now() - timedelta(minutes=config.NUDGE_INTERVAL_MIN)).isoformat()
 
         if not last_nudge or last_nudge < cutoff:
-            run_nudge_evaluation()
+            # Write timestamp BEFORE the call to prevent concurrent tick
+            # instances from triggering duplicate nudge evaluations
+            # (nudge composition can now take up to 300s)
             state["last_nudge_check"] = datetime.now().isoformat()
             save_state(state)
+            run_nudge_evaluation()
     except Exception:
         log.exception("Tick job 'nudge_evaluation' failed")
 

@@ -44,7 +44,7 @@ class TestVoiceTaskDeliveryRouting:
 
     @pytest.mark.asyncio
     @patch("daemon.log_request")
-    @patch("daemon.sms.send_to_owner")
+    @patch("daemon.sms.send_long_to_owner")
     @patch("daemon.ask_claude", new_callable=AsyncMock,
            return_value='Text answer <!--ACTION::{"action": "set_delivery", "method": "sms"}-->')
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
