@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.20] — 2026-03-25
+
+### Added
+
+- **Redis task queue** — `redis_client.py` extended with `push_task()`, `update_task_state()`, `complete_task()`. Uses Redis Streams for the queue, hashes for state, Pub/Sub for completion notifications.
+- **Task dispatcher** — New `task_dispatcher.py` runs as background asyncio task. Reads from `aria:task_queue` Redis Stream, routes by mode. Shell mode executes commands directly via subprocess. Agentic mode placeholder for Steps 5-6.
+- **`dispatch_action` ACTION block** — New handler in `actions.py`. ARIA Primary emits `dispatch_action` blocks to request shell commands or agentic tasks. Daemon extracts, generates task_id, pushes to Redis queue.
+- **Shell execution** — Shell mode tasks execute immediately via `asyncio.create_subprocess_shell` with configurable timeout. No Claude Code instance needed for simple commands.
+- **Version** bumped to 0.4.20
+
+---
+
 ## [0.4.19] — 2026-03-25
 
 ### Changed

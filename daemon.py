@@ -27,6 +27,7 @@ import sms
 from actions import process_actions
 from aria_api import ask_aria as ask_claude  # API-powered primary (drop-in replacement)
 from claude_session import ClaudeSession  # kept for Action ARIA (Step 6)
+import task_dispatcher
 from context import (build_request_context, _get_context_for_text,
                      gather_always_context, gather_briefing_context,
                      gather_debrief_context, gather_health_context)
@@ -47,14 +48,16 @@ async def lifespan(app: FastAPI):
     """Initialize and clean up resources."""
     db.get_pool()  # warm the connection pool
     redis_client.get_client()  # warm Redis connection (non-fatal if down)
+    task_dispatcher.start_dispatcher()  # background task queue consumer
     # ARIA Primary is now API-powered — no CLI subprocess to warm
     # ClaudeSession kept for Action ARIA (Step 6)
     yield
+    task_dispatcher.stop_dispatcher()
     redis_client.close()
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.19", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.20", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}

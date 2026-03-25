@@ -107,6 +107,96 @@ def get_active_tasks() -> list[dict]:
         return []
 
 
+def push_task(task: dict) -> str | None:
+    """Push a task to the Redis Stream queue. Returns task_id or None on failure.
+
+    The task dict should contain: task_id, mode, command/task, context, notify.
+    Also creates the task state hash and adds to active_tasks set.
+    """
+    client = get_client()
+    if client is None:
+        return None
+    try:
+        prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
+        task_id = task["task_id"]
+
+        # Create task state hash
+        client.hset(f"{prefix}task:{task_id}", mapping={
+            "status": "queued",
+            "progress": "0",
+            "description": task.get("task") or task.get("command", "unknown"),
+            "message": "",
+            "mode": task.get("mode", "shell"),
+            "command": task.get("command", ""),
+            "task_brief": task.get("task", ""),
+            "context": task.get("context", ""),
+            "notify": "1" if task.get("notify", True) else "0",
+            "created_at": __import__("datetime").datetime.now().isoformat(),
+        })
+
+        # Add to active tasks set
+        client.sadd(f"{prefix}active_tasks", task_id)
+
+        # Push to stream queue
+        client.xadd(f"{prefix}task_queue", {"task_id": task_id, "mode": task.get("mode", "shell")})
+
+        log.info("Task queued: %s (mode=%s)", task_id, task.get("mode"))
+        return task_id
+    except Exception as e:
+        log.error("Failed to push task to Redis: %s", e)
+        return None
+
+
+def update_task_state(task_id: str, **fields):
+    """Update fields in a task's Redis hash."""
+    client = get_client()
+    if client is None:
+        return
+    try:
+        prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
+        # Convert all values to strings for Redis
+        str_fields = {k: str(v) for k, v in fields.items()}
+        client.hset(f"{prefix}task:{task_id}", mapping=str_fields)
+    except Exception as e:
+        log.error("Failed to update task state %s: %s", task_id, e)
+
+
+def complete_task(task_id: str, result: str | None = None, error: str | None = None):
+    """Mark a task as completed, publish notification, remove from active set."""
+    client = get_client()
+    if client is None:
+        return
+    try:
+        prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
+        now = __import__("datetime").datetime.now().isoformat()
+
+        status = "error" if error else "completed"
+        updates = {
+            "status": status,
+            "progress": "100",
+            "completed_at": now,
+        }
+        if result:
+            updates["result"] = result
+        if error:
+            updates["error"] = error
+
+        client.hset(f"{prefix}task:{task_id}", mapping=updates)
+        client.srem(f"{prefix}active_tasks", task_id)
+
+        # Publish completion notification
+        import json
+        client.publish(f"{prefix}task_complete", json.dumps({
+            "task_id": task_id,
+            "status": status,
+            "result": result or error or "",
+        }))
+
+        log.info("Task %s: %s", status, task_id)
+    except Exception as e:
+        log.error("Failed to complete task %s: %s", task_id, e)
+
+
 def format_task_status(tasks: list[dict]) -> str:
     """Format active tasks into a compact context string.
 

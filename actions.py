@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import uuid
 from datetime import datetime, timedelta
 
 import calendar_store
@@ -12,6 +13,7 @@ import legal_store
 import timer_store
 import nutrition_store
 import fitbit_store
+import redis_client
 
 log = logging.getLogger("aria")
 
@@ -228,6 +230,23 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             elif act == "set_delivery":
                 if metadata is not None:
                     metadata["delivery"] = action.get("method", "default")
+            elif act == "dispatch_action":
+                task_id = str(uuid.uuid4())[:8]
+                task = {
+                    "task_id": task_id,
+                    "mode": action.get("mode", "shell"),
+                    "command": action.get("command", ""),
+                    "task": action.get("task", ""),
+                    "context": action.get("context", ""),
+                    "notify": action.get("notify", True),
+                }
+                pushed = redis_client.push_task(task)
+                if pushed:
+                    log.info("Dispatched task %s (mode=%s)", task_id, task["mode"])
+                    if metadata is not None:
+                        metadata["dispatched_task_id"] = task_id
+                else:
+                    failures.append("Failed to dispatch task — Redis unavailable")
             else:
                 log.warning("Unknown ACTION type ignored: %s", act)
         except Exception as e:
