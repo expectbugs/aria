@@ -6,6 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.18] — 2026-03-25
+
+### Changed
+
+- **System prompt split into three** — `system_prompt.py` now has `build_primary_prompt()` (conversational brain, dispatch-aware, no shell tools), `build_action_prompt()` (persistent worker, full shell/tool access, progress reporting), and `build_amnesia_prompt()` (minimal stateless worker). `build_system_prompt()` kept as alias for backward compatibility.
+- **Primary prompt gains dispatch_action** — New ACTION block type for dispatching shell commands and agentic tasks to background workers. Replaces direct shell/tool instructions.
+- **Primary prompt loses shell access** — No more generate.py, upscale4k.sh, fetch_page.py, curl, or `python -c` instructions. These capabilities move to Action ARIA's prompt.
+- **Primary prompt gains data access note** — Describes read-only tool call access for historical queries.
+- **aria_api.py** updated to use `build_primary_prompt()` instead of `build_system_prompt()`.
+- **Version** bumped to 0.4.18
+
+---
+
 ## [0.4.17] — 2026-03-25
 
 ### Added

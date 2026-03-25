@@ -816,9 +816,11 @@ class TestBuildFileContent:
             assert blocks[0]["type"] == "image"
 
 
-class TestBuildSystemPrompt:
-    def test_contains_key_sections(self):
-        prompt = system_prompt.build_system_prompt()
+class TestBuildPrimaryPrompt:
+    """Tests for ARIA Primary system prompt."""
+
+    def test_contains_key_action_blocks(self):
+        prompt = system_prompt.build_primary_prompt()
         assert "ARIA" in prompt
         assert "ACTION" in prompt
         assert "INTEGRITY" in prompt
@@ -828,11 +830,106 @@ class TestBuildSystemPrompt:
         assert "add_event" in prompt
         assert "add_reminder" in prompt
 
+    def test_contains_dispatch_action(self):
+        prompt = system_prompt.build_primary_prompt()
+        assert "dispatch_action" in prompt
+        assert '"mode": "shell"' in prompt
+        assert '"mode": "agentic"' in prompt
+
+    def test_no_shell_commands(self):
+        prompt = system_prompt.build_primary_prompt()
+        assert "generate.py" not in prompt
+        assert "upscale4k.sh" not in prompt
+        assert "fetch_page.py" not in prompt
+        assert "curl -s" not in prompt
+        assert "lynx -dump" not in prompt
+        assert 'python -c "import sms' not in prompt
+
+    def test_has_data_access_note(self):
+        prompt = system_prompt.build_primary_prompt()
+        assert "read-only access" in prompt.lower() or "tool calls" in prompt.lower()
+
     def test_contains_owner_info(self):
-        prompt = system_prompt.build_system_prompt()
+        prompt = system_prompt.build_primary_prompt()
         assert "Adam" in prompt
 
     def test_contains_known_places(self):
-        prompt = system_prompt.build_system_prompt()
+        prompt = system_prompt.build_primary_prompt()
         assert "home" in prompt.lower()
         assert "work" in prompt.lower()
+
+    def test_contains_nutrition_rules(self):
+        prompt = system_prompt.build_primary_prompt()
+        assert "omega-3" in prompt.lower() or "omega3" in prompt.lower()
+        assert "cholesterol" in prompt.lower()
+        assert "NAFLD" in prompt
+
+    def test_contains_briefing_debrief_behavior(self):
+        prompt = system_prompt.build_primary_prompt()
+        assert "Good morning" in prompt
+        assert "Good night" in prompt
+
+
+class TestBuildActionPrompt:
+    """Tests for Action ARIA system prompt."""
+
+    def test_has_shell_tools(self):
+        prompt = system_prompt.build_action_prompt()
+        assert "generate.py" in prompt
+        assert "upscale4k.sh" in prompt
+        assert "fetch_page.py" in prompt
+        assert "push_image.py" in prompt
+
+    def test_has_progress_reporting(self):
+        prompt = system_prompt.build_action_prompt()
+        assert "progress" in prompt.lower()
+        assert "redis" in prompt.lower() or "Redis" in prompt
+
+    def test_no_action_blocks(self):
+        prompt = system_prompt.build_action_prompt()
+        assert "log_nutrition" not in prompt
+        assert "add_event" not in prompt
+        assert "set_delivery" not in prompt
+
+    def test_not_conversational(self):
+        prompt = system_prompt.build_action_prompt()
+        assert "NOT conversational" in prompt or "not a conversationalist" in prompt.lower()
+
+    def test_openrc_note(self):
+        prompt = system_prompt.build_action_prompt()
+        assert "OpenRC" in prompt
+        assert "NOT systemd" in prompt or "not systemd" in prompt.lower()
+
+
+class TestBuildAmnesiaPrompt:
+    """Tests for Amnesia ARIA system prompt."""
+
+    def test_minimal_and_focused(self):
+        prompt = system_prompt.build_amnesia_prompt()
+        assert len(prompt) < 1000  # should be very short
+        assert "stateless" in prompt.lower()
+
+    def test_no_action_blocks(self):
+        prompt = system_prompt.build_amnesia_prompt()
+        assert "ACTION" not in prompt or "Do not emit ACTION" in prompt
+
+    def test_no_personality(self):
+        prompt = system_prompt.build_amnesia_prompt()
+        assert "warm" not in prompt.lower()
+        assert "friend" not in prompt.lower()
+        assert "Adam" not in prompt
+
+    def test_no_clarifying_questions(self):
+        prompt = system_prompt.build_amnesia_prompt()
+        assert "Do not ask" in prompt or "do not ask" in prompt
+
+    def test_openrc_note(self):
+        prompt = system_prompt.build_amnesia_prompt()
+        assert "OpenRC" in prompt
+
+
+class TestLegacyAlias:
+    """Verify build_system_prompt() still works as alias."""
+
+    def test_alias_matches_primary(self):
+        assert system_prompt.build_system_prompt() == system_prompt.build_primary_prompt()

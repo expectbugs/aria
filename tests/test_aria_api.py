@@ -163,7 +163,7 @@ class TestAskAria:
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
     @patch("aria_api.get_recent_turns", return_value=[])
-    @patch("aria_api.build_system_prompt", return_value="System prompt")
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
     async def test_basic_query(self, mock_prompt, mock_history, mock_client):
         mock_api = MagicMock()
         mock_client.return_value = mock_api
@@ -178,7 +178,7 @@ class TestAskAria:
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
     @patch("aria_api.get_recent_turns", return_value=[])
-    @patch("aria_api.build_system_prompt", return_value="System prompt")
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
     async def test_context_injected_in_system(self, mock_prompt, mock_history, mock_client):
         mock_api = MagicMock()
         mock_client.return_value = mock_api
@@ -195,7 +195,7 @@ class TestAskAria:
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
     @patch("aria_api.get_recent_turns")
-    @patch("aria_api.build_system_prompt", return_value="System prompt")
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
     async def test_history_included(self, mock_prompt, mock_history, mock_client):
         mock_history.return_value = [
             {"role": "user", "content": "Previous question"},
@@ -218,7 +218,7 @@ class TestAskAria:
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
     @patch("aria_api.get_recent_turns", return_value=[])
-    @patch("aria_api.build_system_prompt", return_value="System prompt")
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
     async def test_file_blocks_multimodal(self, mock_prompt, mock_history, mock_client):
         mock_api = MagicMock()
         mock_client.return_value = mock_api
@@ -239,7 +239,7 @@ class TestAskAria:
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
     @patch("aria_api.get_recent_turns", return_value=[])
-    @patch("aria_api.build_system_prompt", return_value="System prompt")
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
     @patch("aria_api._handle_tool_call", return_value="Tool result data")
     async def test_tool_call_loop(self, mock_tool, mock_prompt, mock_history, mock_client):
         mock_api = MagicMock()
@@ -265,7 +265,7 @@ class TestAskAria:
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
     @patch("aria_api.get_recent_turns", return_value=[])
-    @patch("aria_api.build_system_prompt", return_value="System prompt")
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
     async def test_thinking_blocks_filtered(self, mock_prompt, mock_history, mock_client):
         mock_api = MagicMock()
         mock_client.return_value = mock_api
@@ -281,7 +281,7 @@ class TestAskAria:
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
     @patch("aria_api.get_recent_turns", return_value=[])
-    @patch("aria_api.build_system_prompt", return_value="System prompt")
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
     async def test_action_blocks_in_response(self, mock_prompt, mock_history, mock_client):
         mock_api = MagicMock()
         mock_client.return_value = mock_api
@@ -297,7 +297,7 @@ class TestAskAria:
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
     @patch("aria_api.get_recent_turns", return_value=[])
-    @patch("aria_api.build_system_prompt", return_value="System prompt")
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
     async def test_api_timeout_raises(self, mock_prompt, mock_history, mock_client):
         import anthropic
         mock_api = MagicMock()
@@ -310,7 +310,7 @@ class TestAskAria:
     @pytest.mark.asyncio
     @patch("aria_api._get_client")
     @patch("aria_api.get_recent_turns", return_value=[])
-    @patch("aria_api.build_system_prompt", return_value="System prompt")
+    @patch("aria_api.build_primary_prompt", return_value="System prompt")
     async def test_tools_passed_to_api(self, mock_prompt, mock_history, mock_client):
         mock_api = MagicMock()
         mock_client.return_value = mock_api

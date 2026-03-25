@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.17", lifespan=lifespan)
+app = FastAPI(title="ARIA", version="0.4.18", lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}

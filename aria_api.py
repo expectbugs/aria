@@ -19,7 +19,7 @@ import legal_store
 import nutrition_store
 import vehicle_store
 from conversation_history import get_recent_turns
-from system_prompt import build_system_prompt
+from system_prompt import build_primary_prompt
 
 log = logging.getLogger("aria")
 
@@ -324,7 +324,7 @@ async def ask_aria(user_text: str, extra_context: str = "",
     thinking_budget = getattr(config, "ARIA_THINKING_BUDGET", 10000)
 
     # Build system prompt with per-call context appended
-    system_prompt = build_system_prompt()
+    system_prompt = build_primary_prompt()
     if extra_context:
         system_prompt += f"\n\n[CONTEXT]\n{extra_context}\n[/CONTEXT]"
 
