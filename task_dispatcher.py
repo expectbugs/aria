@@ -13,6 +13,7 @@ import logging
 
 import config
 import redis_client
+from amnesia_pool import get_pool
 
 log = logging.getLogger("aria.dispatcher")
 
@@ -126,12 +127,28 @@ async def _handle_shell(task_id: str):
 
 
 async def _handle_agentic(task_id: str):
-    """Handle an agentic mode task. Placeholder until Action ARIA (Step 6)."""
-    # For now, mark as error with a helpful message
-    redis_client.complete_task(
-        task_id,
-        error="Agentic task dispatch not yet implemented — coming in Steps 5-6"
-    )
+    """Handle an agentic mode task via the Amnesia pool."""
+    prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
+    client = redis_client.get_client()
+    if not client:
+        redis_client.complete_task(task_id, error="Redis unavailable")
+        return
+
+    task_data = client.hgetall(f"{prefix}task:{task_id}")
+    brief = task_data.get("task_brief", "")
+    context = task_data.get("context", "")
+
+    if not brief:
+        redis_client.complete_task(task_id, error="No task brief specified")
+        return
+
+    pool = get_pool()
+    result = await pool.run_agentic(task_id, brief, context)
+
+    if result.get("error"):
+        redis_client.complete_task(task_id, error=result["error"])
+    else:
+        redis_client.complete_task(task_id, result=result.get("result", ""))
 
 
 def start_dispatcher():

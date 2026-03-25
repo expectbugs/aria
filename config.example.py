@@ -52,6 +52,11 @@ AUTH_TOKEN = "your-token-here"  # Tasker sends this as Bearer token
 # --- Database ---
 DATABASE_URL = "postgresql://aria@/aria"  # local Unix socket, trust auth
 
+# --- Amnesia Pool (stateless Claude Code workers) ---
+AMNESIA_POOL_SIZE = 3               # number of warm instances
+AMNESIA_TASK_TIMEOUT = 120          # seconds per agentic task
+AMNESIA_SHELL_TIMEOUT = 60          # seconds per shell command
+
 # --- Redis (task queue, swarm coordination) ---
 REDIS_URL = "redis://127.0.0.1:6379/0"    # Redis database URL
 REDIS_KEY_PREFIX = "aria:"                  # namespace for all ARIA keys

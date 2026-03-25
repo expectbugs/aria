@@ -6,6 +6,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.21] — 2026-03-25
+
+### Added
+
+- **Amnesia pool** — New `amnesia_pool.py` manages a pool of warm stateless Claude Code instances for one-shot agentic tasks. Pre-warmed on startup, killed and replaced after each task (zero context accumulation). Configurable pool size (`AMNESIA_POOL_SIZE`, default 3) and task timeout (`AMNESIA_TASK_TIMEOUT`, default 120s).
+- **Agentic task dispatch** — `task_dispatcher.py` now routes agentic mode tasks to the Amnesia pool. Uses the amnesia system prompt (minimal, no personality, no ACTION blocks). Auto-approves permission requests.
+- **Pool lifecycle** — Integrated into daemon lifespan: instances pre-warmed on startup, killed on shutdown.
+- **Version** bumped to 0.4.21
+
+---
+
 ## [0.4.20] — 2026-03-25
 
 ### Added
