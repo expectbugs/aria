@@ -6,6 +6,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.24] — 2026-03-25
+
+### Added
+
+- **System health monitor** — New `monitor.py` checks daemon, PostgreSQL, Redis, backup freshness, and peer host reachability every 5 minutes. Pushes formatted SVG alert to phone on failure (falls back to SMS). 30-minute cooldown prevents alert spam.
+- **Slappy failover fully operational** — PostgreSQL data sync (pg_dump --clean + restore cron), guarded tick.py (runs only when beardos is down), monitor cron on both hosts.
+
+### Fixed
+
+- **Event loop blocking on startup** — Dispatcher's `xread` and completion listener's `pubsub.get_message` were blocking the asyncio event loop. Dispatcher now uses `asyncio.to_thread()`, listener uses non-blocking poll + `asyncio.sleep`. Daemon starts in <5 seconds instead of hanging.
+- **Dispatcher timeout spam** — Redis `socket_timeout` increased from 2s to 15s, `xread` block time to 5s via thread pool. Eliminates constant "Timeout reading from socket" errors.
+- **Cron error suppression** — pg_dump and rsync on beardos now log errors to files instead of `/dev/null`.
+- **pg_dump uses `--clean --if-exists`** — Backup includes DROP statements so slappy can restore cleanly.
+- **Version** bumped to 0.4.24
+
+---
+
 ## [0.4.23] — 2026-03-25
 
 ### Added

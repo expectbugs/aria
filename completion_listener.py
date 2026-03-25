@@ -123,8 +123,12 @@ async def _listen_loop():
             pubsub.subscribe(channel)
 
             while _running:
-                message = pubsub.get_message(timeout=2.0)
-                if message and message["type"] == "message":
+                # Non-blocking check + async sleep to avoid blocking the event loop
+                message = pubsub.get_message(timeout=0.0)
+                if message is None:
+                    await asyncio.sleep(1)
+                    continue
+                if message["type"] == "message":
                     try:
                         data = json.loads(message["data"])
                         task_id = data.get("task_id", "")
@@ -138,9 +142,6 @@ async def _listen_loop():
                             )
                     except json.JSONDecodeError:
                         log.warning("Invalid completion message: %s", message["data"])
-                elif message is None:
-                    # Timeout — just loop and check _running
-                    await asyncio.sleep(0.1)
 
         except Exception as e:
             if _running:

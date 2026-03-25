@@ -39,7 +39,7 @@ def get_client():
             url,
             decode_responses=True,
             socket_connect_timeout=2,
-            socket_timeout=2,
+            socket_timeout=15,  # must exceed xread block time in dispatcher
         )
         _client.ping()
         _warned = False

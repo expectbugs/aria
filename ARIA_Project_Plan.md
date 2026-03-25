@@ -136,7 +136,7 @@ One repo, one codebase, config-driven per-host differences. The repo represents 
 | Host | Role | Tailscale IP | GPU | Key Differences |
 |------|------|-------------|-----|-----------------|
 | beardos | Primary | 100.107.139.121 | RTX 3090 24GB | Full capabilities, auto-starts, image gen, LoRA training |
-| slappy | Failover | 100.70.66.104 | None (integrated) | TTS + Claude only, service installed but not in default runlevel |
+| slappy | Failover | 100.70.66.104 | None (integrated) | API + TTS, auto-starts, no GPU/Whisper/image gen |
 
 ### Billing Clarification
 
@@ -159,7 +159,7 @@ Tasker JavaScriptlet handles failover at the request level:
 - If connection fails, announces "Beardos is offline — running from slappy" and retries against slappy
 - If both down, queues request locally and announces it
 - Adaptive polling: 3s intervals for first minute, 10s for 1–5 min, 30s for 5–60 min
-- Slappy's ARIA service stays installed but not in default runlevel — starts on boot only if manually added
+- Slappy's ARIA service is in the default runlevel — auto-starts on boot so failover is always available
 
 ### Data Synchronization
 

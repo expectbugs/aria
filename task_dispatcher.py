@@ -46,8 +46,10 @@ async def _dispatch_loop():
             continue
 
         try:
-            # Blocking read with 2s timeout (so we can check _running)
-            entries = client.xread({stream_key: last_id}, count=1, block=2000)
+            # Run blocking Redis read in thread pool to avoid freezing the event loop
+            entries = await asyncio.to_thread(
+                client.xread, {stream_key: last_id}, 1, 5000
+            )
             if not entries:
                 continue
 
