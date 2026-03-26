@@ -50,6 +50,7 @@ class ClaudeSession:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            limit=16 * 1024 * 1024,  # 16MB readline buffer (images can be 4MB+ base64)
         )
         self._request_count = 0
         log.info("Claude session spawned (pid=%s)", self._proc.pid)

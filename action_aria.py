@@ -36,7 +36,7 @@ class ActionAria:
         report progress to the correct Redis hash.
         """
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        env["CLAUDE_CODE_EFFORT_LEVEL"] = "high"
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = "max"
         env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
 
         prompt = build_action_prompt().replace("TASK_ID", task_id)
@@ -47,13 +47,14 @@ class ActionAria:
             "--output-format", "stream-json",
             "--input-format", "stream-json",
             "--verbose",
-            "--model", "sonnet",  # fast + capable for worker tasks
+            "--model", "opus",  # full capability for complex tasks
             "--dangerously-skip-permissions",
             "--system-prompt", prompt,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            limit=16 * 1024 * 1024,  # 16MB readline buffer (images can be 4MB+ base64)
         )
         log.info("Action ARIA spawned for task %s (pid=%s)", task_id, self._proc.pid)
 

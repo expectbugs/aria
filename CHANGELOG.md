@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.32] — 2026-03-26
+
+### Fixed
+
+- **Subprocess readline buffer overflow** — Claude Code subprocesses (Action ARIA, Claude Session, Amnesia pool) had the default 64KB asyncio readline buffer, causing "Separator is found, but chunk is longer than limit" errors when reading images (3-6MB base64 = 4-8MB JSON lines). Increased to 16MB across all three subprocess spawners.
+- **ARIA Primary model ID** — Fixed invalid model ID `claude-opus-4-6-20250610` (404 from API) → `claude-opus-4-6` (stable alias).
+- **ARIA Primary max_tokens** — `max_tokens` (16384) was less than `thinking.budget_tokens` (64000), causing API 400 errors. Bumped to 80000.
+- **Action ARIA model upgrade** — Changed from `--model sonnet` with effort=high to `--model opus` with effort=max for full capability on complex tasks.
+
+### Changed
+
+- **Version** bumped to 0.4.32
+
+---
+
 ## [0.4.31] — 2026-03-25
 
 ### Fixed

@@ -66,6 +66,7 @@ class AmnesiaPool:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                limit=16 * 1024 * 1024,  # 16MB readline buffer (images can be 4MB+ base64)
             )
             self._instances[index] = proc
             self._states[index] = "idle"
