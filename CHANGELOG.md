@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.31] — 2026-03-25
+
+### Fixed
+
+- **ARIA no longer refuses shell/filesystem tasks** — Reworded task dispatch prompt from "You do NOT have direct shell/filesystem access" to "you can run shell commands, generate images, fetch web pages, read/write files... by dispatching to background workers." ARIA now correctly dispatches these tasks instead of telling the user she can't do them.
+
+### Changed
+
+- **Version** bumped to 0.4.31
+
+---
+
 ## [0.4.30] — 2026-03-25
 
 ### Fixed
