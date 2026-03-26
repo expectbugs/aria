@@ -131,6 +131,7 @@ def push_task(task: dict) -> str | None:
             "task_brief": task.get("task", ""),
             "context": task.get("context", ""),
             "notify": "1" if task.get("notify", True) else "0",
+            "channel": task.get("channel", "voice"),
             "created_at": __import__("datetime").datetime.now().isoformat(),
         })
 

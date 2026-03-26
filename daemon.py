@@ -309,7 +309,8 @@ async def ask(req: AskRequest, request: Request):
     try:
         extra_context = await _get_context_for_text(text)
         response = await ask_claude(text, extra_context)
-        response = process_actions(response, log_fn=log_request)
+        delivery_meta = {"channel": "voice"}
+        response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
 
         duration = time.time() - start
         log_request(text, "ok", response=response, duration=duration)
@@ -386,7 +387,7 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         )
 
         response = await ask_claude(user_text, extra_context, file_blocks)
-        delivery_meta = {}
+        delivery_meta = {"channel": "voice"}
         response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
         delivery = delivery_meta.get("delivery", "voice")
 
@@ -579,7 +580,7 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
         # Step 2: Build context and query Claude (same pipeline as /ask)
         extra_context = await _get_context_for_text(user_text)
         response = await ask_claude(user_text, extra_context)
-        delivery_meta = {}
+        delivery_meta = {"channel": "voice"}
         response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
         delivery = delivery_meta.get("delivery", "voice")
 
@@ -796,7 +797,7 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
 
         response = await ask_claude(user_text, extra_context,
                                     file_blocks if file_blocks else None)
-        delivery_meta = {}
+        delivery_meta = {"channel": "sms"}
         response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
         delivery = delivery_meta.get("delivery", "sms")
 

@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.30] — 2026-03-25
+
+### Fixed
+
+- **Channel-aware task completion delivery** — Completion listener now delivers task results via the same channel the request came in on (SMS→SMS, voice→voice). Channel threaded through the full dispatch pipeline: daemon handler → process_actions → dispatch_action → Redis task hash → completion listener. Default "voice" for backward compatibility with existing tasks.
+
+### Changed
+
+- **Version** bumped to 0.4.30
+
+---
+
 ## [0.4.29] — 2026-03-25
 
 ### Fixed

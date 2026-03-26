@@ -87,23 +87,32 @@ async def _on_completion(task_id: str, status: str, result_text: str):
         # Process any ACTION blocks (execute + strip from response text)
         response = process_actions(response)
 
-        # Deliver via voice (TTS + push) by default
-        try:
-            audio = await _generate_tts(response)
-            wav_path = config.DATA_DIR / "task_response.wav"
-            wav_path.write_bytes(audio)
-            if push_audio.push_audio(str(wav_path)):
-                log.info("Task %s result delivered via voice", task_id)
-            else:
-                # Voice push failed, fall back to SMS
-                sms.send_long_to_owner(response)
-                log.info("Task %s result delivered via SMS (voice fallback)", task_id)
-        except Exception as e:
-            log.error("Voice delivery failed for task %s, trying SMS: %s", task_id, e)
+        # Deliver via the same channel the original request came in on
+        channel = task_data.get("channel", "voice")
+
+        if channel == "sms":
             try:
                 sms.send_long_to_owner(response)
-            except Exception as se:
-                log.error("SMS delivery also failed for task %s: %s", task_id, se)
+                log.info("Task %s result delivered via SMS", task_id)
+            except Exception as e:
+                log.error("SMS delivery failed for task %s: %s", task_id, e)
+        else:
+            # Voice delivery (default)
+            try:
+                audio = await _generate_tts(response)
+                wav_path = config.DATA_DIR / "task_response.wav"
+                wav_path.write_bytes(audio)
+                if push_audio.push_audio(str(wav_path)):
+                    log.info("Task %s result delivered via voice", task_id)
+                else:
+                    sms.send_long_to_owner(response)
+                    log.info("Task %s result delivered via SMS (voice fallback)", task_id)
+            except Exception as e:
+                log.error("Voice delivery failed for task %s, trying SMS: %s", task_id, e)
+                try:
+                    sms.send_long_to_owner(response)
+                except Exception as se:
+                    log.error("SMS delivery also failed for task %s: %s", task_id, se)
 
     except Exception as e:
         log.error("Failed to compose response for task %s: %s", task_id, e)

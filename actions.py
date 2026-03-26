@@ -248,6 +248,7 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
                     "task": action.get("task", ""),
                     "context": action.get("context", ""),
                     "notify": action.get("notify", True),
+                    "channel": metadata.get("channel", "voice") if metadata else "voice",
                 }
                 pushed = redis_client.push_task(task)
                 if pushed:

@@ -193,6 +193,38 @@ class TestDispatchActionBlock:
         assert "task_id" in task_arg
         assert len(task_arg["task_id"]) == 8  # UUID prefix
 
+    @patch("actions.redis_client")
+    def test_dispatch_includes_channel_from_metadata(self, mock_rc):
+        mock_rc.push_task.return_value = "t1"
+
+        response = '<!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "uptime"}-->'
+        metadata = {"channel": "sms"}
+        actions.process_actions(response, metadata=metadata)
+
+        task_arg = mock_rc.push_task.call_args[0][0]
+        assert task_arg["channel"] == "sms"
+
+    @patch("actions.redis_client")
+    def test_dispatch_defaults_channel_to_voice(self, mock_rc):
+        mock_rc.push_task.return_value = "t1"
+
+        response = '<!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "uptime"}-->'
+        metadata = {}  # no channel key
+        actions.process_actions(response, metadata=metadata)
+
+        task_arg = mock_rc.push_task.call_args[0][0]
+        assert task_arg["channel"] == "voice"
+
+    @patch("actions.redis_client")
+    def test_dispatch_defaults_channel_when_no_metadata(self, mock_rc):
+        mock_rc.push_task.return_value = "t1"
+
+        response = '<!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "ls"}-->'
+        actions.process_actions(response)  # no metadata arg
+
+        task_arg = mock_rc.push_task.call_args[0][0]
+        assert task_arg["channel"] == "voice"
+
 
 class TestShellHandler:
     """Test the shell command execution in the dispatcher."""

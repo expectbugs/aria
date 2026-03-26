@@ -97,6 +97,7 @@ class TestOnCompletion:
         mock_client.hgetall.return_value = {
             "notify": "1",
             "description": "Test task",
+            "channel": "voice",
         }
         completion_listener.ask_aria = AsyncMock(return_value="Task done!")
         completion_listener._generate_tts = AsyncMock(side_effect=Exception("TTS failed"))
@@ -110,6 +111,67 @@ class TestOnCompletion:
     async def test_safe_when_redis_down(self, mock_rc):
         mock_rc.get_client.return_value = None
         await completion_listener._on_completion("t1", "completed", "done")
+
+
+class TestChannelAwareDelivery:
+
+    @pytest.mark.asyncio
+    @patch("completion_listener.sms")
+    @patch("completion_listener.redis_client")
+    async def test_sms_channel_delivers_via_sms(self, mock_rc, mock_sms):
+        mock_client = MagicMock()
+        mock_rc.get_client.return_value = mock_client
+        mock_client.hgetall.return_value = {
+            "notify": "1",
+            "description": "Test task",
+            "channel": "sms",
+        }
+        completion_listener.ask_aria = AsyncMock(return_value="Result ready!")
+
+        await completion_listener._on_completion("t1", "completed", "done")
+
+        mock_sms.send_long_to_owner.assert_called_once_with("Result ready!")
+        # TTS should NOT be called for SMS channel
+        completion_listener._generate_tts.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("completion_listener.sms")
+    @patch("completion_listener.redis_client")
+    async def test_voice_channel_delivers_via_voice(self, mock_rc, mock_sms):
+        mock_client = MagicMock()
+        mock_rc.get_client.return_value = mock_client
+        mock_client.hgetall.return_value = {
+            "notify": "1",
+            "description": "Test task",
+            "channel": "voice",
+        }
+        completion_listener.ask_aria = AsyncMock(return_value="Here you go!")
+
+        await completion_listener._on_completion("t1", "completed", "done")
+
+        completion_listener._generate_tts.assert_called_once()
+        completion_listener.push_audio.push_audio.assert_called_once()
+        # SMS should NOT be called when voice succeeds
+        mock_sms.send_long_to_owner.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("completion_listener.sms")
+    @patch("completion_listener.redis_client")
+    async def test_default_channel_is_voice(self, mock_rc, mock_sms):
+        """Tasks without a channel field (backward compat) default to voice."""
+        mock_client = MagicMock()
+        mock_rc.get_client.return_value = mock_client
+        mock_client.hgetall.return_value = {
+            "notify": "1",
+            "description": "Old task",
+            # no "channel" key
+        }
+        completion_listener.ask_aria = AsyncMock(return_value="Done!")
+
+        await completion_listener._on_completion("t1", "completed", "done")
+
+        completion_listener._generate_tts.assert_called_once()
+        completion_listener.push_audio.push_audio.assert_called_once()
 
 
 class TestListenerLifecycle:
