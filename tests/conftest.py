@@ -48,6 +48,17 @@ def _block_real_sms():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _disable_sms_redirect():
+    """Ensure SMS redirect is off during tests — test actual SMS code paths.
+
+    The redirect tests in test_sms_redirect.py override this with their own
+    patch.object(sms.config, "SMS_REDIRECT_TO_IMAGE", True, create=True).
+    """
+    with patch("sms.config.SMS_REDIRECT_TO_IMAGE", False, create=True):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Reusable helpers
 # ---------------------------------------------------------------------------

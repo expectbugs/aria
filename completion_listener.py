@@ -19,18 +19,21 @@ import sms
 ask_aria = None
 _generate_tts = None
 push_audio = None
+process_actions = None
 
 
 def _ensure_imports():
     """Lazy-load heavy modules on first use."""
-    global ask_aria, _generate_tts, push_audio
+    global ask_aria, _generate_tts, push_audio, process_actions
     if ask_aria is None:
         from aria_api import ask_aria as _ask
         from tts import _generate_tts as _tts
+        from actions import process_actions as _pa_fn
         import push_audio as _pa
         ask_aria = _ask
         _generate_tts = _tts
         push_audio = _pa
+        process_actions = _pa_fn
 
 log = logging.getLogger("aria.completion")
 
@@ -80,6 +83,9 @@ async def _on_completion(task_id: str, status: str, result_text: str):
             )
 
         response = await ask_aria(prompt)
+
+        # Process any ACTION blocks (execute + strip from response text)
+        response = process_actions(response)
 
         # Deliver via voice (TTS + push) by default
         try:

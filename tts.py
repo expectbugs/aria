@@ -1,9 +1,12 @@
 """ARIA TTS (text-to-speech) via Kokoro."""
 
 import asyncio
+import logging
 import re
 
 import config
+
+log = logging.getLogger("aria.tts")
 
 
 # Cache the Kokoro TTS model so it's not reloaded on every request
@@ -76,6 +79,22 @@ def _prepare_for_speech(text: str) -> str:
     responses (nutrition summaries, daily totals) can produce phoneme batches
     exceeding the 509-character limit, causing silent truncation.
     """
+    # ACTION blocks — should be processed upstream by process_actions().
+    # If any reach TTS, that's a bug — alert, log, then strip.
+    if '<!--ACTION::' in text:
+        log.warning("ACTION blocks reached TTS — upstream missing process_actions()")
+        try:
+            import os
+            from sms import _render_sms_image
+            import push_image
+            alert = "BUG: Unprocessed ACTION blocks reached TTS.\n\n" + text[:500]
+            img_path = _render_sms_image(alert, header="ARIA BUG")
+            push_image.push_image(img_path, caption="ARIA Bug Alert")
+            os.unlink(img_path)
+        except Exception:
+            pass  # Don't crash TTS over a debug alert
+        text = re.sub(r'<!--ACTION::.*?-->', '', text, flags=re.DOTALL)
+
     # Bold **text** → text (must precede italic)
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
     # Italic *text* → text

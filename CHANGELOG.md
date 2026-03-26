@@ -6,6 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.29] — 2026-03-25
+
+### Fixed
+
+- **ACTION blocks no longer spoken by TTS** — Completion listener now calls `process_actions()` on ARIA's response before delivery, executing legitimate ACTION blocks and stripping them from spoken text. Added defense-in-depth: `_prepare_for_speech()` in tts.py detects unprocessed ACTION blocks, logs a WARNING, pushes a bug alert image to phone, and strips them before TTS.
+- **SMS redirect test safety** — Added autouse conftest fixture to disable `SMS_REDIRECT_TO_IMAGE` in tests, preventing redirect from interfering with Twilio code path testing.
+
+### Changed
+
+- **Version** bumped to 0.4.29
+
+---
+
 ## [0.4.28] — 2026-03-25
 
 ### Changed

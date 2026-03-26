@@ -27,10 +27,12 @@ def _mock_lazy_imports():
     completion_listener._generate_tts = AsyncMock(return_value=b"audio")
     completion_listener.push_audio = MagicMock()
     completion_listener.push_audio.push_audio = MagicMock(return_value=True)
+    completion_listener.process_actions = MagicMock(side_effect=lambda r, **kw: r)
     yield
     completion_listener.ask_aria = None
     completion_listener._generate_tts = None
     completion_listener.push_audio = None
+    completion_listener.process_actions = None
 
 
 class TestOnCompletion:
@@ -120,6 +122,50 @@ class TestListenerLifecycle:
         completion_listener._task = None
         completion_listener.stop_listener()
         assert completion_listener._running is False
+
+
+class TestActionBlockProcessing:
+
+    @pytest.mark.asyncio
+    @patch("completion_listener.sms")
+    @patch("completion_listener.redis_client")
+    async def test_process_actions_called_on_response(self, mock_rc, mock_sms):
+        mock_client = MagicMock()
+        mock_rc.get_client.return_value = mock_client
+        mock_client.hgetall.return_value = {
+            "notify": "1",
+            "description": "Test task",
+        }
+        raw = 'Done!<!--ACTION::{"action":"set_timer","minutes":5,"message":"hi"}-->'
+        completion_listener.ask_aria = AsyncMock(return_value=raw)
+        mock_pa = MagicMock(return_value="Done!")
+        completion_listener.process_actions = mock_pa
+
+        await completion_listener._on_completion("t1", "completed", "result")
+
+        mock_pa.assert_called_once_with(raw)
+
+    @pytest.mark.asyncio
+    @patch("completion_listener.sms")
+    @patch("completion_listener.redis_client")
+    async def test_tts_receives_cleaned_response(self, mock_rc, mock_sms):
+        mock_client = MagicMock()
+        mock_rc.get_client.return_value = mock_client
+        mock_client.hgetall.return_value = {
+            "notify": "1",
+            "description": "Test task",
+        }
+        raw = 'Timer set!<!--ACTION::{"action":"set_timer"}-->'
+        completion_listener.ask_aria = AsyncMock(return_value=raw)
+        # process_actions strips the block
+        completion_listener.process_actions = MagicMock(return_value="Timer set!")
+
+        await completion_listener._on_completion("t1", "completed", "result")
+
+        # TTS should receive the cleaned text, not the raw response
+        tts_arg = completion_listener._generate_tts.call_args[0][0]
+        assert "ACTION" not in tts_arg
+        assert "Timer set!" in tts_arg
 
 
 class TestFullPipeline:
