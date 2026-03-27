@@ -922,6 +922,25 @@ async def webhook_sms(request: Request):
     if not body and not media_urls:
         return Response(content="<Response></Response>", media_type="application/xml")
 
+    # Webhook idempotency: prevent duplicate processing on Twilio retries
+    message_sid = params.get("MessageSid", "")
+    if message_sid:
+        try:
+            with db.get_conn() as conn:
+                existing = conn.execute(
+                    "SELECT 1 FROM processed_webhooks WHERE message_sid = %s",
+                    (message_sid,),
+                ).fetchone()
+                if existing:
+                    log.info("Duplicate webhook ignored (MessageSid=%s)", message_sid)
+                    return Response(content="<Response></Response>", media_type="application/xml")
+                conn.execute(
+                    "INSERT INTO processed_webhooks (message_sid) VALUES (%s)",
+                    (message_sid,),
+                )
+        except Exception as e:
+            log.warning("Webhook idempotency check failed: %s (proceeding anyway)", e)
+
     # Process asynchronously — return empty TwiML immediately,
     # then send the response as a new outbound message
     asyncio.create_task(_process_sms(from_number, body, media_urls))

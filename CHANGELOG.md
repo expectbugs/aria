@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.36] — 2026-03-27
+
+### Added
+
+- **Webhook idempotency** — SMS webhook checks `processed_webhooks` table for Twilio `MessageSid` before processing. If already seen, returns empty TwiML immediately. Prevents duplicate entries when Twilio retries on timeout.
+
+### Changed
+
+- **Version** bumped to 0.4.36
+
+---
+
 ## [0.4.35] — 2026-03-27
 
 ### Added
