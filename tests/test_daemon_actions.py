@@ -447,9 +447,10 @@ class TestIntraResponseDedup:
 class TestDateCrossCheck:
     """Test that date mismatches between log_health and log_nutrition are caught."""
 
+    @patch("push_image.push_image", return_value=True)  # prevent real phone push
     @patch("actions.nutrition_store")
     @patch("actions.health_store")
-    def test_date_mismatch_aborts_actions(self, mock_hs, mock_ns):
+    def test_date_mismatch_aborts_actions(self, mock_hs, mock_ns, mock_push):
         """If log_health date differs from log_nutrition date for same meal, abort."""
         response = (
             'Logged! '
