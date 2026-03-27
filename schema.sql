@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS reminders (
     location_trigger TEXT,
     done BOOLEAN NOT NULL DEFAULT FALSE,
     completed_at TIMESTAMPTZ,
+    auto_expired_at TIMESTAMPTZ,
     created TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_done ON reminders(done);
@@ -35,10 +36,13 @@ CREATE TABLE IF NOT EXISTS health_entries (
     severity INTEGER,
     sleep_hours REAL,
     meal_type TEXT,
+    content_hash TEXT,
+    response_id TEXT,
     created TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_health_date ON health_entries(date);
 CREATE INDEX IF NOT EXISTS idx_health_date_category ON health_entries(date, category);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_health_content_hash ON health_entries(content_hash);
 
 -- Vehicle maintenance
 CREATE TABLE IF NOT EXISTS vehicle_entries (
@@ -89,9 +93,12 @@ CREATE TABLE IF NOT EXISTS nutrition_entries (
     serving_size TEXT,
     nutrients JSONB NOT NULL DEFAULT '{}',
     notes TEXT,
+    content_hash TEXT,
+    response_id TEXT,
     created TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_nutrition_date ON nutrition_entries(date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nutrition_content_hash ON nutrition_entries(content_hash);
 
 -- Location tracking
 CREATE TABLE IF NOT EXISTS locations (
@@ -175,5 +182,29 @@ CREATE TABLE IF NOT EXISTS tick_state (
 CREATE TABLE IF NOT EXISTS nudge_cooldowns (
     nudge_type TEXT PRIMARY KEY,
     last_fired TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Nudge audit log (global frequency cap + debugging)
+CREATE TABLE IF NOT EXISTS nudge_log (
+    id SERIAL PRIMARY KEY,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    nudge_types TEXT[] NOT NULL,
+    trigger_descriptions TEXT[] NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    delivery_status TEXT NOT NULL DEFAULT 'sent'
+);
+CREATE INDEX IF NOT EXISTS idx_nudge_log_sent ON nudge_log(sent_at);
+
+-- Webhook idempotency (prevents duplicate processing on Twilio retries)
+CREATE TABLE IF NOT EXISTS processed_webhooks (
+    message_sid TEXT PRIMARY KEY,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Monitor state (replaces monitor_state.json — all stores must use PostgreSQL)
+CREATE TABLE IF NOT EXISTS monitor_state (
+    key TEXT PRIMARY KEY,
+    value REAL NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

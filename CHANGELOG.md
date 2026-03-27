@@ -6,6 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.33] — 2026-03-27
+
+### Added
+
+- **Content hash dedup columns** — `content_hash` and `response_id` columns on `nutrition_entries` and `health_entries` with unique indexes. Prevents duplicate entries at the database level via `ON CONFLICT DO NOTHING`.
+- **Nudge audit log** — `nudge_log` table tracks all nudge attempts (sent, failed, suppressed) with timestamps, trigger types, and delivery status. Enables global frequency caps and debugging.
+- **Webhook idempotency table** — `processed_webhooks` table stores Twilio `MessageSid` to prevent duplicate processing on webhook retries.
+- **Monitor state in PostgreSQL** — `monitor_state` table replaces `monitor_state.json` file (all stores must use PostgreSQL, not JSON files).
+- **Reminder auto-expiry tracking** — `auto_expired_at` column on `reminders` table for zombie reminder cleanup.
+
+### Fixed
+
+- **Duplicate nutrition entries cleaned** — One-time cleanup removed 3 exact duplicate entries from Mar 26 (same meals logged 2-3x during a failed 3 AM SMS session). Backfilled content_hash on all 56 nutrition and 47 health entries.
+
+### Changed
+
+- **Schema** — 15 tables → 18 tables (added nudge_log, processed_webhooks, monitor_state). nutrition_entries and health_entries gain content_hash + response_id columns. reminders gains auto_expired_at.
+- **Version** bumped to 0.4.33
+
+---
+
 ## [0.4.32] — 2026-03-26
 
 ### Fixed
