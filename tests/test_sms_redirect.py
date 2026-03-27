@@ -191,7 +191,7 @@ class TestRedirectToImage:
 
         sid = sms._redirect_to_image("+15551234567", "Hello")
 
-        assert sid.startswith("IMG_")
+        assert sid.startswith("IMG_FAIL_")
         # Still logs even on push failure
         assert mock_conn.execute.called
 
@@ -205,7 +205,7 @@ class TestRedirectToImage:
 
         sid = sms._redirect_to_image("+15551234567", "Hello")
 
-        assert sid.startswith("IMG_")
+        assert sid.startswith("IMG_FAIL_")
 
     @patch("sms.db.get_conn")
     @patch("push_image.push_image")

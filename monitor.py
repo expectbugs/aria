@@ -10,9 +10,7 @@ Cron:
     */5 * * * * /home/user/aria/venv/bin/python /home/user/aria/monitor.py >> /home/user/aria/logs/monitor.log 2>&1
 """
 
-import json
 import logging
-import os
 import sys
 import time
 from datetime import datetime
@@ -21,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config
+import db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,10 +27,12 @@ logging.basicConfig(
 )
 log = logging.getLogger("monitor")
 
-STATE_FILE = config.LOGS_DIR / "monitor_state.json"
 COOLDOWN_SECONDS = 1800  # 30 minutes between repeat alerts for same failure
 PEER_HOST = "100.70.66.104" if config.HOST_NAME == "beardos" else "100.107.139.121"
 PEER_NAME = "slappy" if config.HOST_NAME == "beardos" else "beardos"
+
+# Critical checks that bypass quiet hours (infrastructure failures)
+CRITICAL_CHECKS = {"daemon", "postgres"}
 
 
 # --- Health Checks ---
@@ -172,8 +173,11 @@ def generate_svg(host: str, failures: list[str]) -> str:
     return svg
 
 
-def push_alert(host: str, failures: list[str]):
-    """Push SVG alert to phone, fall back to SMS."""
+def push_alert(host: str, failures: list[str]) -> bool:
+    """Push SVG alert to phone, fall back to SMS.
+
+    Returns True if any delivery succeeded, False if all failed.
+    """
     # Generate and save SVG
     svg = generate_svg(host, failures)
     svg_path = config.DATA_DIR / "alert.svg"
@@ -184,7 +188,7 @@ def push_alert(host: str, failures: list[str]):
         from push_image import push_image
         if push_image(str(svg_path), caption=f"ARIA Alert: {host}"):
             log.info("Alert pushed via image")
-            return
+            return True
     except Exception as e:
         log.warning("Image push failed: %s", e)
 
@@ -194,21 +198,40 @@ def push_alert(host: str, failures: list[str]):
         text = f"ARIA ALERT ({host}):\n" + "\n".join(f"- {f}" for f in failures)
         sms.send_to_owner(text)
         log.info("Alert sent via SMS")
+        return True
     except Exception as e:
         log.warning("SMS alert also failed: %s", e)
 
+    return False
 
-# --- Cooldown State ---
+
+# --- Cooldown State (PostgreSQL) ---
 
 def load_state() -> dict:
+    """Load cooldown state from the monitor_state PostgreSQL table."""
     try:
-        return json.loads(STATE_FILE.read_text())
-    except Exception:
+        with db.get_conn() as conn:
+            rows = conn.execute("SELECT key, value FROM monitor_state").fetchall()
+        return {row["key"]: row["value"] for row in rows}
+    except Exception as e:
+        log.warning("Failed to load monitor state from DB: %s", e)
         return {}
 
 
 def save_state(state: dict):
-    STATE_FILE.write_text(json.dumps(state))
+    """Persist cooldown state to the monitor_state PostgreSQL table."""
+    try:
+        with db.get_conn() as conn:
+            for key, value in state.items():
+                conn.execute(
+                    """INSERT INTO monitor_state (key, value, updated_at)
+                       VALUES (%s, %s, NOW())
+                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value,
+                       updated_at = NOW()""",
+                    (key, value),
+                )
+    except Exception as e:
+        log.warning("Failed to save monitor state to DB: %s", e)
 
 
 def should_alert(state: dict, failure_key: str) -> bool:
@@ -218,6 +241,29 @@ def should_alert(state: dict, failure_key: str) -> bool:
 
 
 # --- Main ---
+
+def is_quiet_hours() -> bool:
+    """Check if current time is within quiet hours (non-critical alerts suppressed)."""
+    hour = datetime.now().hour
+    start = getattr(config, "QUIET_HOURS_START", 0)
+    end = getattr(config, "QUIET_HOURS_END", 7)
+    if start <= end:
+        return start <= hour < end
+    else:
+        # Wraps past midnight (e.g. 22-7)
+        return hour >= start or hour < end
+
+
+def has_critical_failure(failed_checks: list[str]) -> bool:
+    """Check if any failed check is critical (daemon/postgres)."""
+    return bool(CRITICAL_CHECKS & set(failed_checks))
+
+
+def cleanup_state(state: dict) -> dict:
+    """Remove state entries older than 24 hours."""
+    cutoff = time.time() - 86400
+    return {k: v for k, v in state.items() if v > cutoff}
+
 
 def main():
     checks = [
@@ -230,32 +276,44 @@ def main():
     ]
 
     failures = []
+    failed_check_names = []
     for name, check_fn in checks:
         try:
             result = check_fn()
             if result:
                 failures.append(result)
+                failed_check_names.append(name)
                 log.warning("FAIL %s: %s", name, result)
             else:
                 log.info("OK %s", name)
         except Exception as e:
             failures.append(f"{name} check crashed: {e}")
+            failed_check_names.append(name)
             log.error("CHECK CRASH %s: %s", name, e)
+
+    # Always clean up stale state entries
+    state = load_state()
+    state = cleanup_state(state)
+    save_state(state)
 
     if not failures:
         log.info("All checks passed on %s", config.HOST_NAME)
         return
 
+    # Quiet hours: suppress non-critical alerts
+    if is_quiet_hours() and not has_critical_failure(failed_check_names):
+        log.info("Alert suppressed (quiet hours) for: %s", ", ".join(failed_check_names))
+        return
+
     # Check cooldown
-    state = load_state()
     failure_key = "|".join(sorted(failures))
     if should_alert(state, failure_key):
-        push_alert(config.HOST_NAME, failures)
-        state[failure_key] = time.time()
-        # Clean old state entries
-        cutoff = time.time() - 86400
-        state = {k: v for k, v in state.items() if v > cutoff}
-        save_state(state)
+        delivered = push_alert(config.HOST_NAME, failures)
+        if delivered:
+            state[failure_key] = time.time()
+            save_state(state)
+        else:
+            log.warning("Alert delivery failed — cooldown NOT updated")
     else:
         log.info("Alert suppressed (cooldown) for: %s", failure_key[:100])
 

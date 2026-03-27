@@ -138,8 +138,14 @@ def _render_sms_image(body: str, header: str = "ARIA") -> str:
 
 
 def _redirect_to_image(to: str, body: str, media_url: str | None = None) -> str:
-    """Redirect an outbound SMS to an image push. Returns a fake SID."""
-    fake_sid = f"IMG_{uuid.uuid4().hex[:8]}"
+    """Redirect an outbound SMS to an image push. Returns a fake SID.
+
+    SID prefix indicates delivery outcome:
+    - IMG_xxxx: push succeeded (or body was empty/whitespace)
+    - IMG_FAIL_xxxx: push failed
+    """
+    uid = uuid.uuid4().hex[:8]
+    push_failed = False
 
     if not body or not body.strip():
         log.warning("SMS redirect: empty body to %s, skipping image push", to)
@@ -151,6 +157,7 @@ def _redirect_to_image(to: str, body: str, media_url: str | None = None) -> str:
                 success = push_image.push_image(img_path, caption="ARIA")
                 if not success:
                     log.error("SMS redirect: push_image failed for message to %s", to)
+                    push_failed = True
             finally:
                 try:
                     os.unlink(img_path)
@@ -158,6 +165,9 @@ def _redirect_to_image(to: str, body: str, media_url: str | None = None) -> str:
                     pass
         except Exception as e:
             log.error("SMS redirect: failed to render/push image for %s: %s", to, e)
+            push_failed = True
+
+    fake_sid = f"IMG_FAIL_{uid}" if push_failed else f"IMG_{uid}"
 
     # Log to sms_outbound for audit trail
     try:

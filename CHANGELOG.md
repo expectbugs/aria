@@ -6,6 +6,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.38] — 2026-03-27
+
+### Added
+
+- **Monitor PostgreSQL state** — `monitor.py` cooldown state migrated from JSON file (`monitor_state.json`) to PostgreSQL `monitor_state` table. Fixes architecture violation (all data stores must use PostgreSQL).
+- **Monitor quiet hours** — Non-critical alerts (redis, backup, peer, restore) suppressed during hours 0-7. Critical alerts (daemon, postgres) always fire. Uses `QUIET_HOURS_START`/`QUIET_HOURS_END` from config.
+- **Monitor delivery-gated cooldown** — `push_alert()` returns bool; cooldown timestamp only updated on successful delivery. Failed deliveries allow retry on next cycle.
+- **Monitor state cleanup on every run** — Stale cooldown entries (>24h) cleaned up regardless of whether an alert was sent.
+- **SMS redirect failure tracking** — `_redirect_to_image()` now uses `IMG_FAIL_` SID prefix when `push_image()` fails, making failures distinguishable from successes in `sms_outbound` audit trail.
+- **26 new tests** in `tests/test_monitor.py` — quiet hours suppression, critical bypass, cooldown on delivery success/failure, PostgreSQL state load/save, cleanup, push_alert return values.
+
+### Changed
+
+- **Version** bumped to 0.4.38
+
+---
+
 ## [0.4.37] — 2026-03-27
 
 ### Added
