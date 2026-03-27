@@ -24,6 +24,9 @@ config.py
 # Personal health data
 adam_health_nutrition_profile.md
 
+# Project plan (contains personal info)
+ARIA_Project_Plan.md
+
 # Claude project files
 .claude/
 
