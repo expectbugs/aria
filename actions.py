@@ -167,7 +167,7 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
                 if not vehicle_store.delete_entry(action["id"]):
                     failures.append("Couldn't delete vehicle entry — no entry found with that ID.")
             elif act == "log_health":
-                health_store.add_entry(
+                result = health_store.add_entry(
                     entry_date=action["date"],
                     category=action["category"],
                     description=action["description"],
@@ -175,6 +175,8 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
                     sleep_hours=action.get("sleep_hours"),
                     meal_type=action.get("meal_type"),
                 )
+                if result.get("duplicate"):
+                    log.warning("Duplicate health entry blocked: %s", action.get("description", "")[:50])
                 if action.get("category") == "meal" and action.get("meal_type"):
                     _health_meal_types.append(action["meal_type"])
             elif act == "delete_health_entry":
@@ -216,7 +218,13 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
                 if not timer_store.cancel_timer(action["id"]):
                     failures.append("Couldn't cancel timer — no active timer found with that ID.")
             elif act == "log_nutrition":
-                nutrition_store.add_item(
+                # Date is required — fall back to today with warning if missing
+                nutr_date = action.get("date")
+                if not nutr_date:
+                    nutr_date = datetime.now().strftime("%Y-%m-%d")
+                    log.warning("log_nutrition missing date field for '%s', defaulting to today (%s)",
+                                action.get("food_name", "?"), nutr_date)
+                result = nutrition_store.add_item(
                     food_name=action["food_name"],
                     meal_type=action.get("meal_type", "snack"),
                     nutrients=action.get("nutrients", {}),
@@ -224,9 +232,11 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
                     serving_size=action.get("serving_size", ""),
                     source=action.get("source", "label_photo"),
                     notes=action.get("notes", ""),
-                    entry_date=action.get("date"),
+                    entry_date=nutr_date,
                     entry_time=action.get("time"),
                 )
+                if result.get("duplicate"):
+                    log.warning("Duplicate nutrition entry blocked: %s", action.get("food_name", ""))
                 _nutrition_actions.append(action)
             elif act == "delete_nutrition_entry":
                 if not nutrition_store.delete_item(action["id"]):

@@ -7,25 +7,28 @@ import health_store
 
 class TestHealthRoundtrip:
     def test_add_pain_entry(self):
-        entry = health_store.add_entry(
+        result = health_store.add_entry(
             entry_date="2026-03-20", category="pain",
             description="lower back pain", severity=6,
         )
+        entry = result["entry"]
         assert entry["category"] == "pain"
         assert entry["severity"] == 6
 
     def test_add_meal_entry(self):
-        entry = health_store.add_entry(
+        result = health_store.add_entry(
             entry_date="2026-03-20", category="meal",
             description="grilled salmon", meal_type="dinner",
         )
+        entry = result["entry"]
         assert entry["meal_type"] == "dinner"
 
     def test_add_sleep_entry(self):
-        entry = health_store.add_entry(
+        result = health_store.add_entry(
             entry_date="2026-03-20", category="sleep",
             description="restful night", sleep_hours=7.5,
         )
+        entry = result["entry"]
         assert entry["sleep_hours"] == 7.5
 
     def test_filter_by_category(self):
@@ -48,7 +51,8 @@ class TestHealthRoundtrip:
         assert recent[0]["description"] == "Recent"
 
     def test_delete(self):
-        entry = health_store.add_entry("2026-03-20", "general", "Delete me")
+        result = health_store.add_entry("2026-03-20", "general", "Delete me")
+        entry = result["entry"]
         assert health_store.delete_entry(entry["id"]) is True
         assert health_store.get_entries() == []
 

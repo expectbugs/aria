@@ -8,6 +8,7 @@ All nutrient values stored PER SERVING as printed on the label.
 Actual intake = label value × servings consumed.
 """
 
+import hashlib
 import logging
 import uuid
 from datetime import datetime, date, timedelta
@@ -56,6 +57,64 @@ NUTRIENT_FIELDS = [
 ]
 
 
+def _content_hash(food_name: str, entry_date: str, meal_type: str, servings: float) -> str:
+    """Compute content hash for duplicate detection."""
+    key = f"{food_name.lower().strip()}|{entry_date}|{meal_type}|{servings}"
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+# Sanity bounds for per-item nutrient values (not daily totals)
+_SANITY_BOUNDS = {
+    "calories": (0, 5000),
+    "sodium_mg": (0, 10000),
+    "protein_g": (0, 300),
+    "total_fat_g": (0, 500),
+    "cholesterol_mg": (0, 2000),
+    "total_carb_g": (0, 1000),
+}
+
+
+def _validate_entry(food_name: str, entry_date: str, servings: float,
+                    nutrients: dict | None) -> list[str]:
+    """Validate a nutrition entry before INSERT. Returns list of errors (empty = valid)."""
+    errors = []
+
+    # Food name
+    if not food_name or not food_name.strip():
+        errors.append("food_name is empty")
+
+    # Date: must be valid ISO and within reasonable range
+    try:
+        d = date.fromisoformat(entry_date)
+        days_ago = (date.today() - d).days
+        if days_ago < 0:
+            errors.append(f"entry_date is in the future ({entry_date})")
+        elif days_ago > 7:
+            errors.append(f"entry_date is more than 7 days ago ({entry_date}, {days_ago} days)")
+    except (ValueError, TypeError):
+        errors.append(f"entry_date is not a valid date ({entry_date!r})")
+
+    # Servings
+    if servings <= 0:
+        errors.append(f"servings must be positive, got {servings}")
+    elif servings > 20:
+        errors.append(f"servings={servings} seems unreasonable (max 20)")
+
+    # Nutrient sanity bounds (per serving, not total)
+    if nutrients:
+        for field, (lo, hi) in _SANITY_BOUNDS.items():
+            val = nutrients.get(field)
+            if val is not None:
+                try:
+                    v = float(val)
+                    if v < lo or v > hi:
+                        errors.append(f"{field}={v} outside sanity range [{lo}, {hi}]")
+                except (ValueError, TypeError):
+                    errors.append(f"{field}={val!r} is not a number")
+
+    return errors
+
+
 def add_item(
     food_name: str,
     meal_type: str = "snack",
@@ -64,36 +123,60 @@ def add_item(
     serving_size: str = "",
     source: str = "label_photo",
     notes: str = "",
-    entry_date: str | None = None,
+    entry_date: str = "",
     entry_time: str | None = None,
+    response_id: str | None = None,
+    conn=None,
 ) -> dict:
-    """Add a nutrition entry.
+    """Add a nutrition entry with deduplication and validation.
 
+    entry_date: REQUIRED — ISO date string (YYYY-MM-DD). No silent default.
     nutrients: dict of nutrient_name -> value PER SERVING (as on label).
                Use None for unknown values, not 0.
     servings: how many servings actually consumed.
+    conn: optional DB connection (for transactional use with caller's transaction).
+
+    Returns: {"inserted": True/False, "entry": {...}, "duplicate": True/False}
+    Raises ValueError on validation failure.
     """
-    if servings <= 0:
-        log.warning("Nutrition entry '%s' had servings=%s, defaulting to 1.0",
-                     food_name, servings)
-        servings = 1.0
+    if not entry_date:
+        raise ValueError("entry_date is required for nutrition entries (no silent default)")
+
+    # Validate before touching the database
+    errors = _validate_entry(food_name, entry_date, servings, nutrients)
+    if errors:
+        raise ValueError(f"Nutrition entry validation failed: {'; '.join(errors)}")
 
     item_id = str(uuid.uuid4())[:8]
     now = datetime.now()
-    d = entry_date or now.strftime("%Y-%m-%d")
     t = entry_time or now.strftime("%H:%M")
+    content_hash = _content_hash(food_name, entry_date, meal_type, servings)
 
-    with db.get_conn() as conn:
-        row = conn.execute(
+    def _do_insert(c):
+        return c.execute(
             """INSERT INTO nutrition_entries
-               (id, date, time, meal_type, food_name, source, servings, serving_size, nutrients, notes)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               (id, date, time, meal_type, food_name, source, servings,
+                serving_size, nutrients, notes, content_hash, response_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (content_hash) DO NOTHING
                RETURNING *""",
-            (item_id, d, t, meal_type, food_name, source, servings,
-             serving_size, psycopg.types.json.Jsonb(nutrients or {}), notes),
+            (item_id, entry_date, t, meal_type, food_name, source, servings,
+             serving_size, psycopg.types.json.Jsonb(nutrients or {}), notes,
+             content_hash, response_id),
         ).fetchone()
-    log.info("Nutrition logged: %s (%s) — %s servings", food_name, meal_type, servings)
-    return db.serialize_row(row)
+
+    if conn:
+        row = _do_insert(conn)
+    else:
+        with db.get_conn() as c:
+            row = _do_insert(c)
+
+    if row is None:
+        log.info("Nutrition duplicate blocked: %s (%s) on %s", food_name, meal_type, entry_date)
+        return {"inserted": False, "entry": None, "duplicate": True}
+
+    log.info("Nutrition logged: %s (%s) on %s — %s servings", food_name, meal_type, entry_date, servings)
+    return {"inserted": True, "entry": db.serialize_row(row), "duplicate": False}
 
 
 def delete_item(item_id: str) -> bool:

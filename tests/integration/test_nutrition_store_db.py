@@ -14,7 +14,8 @@ import nutrition_store
 
 class TestNutritionRoundtrip:
     def test_add_item_with_full_nutrients(self):
-        item = nutrition_store.add_item(
+        today = date.today().isoformat()
+        result = nutrition_store.add_item(
             food_name="Grilled Chicken",
             meal_type="lunch",
             nutrients={
@@ -29,7 +30,9 @@ class TestNutritionRoundtrip:
             servings=1.0,
             serving_size="8 oz",
             source="manual",
+            entry_date=today,
         )
+        item = result["entry"]
         assert item["food_name"] == "Grilled Chicken"
         assert item["nutrients"]["calories"] == 350
         assert item["nutrients"]["protein_g"] == 52
@@ -39,22 +42,28 @@ class TestNutritionRoundtrip:
 
     def test_add_item_sparse_nutrients(self):
         """Items may have only a few known nutrients (e.g., estimates)."""
-        item = nutrition_store.add_item(
+        today = date.today().isoformat()
+        result = nutrition_store.add_item(
             food_name="Apple",
             nutrients={"calories": 95, "dietary_fiber_g": 4},
+            entry_date=today,
         )
+        item = result["entry"]
         assert item["nutrients"]["calories"] == 95
         assert "protein_g" not in item["nutrients"]
 
     def test_jsonb_roundtrip(self):
         """Verify JSONB column stores and retrieves complex dicts correctly."""
+        today = date.today().isoformat()
         nutrients = {
             "calories": 450.5,
             "protein_g": 38,
             "omega3_mg": 1200,
             "sodium_mg": 680,
         }
-        item = nutrition_store.add_item("Test Food", nutrients=nutrients)
+        result = nutrition_store.add_item("Test Food", nutrients=nutrients,
+                                          entry_date=today)
+        item = result["entry"]
         items = nutrition_store.get_items(day=item["date"])
         retrieved = items[0]["nutrients"]
         assert retrieved["calories"] == 450.5
@@ -288,6 +297,8 @@ class TestGetItems:
         assert lunches[0]["food_name"] == "Salad"
 
     def test_delete_item(self):
-        item = nutrition_store.add_item("Delete me")
+        today = date.today().isoformat()
+        result = nutrition_store.add_item("Delete me", entry_date=today)
+        item = result["entry"]
         assert nutrition_store.delete_item(item["id"]) is True
         assert nutrition_store.get_items(day=item["date"]) == []

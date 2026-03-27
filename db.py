@@ -6,6 +6,7 @@ Used by all stores (daemon.py and tick.py).
 
 import atexit
 import logging
+from contextlib import contextmanager
 from datetime import date as _date, time as _time, datetime as _datetime
 
 import psycopg
@@ -64,6 +65,34 @@ def serialize_row(row: dict) -> dict:
         else:
             result[key] = val
     return result
+
+
+@contextmanager
+def get_transaction():
+    """Get a connection with autocommit disabled for multi-statement transactions.
+
+    All statements within the block are committed together on success,
+    or rolled back on exception. Use for operations that must be atomic
+    (e.g., logging related entries to multiple tables).
+
+    Usage:
+        with db.get_transaction() as conn:
+            conn.execute("INSERT INTO table_a ...")
+            conn.execute("INSERT INTO table_b ...")
+            # both commit on exit, or both roll back on exception
+    """
+    pool = get_pool()
+    conn = pool.getconn()
+    conn.autocommit = False
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.autocommit = True
+        pool.putconn(conn)
 
 
 def close():

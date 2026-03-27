@@ -25,48 +25,42 @@ class TestAddItem:
                 food_name="Chicken breast", meal_type="lunch",
                 nutrients={"calories": 250, "protein_g": 40},
                 servings=1.0, serving_size="6 oz",
+                entry_date="2026-03-20",
             )
-            assert result["food_name"] == "Chicken breast"
+            assert result["inserted"] is True
+            assert result["entry"]["food_name"] == "Chicken breast"
             sql = mc.execute.call_args[0][0]
             assert "INSERT INTO nutrition_entries" in sql
         finally:
             p.stop()
 
-    def test_zero_servings_defaults_to_one(self):
-        mc, p = _patch_db()
-        mc.execute.return_value.fetchone.return_value = make_nutrition_row(servings=1.0)
-        try:
+    def test_zero_servings_raises_validation_error(self):
+        """Zero servings is now a validation error instead of silent default."""
+        import pytest
+        with pytest.raises(ValueError, match="servings must be positive"):
             nutrition_store.add_item(
-                food_name="Test", servings=0,
+                food_name="Test", servings=0, entry_date="2026-03-20",
             )
-            params = mc.execute.call_args[0][1]
-            # servings is the 7th param (index 6)
-            assert params[6] == 1.0
-        finally:
-            p.stop()
 
-    def test_negative_servings_defaults_to_one(self):
-        mc, p = _patch_db()
-        mc.execute.return_value.fetchone.return_value = make_nutrition_row(servings=1.0)
-        try:
+    def test_negative_servings_raises_validation_error(self):
+        """Negative servings is now a validation error."""
+        import pytest
+        with pytest.raises(ValueError, match="servings must be positive"):
             nutrition_store.add_item(
-                food_name="Test", servings=-2,
+                food_name="Test", servings=-2, entry_date="2026-03-20",
             )
-            params = mc.execute.call_args[0][1]
-            assert params[6] == 1.0
-        finally:
-            p.stop()
 
     def test_custom_date_and_time(self):
         mc, p = _patch_db()
         mc.execute.return_value.fetchone.return_value = make_nutrition_row()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
         try:
             nutrition_store.add_item(
-                food_name="Test", entry_date="2026-03-19",
+                food_name="Test", entry_date=yesterday,
                 entry_time="08:30",
             )
             params = mc.execute.call_args[0][1]
-            assert params[1] == "2026-03-19"  # date
+            assert params[1] == yesterday  # date
             assert params[2] == "08:30"  # time
         finally:
             p.stop()
@@ -75,10 +69,45 @@ class TestAddItem:
         mc, p = _patch_db()
         mc.execute.return_value.fetchone.return_value = make_nutrition_row(nutrients={})
         try:
-            nutrition_store.add_item(food_name="Water", nutrients=None)
+            nutrition_store.add_item(food_name="Water", nutrients=None,
+                                    entry_date="2026-03-20")
             # Should not raise
         finally:
             p.stop()
+
+    def test_missing_date_raises_error(self):
+        """entry_date is now required — no silent default to today."""
+        import pytest
+        with pytest.raises(ValueError, match="entry_date is required"):
+            nutrition_store.add_item(food_name="Test", entry_date="")
+
+    def test_duplicate_returns_not_inserted(self):
+        """Content hash dedup: second identical insert returns inserted=False."""
+        mc, p = _patch_db()
+        mc.execute.return_value.fetchone.return_value = None  # ON CONFLICT DO NOTHING
+        try:
+            result = nutrition_store.add_item(
+                food_name="Salmon", entry_date="2026-03-20",
+            )
+            assert result["inserted"] is False
+            assert result["duplicate"] is True
+        finally:
+            p.stop()
+
+    def test_future_date_raises_validation_error(self):
+        """Dates in the future are rejected."""
+        import pytest
+        with pytest.raises(ValueError, match="future"):
+            nutrition_store.add_item(food_name="Test", entry_date="2099-01-01")
+
+    def test_absurd_calories_raises_validation_error(self):
+        """Per-item calories > 5000 are rejected."""
+        import pytest
+        with pytest.raises(ValueError, match="calories"):
+            nutrition_store.add_item(
+                food_name="Test", entry_date="2026-03-20",
+                nutrients={"calories": 9999},
+            )
 
 
 class TestDeleteItem:

@@ -1,10 +1,14 @@
 """Health and physical log backed by PostgreSQL."""
 
+import hashlib
+import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
 import db
+
+log = logging.getLogger("aria.health")
 
 
 def get_entries(days: Optional[int] = None,
@@ -90,27 +94,56 @@ def get_patterns(days: int = 7) -> list[str]:
     return patterns
 
 
+def _content_hash(entry_date: str, category: str, description: str,
+                  meal_type: str | None) -> str:
+    """Compute content hash for duplicate detection."""
+    key = f"{entry_date}|{category}|{description[:100].lower().strip()}|{meal_type or ''}"
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
 def add_entry(entry_date: str, category: str, description: str,
               severity: Optional[int] = None,
               sleep_hours: Optional[float] = None,
-              meal_type: Optional[str] = None) -> dict:
-    """Add a health log entry.
+              meal_type: Optional[str] = None,
+              response_id: str | None = None,
+              conn=None) -> dict:
+    """Add a health log entry with deduplication.
 
     category: pain, sleep, exercise, symptom, medication, meal, nutrition, general
     severity: 1-10 (optional, for pain/symptoms)
     sleep_hours: hours slept (optional, for sleep entries)
     meal_type: breakfast, lunch, dinner, snack (optional, for meal entries)
+    conn: optional DB connection (for transactional use with caller's transaction).
+
+    Returns: {"inserted": True/False, "entry": {...}, "duplicate": True/False}
     """
     entry_id = str(uuid.uuid4())[:8]
-    with db.get_conn() as conn:
-        row = conn.execute(
+    content_hash = _content_hash(entry_date, category, description, meal_type)
+
+    def _do_insert(c):
+        return c.execute(
             """INSERT INTO health_entries
-               (id, date, category, description, severity, sleep_hours, meal_type)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               (id, date, category, description, severity, sleep_hours, meal_type,
+                content_hash, response_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (content_hash) DO NOTHING
                RETURNING *""",
-            (entry_id, entry_date, category, description, severity, sleep_hours, meal_type),
+            (entry_id, entry_date, category, description, severity, sleep_hours,
+             meal_type, content_hash, response_id),
         ).fetchone()
-    return db.serialize_row(row)
+
+    if conn:
+        row = _do_insert(conn)
+    else:
+        with db.get_conn() as c:
+            row = _do_insert(c)
+
+    if row is None:
+        log.info("Health duplicate blocked: %s on %s", description[:50], entry_date)
+        return {"inserted": False, "entry": None, "duplicate": True}
+
+    log.info("Health logged: [%s] %s on %s", category, description[:50], entry_date)
+    return {"inserted": True, "entry": db.serialize_row(row), "duplicate": False}
 
 
 def delete_entry(entry_id: str) -> bool:

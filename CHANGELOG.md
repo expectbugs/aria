@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.34] — 2026-03-27
+
+### Added
+
+- **Transaction support in db.py** — `get_transaction()` context manager for multi-statement atomic operations. Existing `get_conn()` unchanged for backward compat.
+- **Content hash dedup in stores** — `nutrition_store.add_item()` and `health_store.add_entry()` compute SHA-256 content hashes, INSERT with `ON CONFLICT DO NOTHING`, and return `{"inserted": True/False, "duplicate": True/False, "entry": {...}}`.
+- **Nutrition entry validation** — `add_item()` validates date range (within 7 days), nutrient sanity bounds (calories 0-5000, sodium 0-10000, etc.), servings range (0-20), non-empty food name. Raises `ValueError` on violations.
+
+### Changed
+
+- **`entry_date` now REQUIRED** on `nutrition_store.add_item()` — no more silent default to today. Prevents wrong-date entries when logging yesterday's meals after midnight. `actions.py` falls back to today with a WARNING if Claude omits the date field.
+- **Store return types** — Both `add_item()` and `add_entry()` now return structured dicts with `inserted`, `duplicate`, and `entry` keys instead of raw row dicts.
+- **Version** bumped to 0.4.34
+
+---
+
 ## [0.4.33] — 2026-03-27
 
 ### Added

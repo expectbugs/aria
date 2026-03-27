@@ -198,7 +198,8 @@ class TestAddEntry:
                 entry_date="2026-03-20", category="pain",
                 description="back pain", severity=5,
             )
-            assert result["category"] == "pain"
+            assert result["inserted"] is True
+            assert result["entry"]["category"] == "pain"
             sql = mc.execute.call_args[0][0]
             assert "INSERT INTO health_entries" in sql
         finally:
@@ -215,7 +216,7 @@ class TestAddEntry:
                 entry_date="2026-03-20", category="meal",
                 description="grilled chicken", meal_type="lunch",
             )
-            assert result["meal_type"] == "lunch"
+            assert result["entry"]["meal_type"] == "lunch"
         finally:
             p.stop()
 
@@ -229,7 +230,7 @@ class TestAddEntry:
                 entry_date="2026-03-20", category="sleep",
                 description="slept well", sleep_hours=7.5,
             )
-            assert result["sleep_hours"] == 7.5
+            assert result["entry"]["sleep_hours"] == 7.5
         finally:
             p.stop()
 
