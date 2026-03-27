@@ -860,11 +860,15 @@ async def nudge(req: NudgeRequest, request: Request):
     """
     verify_auth(request)
 
+    now = datetime.now()
     prompt = (
+        f"Current time: {now.strftime('%I:%M %p on %A, %B %d')}.\n\n"
         "The following conditions have been detected and the user should be notified. "
         "Compose a single brief, natural SMS message covering all of them. "
         "Be warm and supportive, not nagging. Keep it under 300 characters. "
-        "Do NOT use markdown or special formatting. Do NOT add any ACTION blocks.\n\n"
+        "Do NOT use markdown or special formatting. Do NOT add any ACTION blocks. "
+        "If any event or appointment time has already passed, do NOT tell the user "
+        "to 'head out' or take action on it — just note it's overdue.\n\n"
         "Triggers:\n" + "\n".join(f"- {t}" for t in req.triggers)
     )
     extra_context = req.context if req.context else ""

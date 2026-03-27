@@ -6,6 +6,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.37] — 2026-03-27
+
+### Added
+
+- **Zombie reminder auto-expiry** — Reminders overdue by 3+ days are auto-expired (marked done with `auto_expired_at` timestamp). Prevents the immortal reminder bug that spammed 10+ "head out for movers" messages in one day.
+- **Nudge audit log** — All nudge attempts (sent, compose_failed, delivery_failed, suppressed) written to `nudge_log` table with timestamps, types, and delivery status.
+- **Global nudge frequency cap** — Max 6 nudges/day and 2 nudges/hour, queried from `nudge_log`. Prevents the 14-messages-in-one-day flood.
+- **Temporal context for Claude** — All time-sensitive triggers include `(current time: HH:MM AM/PM)`. The `/nudge` prompt tells Claude the current time and instructs it NOT to tell the user to "head out" for past events.
+- **Advisory lock for nudge evaluation** — `pg_try_advisory_xact_lock(42)` prevents race conditions between concurrent tick instances evaluating nudges simultaneously.
+- **Exercise coaching rate limiting** — Minimum 3-minute average interval between exercise nudges.
+
+### Fixed
+
+- **Cooldown error handling** — Cooldowns now ONLY update after successful delivery. API failures and SMS delivery failures no longer silently update cooldowns (which was hiding message loss).
+- **Meal gap check wrong table** — Now uses `nutrition_store.get_items()` instead of `health_store.get_entries()`. No more "no meals logged" when nutrition IS logged.
+- **Timer/reminder completion ordering** — Timers and location reminders are marked complete BEFORE delivery, preventing retry storms on transient SMS failures.
+- **Silent ValueError swallowing** — Calendar event time parsing errors now logged as warnings instead of silently ignored.
+
+### Changed
+
+- **reminder_due cooldown** — Increased from 2 hours to 12 hours (overdue reminders don't need to ping more than twice a day)
+- **Version** bumped to 0.4.37
+
+---
+
 ## [0.4.36] — 2026-03-27
 
 ### Added

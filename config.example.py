@@ -94,6 +94,9 @@ KNOWN_PLACES = {
 NUDGE_INTERVAL_MIN = 30           # minutes between nudge evaluations
 QUIET_HOURS_START = 0              # midnight (0-23)
 QUIET_HOURS_END = 7                # 7am (0-23)
+MAX_NUDGES_PER_DAY = 6            # global cap: max nudge messages per 24h
+MAX_NUDGES_PER_HOUR = 2           # global cap: max nudge messages per 1h
+STALE_REMINDER_DAYS = 3           # auto-expire reminders overdue by this many days
 
 # --- Twilio (SMS/MMS/Voice) ---
 TWILIO_ACCOUNT_SID = "your-twilio-account-sid"       # Basic Auth user for REST API

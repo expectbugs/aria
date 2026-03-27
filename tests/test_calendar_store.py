@@ -1,6 +1,6 @@
 """Tests for calendar_store.py — events and reminders CRUD."""
 
-from datetime import date, time, datetime
+from datetime import date, time, datetime, timedelta
 from unittest.mock import patch, MagicMock
 
 import calendar_store
@@ -276,5 +276,48 @@ class TestDeleteReminder:
         mc.execute.return_value.rowcount = 0
         try:
             assert calendar_store.delete_reminder("bad") is False
+        finally:
+            p.stop()
+
+
+# === Auto-expire stale reminders (C1) ===
+
+class TestAutoExpireStaleReminders:
+    def test_expires_overdue_non_location_reminders(self):
+        mc, p = _patch_db()
+        mc.execute.return_value.fetchall.return_value = [
+            make_reminder_row(id="r1", text="Call movers", due=date(2026, 3, 15),
+                              done=True, completed_at=datetime(2026, 3, 27)),
+        ]
+        try:
+            expired = calendar_store.auto_expire_stale_reminders(max_overdue_days=3)
+            assert len(expired) == 1
+            assert expired[0]["id"] == "r1"
+            sql = mc.execute.call_args[0][0]
+            assert "UPDATE reminders" in sql
+            assert "auto_expired_at" in sql
+            assert "location IS NULL" in sql
+        finally:
+            p.stop()
+
+    def test_returns_empty_when_none_expired(self):
+        mc, p = _patch_db()
+        mc.execute.return_value.fetchall.return_value = []
+        try:
+            expired = calendar_store.auto_expire_stale_reminders()
+            assert expired == []
+        finally:
+            p.stop()
+
+    def test_respects_max_overdue_days(self):
+        mc, p = _patch_db()
+        mc.execute.return_value.fetchall.return_value = []
+        try:
+            calendar_store.auto_expire_stale_reminders(max_overdue_days=7)
+            params = mc.execute.call_args[0][1]
+            # Should use cutoff = today - 7 days
+            cutoff = params[0]
+            expected = (date.today() - timedelta(days=7)).isoformat()
+            assert cutoff == expected
         finally:
             p.stop()

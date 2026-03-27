@@ -1,10 +1,13 @@
 """Local calendar and reminders store backed by PostgreSQL."""
 
+import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import db
+
+log = logging.getLogger("aria.calendar")
 
 
 # --- Calendar Events ---
@@ -114,3 +117,27 @@ def delete_reminder(reminder_id: str) -> bool:
     with db.get_conn() as conn:
         cur = conn.execute("DELETE FROM reminders WHERE id = %s", (reminder_id,))
     return cur.rowcount > 0
+
+
+def auto_expire_stale_reminders(max_overdue_days: int = 3) -> list[dict]:
+    """Auto-expire non-location reminders that are overdue by more than max_overdue_days.
+
+    Marks them done with auto_expired_at timestamp. Location reminders are excluded
+    because they trigger on proximity, not time.
+
+    Returns list of expired reminders for logging.
+    """
+    cutoff = (date.today() - timedelta(days=max_overdue_days)).isoformat()
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """UPDATE reminders
+               SET done = TRUE, completed_at = NOW(), auto_expired_at = NOW()
+               WHERE due < %s AND NOT done AND location IS NULL
+               RETURNING *""",
+            (cutoff,),
+        ).fetchall()
+    expired = [db.serialize_row(r) for r in rows]
+    if expired:
+        log.info("Auto-expired %d stale reminders (overdue > %d days)",
+                 len(expired), max_overdue_days)
+    return expired
