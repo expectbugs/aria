@@ -164,7 +164,9 @@ class TestPrepareForSpeech:
         assert "item two" in result
         assert "*" not in result
 
-    def test_strips_action_blocks(self):
+    @patch("push_image.push_image", return_value=True)
+    @patch("sms._render_sms_image", return_value="/tmp/fake.png")
+    def test_strips_action_blocks(self, mock_render, mock_push):
         text = 'Hello <!--ACTION::{"action":"set_delivery","method":"voice"}--> world'
         result = tts._prepare_for_speech(text)
         assert "ACTION" not in result
@@ -172,19 +174,25 @@ class TestPrepareForSpeech:
         assert "Hello" in result
         assert "world" in result
 
-    def test_strips_multiline_action_blocks(self):
+    @patch("push_image.push_image", return_value=True)
+    @patch("sms._render_sms_image", return_value="/tmp/fake.png")
+    def test_strips_multiline_action_blocks(self, mock_render, mock_push):
         text = 'Before\n<!--ACTION::{"action":"log_health",\n"date":"2026-03-25"}-->\nAfter'
         result = tts._prepare_for_speech(text)
         assert "ACTION" not in result
         assert "log_health" not in result
 
-    def test_action_block_preserves_surrounding_text(self):
+    @patch("push_image.push_image", return_value=True)
+    @patch("sms._render_sms_image", return_value="/tmp/fake.png")
+    def test_action_block_preserves_surrounding_text(self, mock_render, mock_push):
         text = 'Timer set!<!--ACTION::{"action":"set_timer","minutes":30}-->'
         result = tts._prepare_for_speech(text)
         assert "Timer set" in result
         assert "ACTION" not in result
 
-    def test_action_block_triggers_warning_log(self, caplog):
+    @patch("push_image.push_image", return_value=True)  # prevent real phone push
+    @patch("sms._render_sms_image", return_value="/tmp/fake.png")
+    def test_action_block_triggers_warning_log(self, mock_render, mock_push, caplog):
         import logging
         with caplog.at_level(logging.WARNING, logger="aria.tts"):
             tts._prepare_for_speech('Hi <!--ACTION::{"action":"test"}-->')

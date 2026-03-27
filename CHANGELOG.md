@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.39] — 2026-03-27
+
+### Fixed
+
+- **Test suite leaking real push_image to phone** — 4 tests in `test_tts_pipeline.py` called `_prepare_for_speech()` with ACTION block text without mocking `push_image` at the module level. The local `import push_image` inside `tts.py`'s function body bypassed test mocks, causing real HTTP POSTs to the phone on every test run (~4 "ARIA BUG" alert images per run). Plus 1 test in `test_daemon_actions.py` leaked via `_push_data_quality_alert()`. All 5 now have proper `@patch("push_image.push_image")` decorators.
+
+### Changed
+
+- **Version** bumped to 0.4.39
+
+---
+
 ## [0.4.38] — 2026-03-27
 
 ### Added
