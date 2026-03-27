@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.35] — 2026-03-27
+
+### Added
+
+- **Date field in log_nutrition ACTION template** — `system_prompt.py` now includes `"date": "YYYY-MM-DD"` in the log_nutrition template (was missing, causing wrong dates when logging after midnight). Instruction added: date is REQUIRED, must match between log_health and log_nutrition.
+- **Pre-validation in process_actions()** — Three-phase pipeline: parse → validate → execute. Catches issues BEFORE any database writes:
+  - Intra-response dedup: duplicate `log_nutrition` blocks with same `(food_name, date, meal_type)` are removed before execution
+  - Date cross-check: `log_health` and `log_nutrition` for the same meal must have matching dates — mismatch aborts ALL actions
+- **LOUD data quality alerts** — Validation failures push alert images to the phone immediately so problems are never hidden
+
+### Changed
+
+- **Version** bumped to 0.4.35
+
+---
+
 ## [0.4.34] — 2026-03-27
 
 ### Added

@@ -97,10 +97,79 @@ def _validate_nutrition(nutrition_actions: list[dict],
     return warnings
 
 
+def _push_data_quality_alert(reason: str, context: str = ""):
+    """Push a LOUD data quality alert to the phone."""
+    try:
+        from sms import _render_sms_image
+        import push_image
+        import os
+        alert = f"DATA QUALITY ALERT\n\n{reason}"
+        if context:
+            alert += f"\n\nContext: {context[:200]}"
+        img_path = _render_sms_image(alert, header="ARIA DATA")
+        push_image.push_image(img_path, caption="Data Quality Alert")
+        os.unlink(img_path)
+    except Exception:
+        pass  # Don't crash action processing over alert delivery
+
+
+def _prevalidate_nutrition_actions(parsed_actions: list[dict]) -> tuple[list[dict], list[str]]:
+    """Pre-validate nutrition actions before any DB writes.
+
+    Returns (cleaned_actions, hard_errors).
+    - Removes intra-response duplicates (same food_name + date + meal_type)
+    - Cross-checks dates between log_health and log_nutrition for same meal
+    - Returns hard_errors if any critical issue found (caller should abort)
+    """
+    hard_errors = []
+    cleaned = []
+    seen_nutrition = set()  # (food_name_lower, date, meal_type)
+    health_dates_by_meal = {}  # meal_type -> date
+
+    # First pass: collect health dates for cross-checking
+    for action in parsed_actions:
+        act = action.get("action")
+        if act == "log_health" and action.get("category") == "meal":
+            mt = action.get("meal_type")
+            if mt:
+                health_dates_by_meal[mt] = action.get("date")
+
+    # Second pass: validate and dedup nutrition actions
+    for action in parsed_actions:
+        act = action.get("action")
+        if act == "log_nutrition":
+            food = action.get("food_name", "").lower().strip()
+            d = action.get("date", "")
+            mt = action.get("meal_type", "snack")
+            key = (food, d, mt)
+
+            # Intra-response duplicate
+            if key in seen_nutrition:
+                log.warning("Intra-response duplicate blocked: %s (%s) on %s", food, mt, d)
+                continue
+            seen_nutrition.add(key)
+
+            # Date cross-check with log_health
+            if mt in health_dates_by_meal and d and health_dates_by_meal[mt] != d:
+                hard_errors.append(
+                    f"Date mismatch for {mt}: log_health has {health_dates_by_meal[mt]} "
+                    f"but log_nutrition has {d} for '{food}'"
+                )
+
+        cleaned.append(action)
+
+    return cleaned, hard_errors
+
+
 def process_actions(response_text: str, expect_actions: list[str] | None = None,
                     metadata: dict | None = None,
                     log_fn=None) -> str:
     """Extract and execute ACTION blocks from Claude's response.
+
+    Three-phase pipeline:
+    1. Parse — extract and parse all ACTION block JSON
+    2. Validate — pre-validate nutrition entries (dedup, date cross-check)
+    3. Execute — run each action against the database
 
     Returns the cleaned response, replacing it with an error message
     if any actions failed so the user isn't told something worked when it didn't.
@@ -114,15 +183,48 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             audit logging to the request_log table. If None, audit logging
             is skipped (useful in tests).
     """
-    actions = re.findall(r'<!--ACTION::(\{.*?\})-->', response_text, re.DOTALL)
-    failures = []
-    action_types_found = []
-    _nutrition_actions = []  # collected for post-validation
-    _health_meal_types = []  # collected for meal_type cross-check
+    action_jsons = re.findall(r'<!--ACTION::(\{.*?\})-->', response_text, re.DOTALL)
 
-    for action_json in actions:
+    # --- Phase 1: Parse ---
+    parsed_actions = []
+    parse_failures = []
+    for action_json in action_jsons:
         try:
-            action = json.loads(action_json)
+            parsed_actions.append(json.loads(action_json))
+        except json.JSONDecodeError as e:
+            parse_failures.append(f"Invalid ACTION JSON: {e}")
+
+    # --- Phase 2: Pre-validate nutrition/health ---
+    if parsed_actions:
+        parsed_actions, hard_errors = _prevalidate_nutrition_actions(parsed_actions)
+        if hard_errors:
+            error_msg = "; ".join(hard_errors)
+            log.error("Data quality validation FAILED: %s", error_msg)
+            _push_data_quality_alert(error_msg, response_text[:300])
+            if log_fn:
+                log_fn("DATA_QUALITY", "error", error=error_msg)
+            clean_response = re.sub(r'<!--ACTION::.*?-->', '', response_text, flags=re.DOTALL).strip()
+            return clean_response + f"\n\nDATA QUALITY ERROR — actions aborted: {error_msg}"
+
+    # Run nutrition validation BEFORE executing
+    pre_nutrition_actions = [a for a in parsed_actions if a.get("action") == "log_nutrition"]
+    pre_health_meal_types = [
+        a.get("meal_type") for a in parsed_actions
+        if a.get("action") == "log_health" and a.get("category") == "meal" and a.get("meal_type")
+    ]
+    if pre_nutrition_actions:
+        validation_warnings = _validate_nutrition(pre_nutrition_actions, pre_health_meal_types)
+    else:
+        validation_warnings = []
+
+    # --- Phase 3: Execute ---
+    failures = list(parse_failures)
+    action_types_found = []
+    _nutrition_actions = []  # collected for post-execution tracking
+    _health_meal_types = []  # collected for tracking
+
+    for action in parsed_actions:
+        try:
             act = action.get("action")
             action_types_found.append(act)
 
@@ -282,14 +384,12 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             log_fn("ACTION", "error", error="; ".join(failures))
         clean_response += "\n\nNote: Some actions failed — " + " ".join(failures)
 
-    # Post-log nutrition validation — catch common data quality issues
-    if _nutrition_actions:
-        validation_warnings = _validate_nutrition(_nutrition_actions, _health_meal_types)
-        if validation_warnings:
-            clean_response += "\n\n(Nutrition check: " + " ".join(validation_warnings) + ")"
-            if log_fn:
-                log_fn("NUTRITION_VALIDATION", "warning",
-                       error="; ".join(validation_warnings))
+    # Nutrition validation warnings (computed in Phase 2, before execution)
+    if validation_warnings:
+        clean_response += "\n\n(Nutrition check: " + " ".join(validation_warnings) + ")"
+        if log_fn:
+            log_fn("NUTRITION_VALIDATION", "warning",
+                   error="; ".join(validation_warnings))
 
     # Validate: if specific actions were expected but not found, warn
     if expect_actions:
@@ -308,7 +408,7 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
     # Detect claim-without-action: response says data was stored but no actions found.
     # Uses phrase patterns (not single words) to distinguish real claims like
     # "I've logged your meal" from descriptive text like "meals logged 3 of 7 days".
-    if not actions:
+    if not action_jsons:
         claim_phrases = re.findall(
             r"(?:I've |I have |I )"
             r"(?:logged|stored|saved|recorded|tracked|captured|added|noted)"

@@ -412,3 +412,71 @@ class TestNutritionValidation:
         )
         result = actions.process_actions(response)
         assert "Meal type mismatch" not in result
+
+
+class TestIntraResponseDedup:
+    """Test that duplicate ACTION blocks within one response are deduplicated."""
+
+    @patch("actions.nutrition_store")
+    def test_duplicate_nutrition_blocks_only_logged_once(self, mock_ns):
+        """Two identical log_nutrition blocks → only one add_item call."""
+        response = (
+            'Logged! '
+            '<!--ACTION::{"action": "log_nutrition", "date": "2026-03-26", '
+            '"food_name": "Salmon", "meal_type": "dinner", "nutrients": {"calories": 200}}-->'
+            '<!--ACTION::{"action": "log_nutrition", "date": "2026-03-26", '
+            '"food_name": "Salmon", "meal_type": "dinner", "nutrients": {"calories": 200}}-->'
+        )
+        actions.process_actions(response)
+        assert mock_ns.add_item.call_count == 1
+
+    @patch("actions.nutrition_store")
+    def test_different_foods_not_deduped(self, mock_ns):
+        """Different food names are NOT deduplicated."""
+        response = (
+            'Logged! '
+            '<!--ACTION::{"action": "log_nutrition", "date": "2026-03-26", '
+            '"food_name": "Salmon", "meal_type": "dinner", "nutrients": {"calories": 200}}-->'
+            '<!--ACTION::{"action": "log_nutrition", "date": "2026-03-26", '
+            '"food_name": "Rice", "meal_type": "dinner", "nutrients": {"calories": 150}}-->'
+        )
+        actions.process_actions(response)
+        assert mock_ns.add_item.call_count == 2
+
+
+class TestDateCrossCheck:
+    """Test that date mismatches between log_health and log_nutrition are caught."""
+
+    @patch("actions.nutrition_store")
+    @patch("actions.health_store")
+    def test_date_mismatch_aborts_actions(self, mock_hs, mock_ns):
+        """If log_health date differs from log_nutrition date for same meal, abort."""
+        response = (
+            'Logged! '
+            '<!--ACTION::{"action": "log_health", "date": "2026-03-25", "category": "meal", '
+            '"description": "salmon", "meal_type": "dinner"}-->'
+            '<!--ACTION::{"action": "log_nutrition", "date": "2026-03-26", '
+            '"food_name": "Salmon", "meal_type": "dinner", "nutrients": {"calories": 200}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "DATA QUALITY ERROR" in result
+        assert "Date mismatch" in result
+        # Neither store should have been called
+        mock_ns.add_item.assert_not_called()
+        mock_hs.add_entry.assert_not_called()
+
+    @patch("actions.nutrition_store")
+    @patch("actions.health_store")
+    def test_matching_dates_proceed_normally(self, mock_hs, mock_ns):
+        """Same dates on health and nutrition → proceed normally."""
+        response = (
+            'Logged! '
+            '<!--ACTION::{"action": "log_health", "date": "2026-03-26", "category": "meal", '
+            '"description": "salmon dinner", "meal_type": "dinner"}-->'
+            '<!--ACTION::{"action": "log_nutrition", "date": "2026-03-26", '
+            '"food_name": "Salmon", "meal_type": "dinner", "nutrients": {"calories": 200}}-->'
+        )
+        result = actions.process_actions(response)
+        assert "DATA QUALITY ERROR" not in result
+        mock_hs.add_entry.assert_called_once()
+        mock_ns.add_item.assert_called_once()
