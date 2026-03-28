@@ -6,6 +6,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.7.0] — 2026-03-28
+
+### Added — Phase 4a: Google Calendar + Gmail API Plumbing
+
+- **`google_auth.py`** — One-time OAuth2 PKCE authorization flow for Google Calendar + Gmail. Same paste-URL UX as fitbit_auth.py. Saves tokens to `data/google_tokens.json`
+- **`google_client.py`** — Async Google API client via raw httpx (no google-api-python-client). Auto-refresh on 401 with lock-protected stampede prevention. Preserves refresh_token across refreshes (Google doesn't rotate). Calendar events list/get, Gmail messages list/get/fetch_recent with parallel gather
+- **`google_store.py`** — PostgreSQL-backed cache for synced Google data. Calendar events upserted with extracted fields + JSONB raw data. Gmail messages with header extraction. Handles both timed and all-day calendar events
+- **`google_calendar_events` table** — cached calendar events with start_time index
+- **`google_gmail_messages` table** — cached Gmail metadata with date index, label_ids array
+- **`/google/calendar/sync` endpoint** — manual trigger, fetches next 7 days of events
+- **`/google/gmail/sync` endpoint** — manual trigger, fetches last 24 hours of messages
+- **tick.py Google polling** — Calendar every 5 min, Gmail every 3 min, skips quiet hours
+- **45 new tests** across 3 test files (google_auth, google_client, google_store)
+- **Config entries** — `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_TOKEN_FILE`, `GOOGLE_SCOPES`
+
+### Fixed
+
+- **Gmail RFC2822 date parsing** — Gmail Date headers include parenthetical comments like `(UTC)` that PostgreSQL cannot parse as TIMESTAMPTZ. Added `_parse_email_date()` using Python's `email.utils.parsedate_to_datetime` to handle all RFC2822 variants
+- **Gmail rate limiting** — `gmail_fetch_recent()` used unbounded `asyncio.gather` which hit Google's 429 rate limit with 39+ parallel requests. Added `Semaphore(5)` to limit concurrency
+
+### Changed
+
+- **Version** bumped to 0.7.0
+- **Total test count:** 1903 tests across 85 files, all passing
+
+---
+
 ## [0.6.1] — 2026-03-28
 
 ### Fixed — Code Review Audit

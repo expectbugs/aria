@@ -129,6 +129,16 @@ FITBIT_SCOPES = [                                     # data types to request ac
     "respiratory_rate", "temperature", "weight", "profile",
 ]
 
+# --- Google (OAuth2 — Calendar + Gmail, register at console.cloud.google.com) ---
+GOOGLE_CLIENT_ID = "your-client-id.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "your-client-secret"
+GOOGLE_REDIRECT_URI = "http://127.0.0.1:8080/callback"
+GOOGLE_TOKEN_FILE = DATA_DIR / "google_tokens.json"
+GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/gmail.readonly",
+]
+
 # --- Whisper STT (faster-whisper + CTranslate2) ---
 WHISPER_MODEL = "large-v3-turbo"     # "large-v3" for max accuracy, "large-v3-turbo" for speed
 WHISPER_DEVICE = "cuda"               # "cuda" for GPU, "cpu" for machines without GPU

@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -20,6 +20,8 @@ import config
 import db
 import fitbit
 import fitbit_store
+import google_client
+import google_store
 import location_store
 import redis_client
 import sms
@@ -388,6 +390,30 @@ async def fitbit_webhook(request: Request):
             log.error("Fitbit fetch failed for %s: %s", day, e)
 
     return Response(status_code=204)
+
+
+# --- Google Calendar + Gmail ---
+
+@app.post("/google/calendar/sync")
+async def google_calendar_sync(request: Request):
+    """Manually trigger a Google Calendar sync. Fetches next 7 days of events."""
+    verify_auth(request)
+    client = google_client.get_client()
+    now = datetime.now().astimezone().isoformat()
+    future = (datetime.now() + timedelta(days=7)).astimezone().isoformat()
+    events = await client.calendar_list_events(time_min=now, time_max=future)
+    google_store.save_calendar_events(events)
+    return {"status": "ok", "events_synced": len(events)}
+
+
+@app.post("/google/gmail/sync")
+async def google_gmail_sync(request: Request):
+    """Manually trigger a Gmail sync. Fetches last 24 hours of messages."""
+    verify_auth(request)
+    client = google_client.get_client()
+    messages = await client.gmail_fetch_recent(hours=24)
+    google_store.save_gmail_messages(messages)
+    return {"status": "ok", "messages_synced": len(messages)}
 
 
 @app.post("/ask", response_model=AskResponse)

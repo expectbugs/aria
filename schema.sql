@@ -137,6 +137,34 @@ CREATE TABLE IF NOT EXISTS fitbit_exercise (
 );
 CREATE INDEX IF NOT EXISTS idx_exercise_active ON fitbit_exercise(active);
 
+-- Google Calendar cached events (synced via API)
+CREATE TABLE IF NOT EXISTS google_calendar_events (
+    event_id TEXT PRIMARY KEY,
+    calendar_id TEXT NOT NULL DEFAULT 'primary',
+    summary TEXT,
+    start_time TIMESTAMPTZ,
+    end_time TIMESTAMPTZ,
+    location TEXT,
+    status TEXT,
+    data JSONB NOT NULL,
+    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_gcal_start ON google_calendar_events(start_time);
+
+-- Google Gmail cached message metadata (synced via API)
+CREATE TABLE IF NOT EXISTS google_gmail_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT,
+    subject TEXT,
+    sender TEXT,
+    date TIMESTAMPTZ,
+    snippet TEXT,
+    label_ids TEXT[],
+    data JSONB NOT NULL,
+    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_gmail_date ON google_gmail_messages(date);
+
 -- Request log
 CREATE TABLE IF NOT EXISTS request_log (
     id SERIAL PRIMARY KEY,

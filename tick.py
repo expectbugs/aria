@@ -778,6 +778,68 @@ def process_fitbit_poll():
         save_state(state)
 
 
+# --- Google Calendar + Gmail Polling ---
+
+def fetch_google_calendar():
+    """Fetch upcoming Google Calendar events via the daemon."""
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{DAEMON_URL}/google/calendar/sync",
+            headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            log.info("Google Calendar synced: %d events",
+                     resp.json().get("events_synced", 0))
+        else:
+            log.warning("Google Calendar sync failed: HTTP %s", resp.status_code)
+    except Exception as e:
+        log.error("Google Calendar sync error: %s", e)
+
+
+def fetch_google_gmail():
+    """Fetch recent Gmail messages via the daemon."""
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{DAEMON_URL}/google/gmail/sync",
+            headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            log.info("Gmail synced: %d messages",
+                     resp.json().get("messages_synced", 0))
+        else:
+            log.warning("Gmail sync failed: HTTP %s", resp.status_code)
+    except Exception as e:
+        log.error("Gmail sync error: %s", e)
+
+
+def process_google_poll():
+    """Google data polling on appropriate cadences."""
+    if is_quiet_hours():
+        return
+
+    state = load_state()
+
+    # Calendar: every 5 minutes
+    last_cal = state.get("last_google_calendar_sync", "")
+    cal_cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+    if not last_cal or last_cal < cal_cutoff:
+        fetch_google_calendar()
+        state["last_google_calendar_sync"] = datetime.now().isoformat()
+
+    # Gmail: every 3 minutes
+    last_gmail = state.get("last_google_gmail_sync", "")
+    gmail_cutoff = (datetime.now() - timedelta(minutes=3)).isoformat()
+    if not last_gmail or last_gmail < gmail_cutoff:
+        fetch_google_gmail()
+        state["last_google_gmail_sync"] = datetime.now().isoformat()
+
+    save_state(state)
+
+
 # --- Monitor Processing ---
 
 def process_monitors():
@@ -967,6 +1029,7 @@ def main():
         ("location_reminders", check_location_reminders),
         ("exercise", process_exercise_tick),
         ("fitbit_poll", process_fitbit_poll),
+        ("google_poll", process_google_poll),
         ("monitors", process_monitors),
         ("finding_delivery", deliver_findings),
         ("deferred_deliveries", process_deferred_deliveries),

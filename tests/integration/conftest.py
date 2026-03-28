@@ -47,6 +47,7 @@ ALL_TABLES = [
     "tool_traces", "entity_mentions", "interaction_quality",
     "monitor_findings", "verification_log",
     "delivery_log", "device_state", "deferred_deliveries",
+    "google_calendar_events", "google_gmail_messages",
 ]
 
 
