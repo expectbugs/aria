@@ -17,9 +17,12 @@ def client():
          patch("daemon.task_dispatcher.stop_dispatcher"), \
          patch("daemon.completion_listener.start_listener"), \
          patch("daemon.completion_listener.stop_listener"), \
-         patch("daemon.get_amnesia_pool") as mock_pool:
-        mock_pool.return_value.start = AsyncMock()
-        mock_pool.return_value.stop = AsyncMock()
+         patch("daemon.get_amnesia_pool") as mock_amnesia, \
+         patch("daemon.get_session_pool") as mock_session:
+        mock_amnesia.return_value.start = AsyncMock()
+        mock_amnesia.return_value.stop = AsyncMock()
+        mock_session.return_value.start = AsyncMock()
+        mock_session.return_value.stop = AsyncMock()
         with TestClient(daemon.app) as c:
             yield c
 

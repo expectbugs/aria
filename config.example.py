@@ -53,8 +53,14 @@ AUTH_TOKEN = "your-token-here"  # Tasker sends this as Bearer token
 # --- Database ---
 DATABASE_URL = "postgresql://aria@/aria"  # local Unix socket, trust auth
 
+# --- Session Pool (ARIA Primary — CLI-based) ---
+SESSION_RECYCLE_AFTER = 150         # requests before recycling a session
+SESSION_DEEP_EFFORT = "max"         # effort level for deep (complex) queries
+SESSION_FAST_EFFORT = "auto"        # effort level for fast (simple) queries
+# Both sessions use Opus — never downgrade model, only effort level
+
 # --- Amnesia Pool (stateless Claude Code workers) ---
-AMNESIA_POOL_SIZE = 3               # number of warm instances
+AMNESIA_POOL_SIZE = 1               # number of warm instances (reduced from 3 — primary sessions absorb most work)
 AMNESIA_TASK_TIMEOUT = 120          # seconds per agentic task
 AMNESIA_SHELL_TIMEOUT = 60          # seconds per shell command
 
@@ -128,6 +134,14 @@ WHISPER_MODEL = "large-v3-turbo"     # "large-v3" for max accuracy, "large-v3-tu
 WHISPER_DEVICE = "cuda"               # "cuda" for GPU, "cpu" for machines without GPU
 WHISPER_COMPUTE_TYPE = "float16"      # "float16" for GPU, "int8" for CPU
 ENABLE_WHISPER = False                # True only on GPU-equipped hosts
+
+# --- Training Data Collection ---
+COLLECT_TOOL_TRACES = True          # log query.py invocations to tool_traces table
+COLLECT_ENTITY_MENTIONS = True      # extract entities from responses
+
+# --- Haiku (system-internal composition — nudges, task completion summaries) ---
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+HAIKU_MAX_TOKENS = 2048
 
 # --- Hardware capabilities ---
 # Set based on what this machine can do. Daemon checks these at runtime.

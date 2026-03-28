@@ -66,7 +66,7 @@ class TestProcessFileTask:
     @patch("daemon.log_request")
     @patch("daemon._generate_tts", new_callable=AsyncMock, return_value=b"wav")
     @patch("daemon.process_actions")
-    @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="Analysis done")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Analysis done")
     @patch("daemon.build_request_context", new_callable=AsyncMock, return_value="ctx")
     async def test_image_file(self, mock_ctx, mock_claude, mock_actions,
                                 mock_tts, mock_log):
@@ -85,7 +85,7 @@ class TestProcessFileTask:
     @patch("daemon.log_request")
     @patch("daemon.sms.send_long_to_owner")
     @patch("daemon.process_actions")
-    @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="Result")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Result")
     @patch("daemon.build_request_context", new_callable=AsyncMock, return_value="")
     async def test_sms_delivery(self, mock_ctx, mock_claude, mock_actions,
                                   mock_sms, mock_log):
@@ -110,7 +110,7 @@ class TestProcessVoiceTask:
     @patch("daemon.log_request")
     @patch("daemon._generate_tts", new_callable=AsyncMock, return_value=b"wav")
     @patch("daemon.process_actions", return_value="Hello!")
-    @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="Hello!")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Hello!")
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_full_pipeline(self, mock_ctx, mock_claude, mock_actions,
                                    mock_tts, mock_log):
@@ -145,7 +145,7 @@ class TestProcessVoiceTask:
     @patch("daemon.log_request")
     @patch("daemon.sms.send_long_to_owner")
     @patch("daemon.process_actions")
-    @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="SMS response")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value="SMS response")
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_sms_delivery_routing(self, mock_ctx, mock_claude,
                                           mock_actions, mock_sms, mock_log):
@@ -175,7 +175,7 @@ class TestProcessSms:
     @patch("daemon.log_request")
     @patch("daemon.sms.send_sms")
     @patch("daemon.process_actions", return_value="Got it!")
-    @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="Got it!")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Got it!")
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_text_only_sms(self, mock_ctx, mock_claude, mock_actions,
                                    mock_send, mock_log, mock_conn):
@@ -192,7 +192,7 @@ class TestProcessSms:
     @patch("daemon.log_request")
     @patch("daemon.sms.send_long_sms")
     @patch("daemon.process_actions", return_value="I see the label.")
-    @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="I see the label.")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value="I see the label.")
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_long_response_split(self, mock_ctx, mock_claude,
                                        mock_actions, mock_send_long,
@@ -212,7 +212,7 @@ class TestProcessSms:
     @patch("daemon.log_request")
     @patch("daemon.sms.send_sms")
     @patch("daemon.process_actions")
-    @patch("daemon.ask_claude", new_callable=AsyncMock,
+    @patch("daemon._route_query", new_callable=AsyncMock,
            side_effect=RuntimeError("Claude error"))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_error_sends_apology(self, mock_ctx, mock_claude,

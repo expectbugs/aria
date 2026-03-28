@@ -27,9 +27,12 @@ def client():
          patch("daemon.task_dispatcher.stop_dispatcher"), \
          patch("daemon.completion_listener.start_listener"), \
          patch("daemon.completion_listener.stop_listener"), \
-         patch("daemon.get_amnesia_pool") as mock_pool:
-        mock_pool.return_value.start = AsyncMock()
-        mock_pool.return_value.stop = AsyncMock()
+         patch("daemon.get_amnesia_pool") as mock_amnesia, \
+         patch("daemon.get_session_pool") as mock_session:
+        mock_amnesia.return_value.start = AsyncMock()
+        mock_amnesia.return_value.stop = AsyncMock()
+        mock_session.return_value.start = AsyncMock()
+        mock_session.return_value.stop = AsyncMock()
         with TestClient(daemon.app) as c:
             yield c
 
@@ -64,7 +67,7 @@ class TestHealthEndpoint:
             resp = client.get("/health")
         checks = resp.json()["checks"]
         assert "database" in checks
-        assert "api" in checks
+        assert "session_pool" in checks
         assert "tts" in checks
 
 
@@ -88,7 +91,7 @@ class TestAuth:
 
 class TestAskEndpoint:
     @patch("daemon.process_actions")
-    @patch("daemon.ask_claude", new_callable=AsyncMock)
+    @patch("daemon._route_query", new_callable=AsyncMock)
     @patch("daemon._get_context_for_text", new_callable=AsyncMock)
     @patch("daemon.log_request")
     def test_successful_ask(self, mock_log, mock_ctx, mock_claude, mock_actions, client):
@@ -106,7 +109,7 @@ class TestAskEndpoint:
         resp = client.post("/ask", json={"text": "  "}, headers=AUTH)
         assert resp.status_code == 400
 
-    @patch("daemon.ask_claude", new_callable=AsyncMock)
+    @patch("daemon._route_query", new_callable=AsyncMock)
     @patch("daemon._get_context_for_text", new_callable=AsyncMock)
     @patch("daemon.log_request")
     def test_claude_error_returns_500(self, mock_log, mock_ctx, mock_claude, client):
@@ -122,7 +125,7 @@ class TestAskEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestAsyncTaskLifecycle:
-    @patch("daemon.ask_claude", new_callable=AsyncMock)
+    @patch("daemon._route_query", new_callable=AsyncMock)
     @patch("daemon._get_context_for_text", new_callable=AsyncMock)
     @patch("daemon._generate_tts", new_callable=AsyncMock)
     @patch("daemon.process_actions")
@@ -184,7 +187,7 @@ class TestLocationEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestNudgeEndpoint:
-    @patch("daemon.ask_claude", new_callable=AsyncMock)
+    @patch("daemon._route_query", new_callable=AsyncMock)
     def test_composes_nudge(self, mock_claude, client):
         mock_claude.return_value = "Hey, don't forget to eat!"
 

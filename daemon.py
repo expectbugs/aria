@@ -25,7 +25,8 @@ import redis_client
 import sms
 
 from actions import process_actions
-from aria_api import ask_aria as ask_claude  # API-powered primary (drop-in replacement)
+from session_pool import get_session_pool
+from aria_api import _is_simple_query, ask_aria as _ask_aria_fallback, ask_haiku
 from claude_session import ClaudeSession  # kept for Action ARIA (Step 6)
 from version import __version__
 import task_dispatcher
@@ -54,9 +55,9 @@ async def lifespan(app: FastAPI):
     task_dispatcher.start_dispatcher()  # background task queue consumer
     completion_listener.start_listener()  # Pub/Sub for task result delivery
     await get_amnesia_pool().start()  # pre-warm Claude Code instances for agentic tasks
-    # ARIA Primary is now API-powered — no CLI subprocess to warm
-    # ClaudeSession kept for Action ARIA
+    await get_session_pool().start()  # pre-warm deep + fast CLI sessions
     yield
+    await get_session_pool().stop()  # stop CLI sessions first (may be serving requests)
     task_dispatcher.stop_dispatcher()
     completion_listener.stop_listener()
     await get_amnesia_pool().stop()
@@ -108,6 +109,26 @@ def log_request(text: str, status: str, response: str = "", error: str = "",
             )
     except Exception as e:
         logging.getLogger("aria").error("Failed to log request: %s", e)
+
+
+# --- Query Routing ---
+
+async def _route_query(text: str, context: str = "",
+                       file_blocks: list[dict] | None = None) -> str:
+    """Route a query through the CLI session pool, with API fallback.
+
+    Simple queries (timers, greetings, weather) go to the fast session.
+    Everything else goes to the deep session. If the session pool fails,
+    falls back to the Anthropic API (ask_aria).
+    """
+    pool = get_session_pool()
+    try:
+        if _is_simple_query(text):
+            return await pool.query_fast(text, context, file_blocks)
+        return await pool.query_deep(text, context, file_blocks)
+    except Exception as e:
+        log.warning("Session pool failed, falling back to API: %s", e)
+        return await _ask_aria_fallback(text, context, file_blocks)
 
 
 # --- File Processing ---
@@ -175,13 +196,27 @@ async def health():
     except Exception:
         checks["database"] = "error"
 
-    # Anthropic API (ARIA Primary)
+    # Session Pool (ARIA Primary)
+    try:
+        pool_status = get_session_pool().get_status()
+        deep_ok = pool_status["deep"]["alive"]
+        fast_ok = pool_status["fast"]["alive"]
+        if deep_ok and fast_ok:
+            checks["session_pool"] = "ok"
+        elif deep_ok or fast_ok:
+            checks["session_pool"] = "degraded"
+        else:
+            checks["session_pool"] = "error"
+    except Exception as e:
+        checks["session_pool"] = f"error: {e}"
+
+    # API Fallback
     try:
         from aria_api import _get_client
-        _get_client()  # validates key exists, creates client
-        checks["api"] = "ok"
+        _get_client()
+        checks["api_fallback"] = "ok"
     except Exception as e:
-        checks["api"] = f"error: {e}"
+        checks["api_fallback"] = f"unavailable: {e}"
 
     # TTS model
     checks["tts"] = "loaded" if _tts_module._kokoro is not None else "not loaded"
@@ -201,7 +236,7 @@ async def health():
         except Exception:
             checks["whisper"] = "error"
 
-    degraded = checks.get("database") != "ok" or checks.get("api") != "ok"
+    degraded = checks.get("database") != "ok" or checks.get("session_pool") not in ("ok",)
 
     return {
         "status": "degraded" if degraded else "ok",
@@ -317,7 +352,7 @@ async def ask(req: AskRequest, request: Request):
 
     try:
         extra_context = await _get_context_for_text(text)
-        response = await ask_claude(text, extra_context)
+        response = await _route_query(text, extra_context)
         delivery_meta = {"channel": "voice"}
         response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
 
@@ -396,7 +431,7 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
             caption or filename, is_image=is_image
         )
 
-        response = await ask_claude(user_text, extra_context, file_blocks)
+        response = await _route_query(user_text, extra_context, file_blocks)
         delivery_meta = {"channel": "voice"}
         response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
         delivery = delivery_meta.get("delivery", "voice")
@@ -584,9 +619,9 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
         # Make transcript available to /ask/status immediately (before Claude runs)
         _tasks[task_id]["transcript"] = user_text
 
-        # Step 2: Build context and query Claude (same pipeline as /ask)
+        # Step 2: Build context and query ARIA (same pipeline as /ask)
         extra_context = await _get_context_for_text(user_text)
-        response = await ask_claude(user_text, extra_context)
+        response = await _route_query(user_text, extra_context)
         delivery_meta = {"channel": "voice"}
         response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
         delivery = delivery_meta.get("delivery", "voice")
@@ -803,8 +838,8 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
         else:
             extra_context = sms_note
 
-        response = await ask_claude(user_text, extra_context,
-                                    file_blocks if file_blocks else None)
+        response = await _route_query(user_text, extra_context,
+                                     file_blocks if file_blocks else None)
         delivery_meta = {"channel": "sms"}
         response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
         delivery = delivery_meta.get("delivery", "sms")
@@ -881,7 +916,7 @@ async def nudge(req: NudgeRequest, request: Request):
     )
     extra_context = req.context if req.context else ""
 
-    response = await ask_claude(prompt, extra_context)
+    response = await ask_haiku(prompt, extra_context)
     # Strip any accidental ACTION blocks
     response = re.sub(r'<!--ACTION::.*?-->', '', response, flags=re.DOTALL).strip()
 

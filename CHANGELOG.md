@@ -6,6 +6,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.5.0] — 2026-03-27
+
+### Added
+
+- **Session Pool (`session_pool.py`)** — managed pool of persistent Claude CLI sessions replacing the Anthropic API as ARIA Primary. Two sessions: deep (Opus, max effort) for complex queries, fast (Opus, auto effort) for simple queries (timers, greetings, weather). Auto-recycling, crash recovery, cross-session history injection via `conversation_history.get_recent_turns()`.
+- **CLI data access (`query.py`)** — replaces 6 API tool definitions with a CLI-callable script. ARIA's sessions query data stores via `./venv/bin/python query.py <subcommand>` during response generation. Self-reports invocations to `tool_traces` table for LoRA training data.
+- **Training data collection (`training_store.py`)** — `log_tool_trace()`, `log_entity_mention()`, `log_interaction_quality()` for future LoRA training and Neo4j knowledge graph. Entity extraction via regex (person names, known places, topic categories).
+- **`ask_haiku()`** in `aria_api.py` — Haiku model for system-internal composition (nudge messages, task completion summaries). Fast, cheap, no tools/thinking needed.
+- **`_route_query()`** in `daemon.py` — routes queries through session pool with automatic API fallback on failure.
+- 3 new database tables: `tool_traces`, `entity_mentions`, `interaction_quality` with indexes.
+- `_block_real_subprocess` safety guard in test conftest — prevents accidental real Claude CLI spawning in unit tests.
+- **84 new tests** across 4 new test files (`test_session_pool.py`, `test_query.py`, `test_training_store.py`, `TestAskHaiku` in `test_aria_api.py`).
+
+### Changed
+
+- **ARIA Primary**: switched from Anthropic Messages API to CLI session pool. API kept as automatic fallback.
+- **`/nudge` endpoint**: now uses Haiku instead of Opus for message composition.
+- **`completion_listener.py`**: switched from `ask_aria` (Opus API) to `ask_haiku` for task completion composition.
+- **`/health` endpoint**: now checks `session_pool` status instead of API client. API reported as `api_fallback`.
+- **System prompt**: DATA ACCESS section updated from API tool descriptions to `query.py` CLI usage instructions.
+- `AMNESIA_POOL_SIZE` default reduced from 3 to 1 in `config.example.py`.
+- **Version** bumped to 0.5.0.
+
+---
+
 ## [0.4.46] — 2026-03-27
 
 ### Added

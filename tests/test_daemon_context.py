@@ -847,7 +847,7 @@ class TestBuildPrimaryPrompt:
 
     def test_has_data_access_note(self):
         prompt = system_prompt.build_primary_prompt()
-        assert "read-only access" in prompt.lower() or "tool calls" in prompt.lower()
+        assert "query.py" in prompt or "query helper" in prompt.lower()
 
     def test_contains_owner_info(self):
         prompt = system_prompt.build_primary_prompt()

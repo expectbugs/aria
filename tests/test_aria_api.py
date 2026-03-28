@@ -516,3 +516,98 @@ class TestToolDefinitions:
     def test_tool_names_unique(self):
         names = [t["name"] for t in aria_api.TOOLS]
         assert len(names) == len(set(names))
+
+
+class TestAskHaiku:
+    """Test the ask_haiku() function for system-internal Haiku calls."""
+
+    @pytest.mark.asyncio
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api._get_client")
+    async def test_uses_haiku_model(self, mock_client, _):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("Hey, your timer went off!")], stop_reason="end_turn"
+        )
+
+        result = await aria_api.ask_haiku("Compose a nudge about a timer")
+        assert "timer" in result.lower()
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        assert "haiku" in call_kwargs["model"]
+
+    @pytest.mark.asyncio
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api._get_client")
+    async def test_no_tools(self, mock_client, _):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("Done!")], stop_reason="end_turn"
+        )
+
+        await aria_api.ask_haiku("test prompt")
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        assert "tools" not in call_kwargs
+
+    @pytest.mark.asyncio
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api._get_client")
+    async def test_no_thinking(self, mock_client, _):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("Result")], stop_reason="end_turn"
+        )
+
+        await aria_api.ask_haiku("test")
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        assert "thinking" not in call_kwargs
+
+    @pytest.mark.asyncio
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api._get_client")
+    async def test_lower_max_tokens(self, mock_client, _):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("Short")], stop_reason="end_turn"
+        )
+
+        await aria_api.ask_haiku("test")
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        assert call_kwargs["max_tokens"] <= 2048
+
+    @pytest.mark.asyncio
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api._get_client")
+    async def test_context_injected(self, mock_client, _):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.return_value = _make_response(
+            [_make_text_block("Ok")], stop_reason="end_turn"
+        )
+
+        await aria_api.ask_haiku("compose message", context="Weather: sunny")
+
+        call_kwargs = mock_api.messages.create.call_args[1]
+        user_msg = call_kwargs["messages"][0]["content"]
+        assert "[CONTEXT]" in user_msg
+        assert "sunny" in user_msg
+
+    @pytest.mark.asyncio
+    @patch("aria_api.get_recent_turns", return_value=[])
+    @patch("aria_api._get_client")
+    async def test_api_timeout_raises(self, mock_client, _):
+        mock_api = MagicMock()
+        mock_client.return_value = mock_api
+        mock_api.messages.create.side_effect = aria_api.anthropic.APITimeoutError(
+            request=MagicMock()
+        )
+
+        with pytest.raises(RuntimeError, match="Haiku API timed out"):
+            await aria_api.ask_haiku("test")

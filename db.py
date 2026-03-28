@@ -28,6 +28,7 @@ def get_pool() -> ConnectionPool:
             config.DATABASE_URL,
             min_size=2,
             max_size=10,
+            open=True,
             kwargs={"row_factory": dict_row, "autocommit": True},
         )
         log.info("Database connection pool created")

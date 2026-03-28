@@ -6,6 +6,9 @@ from unittest.mock import patch, MagicMock
 import nutrition_store
 from helpers import make_nutrition_row
 
+# Dynamic date for tests that go through add_item() validation (rejects >7 days old)
+TODAY = date.today().isoformat()
+
 
 def _patch_db():
     mock_conn = MagicMock()
@@ -25,7 +28,7 @@ class TestAddItem:
                 food_name="Chicken breast", meal_type="lunch",
                 nutrients={"calories": 250, "protein_g": 40},
                 servings=1.0, serving_size="6 oz",
-                entry_date="2026-03-20",
+                entry_date=TODAY,
             )
             assert result["inserted"] is True
             assert result["entry"]["food_name"] == "Chicken breast"
@@ -39,7 +42,7 @@ class TestAddItem:
         import pytest
         with pytest.raises(ValueError, match="servings must be positive"):
             nutrition_store.add_item(
-                food_name="Test", servings=0, entry_date="2026-03-20",
+                food_name="Test", servings=0, entry_date=TODAY,
             )
 
     def test_negative_servings_raises_validation_error(self):
@@ -47,7 +50,7 @@ class TestAddItem:
         import pytest
         with pytest.raises(ValueError, match="servings must be positive"):
             nutrition_store.add_item(
-                food_name="Test", servings=-2, entry_date="2026-03-20",
+                food_name="Test", servings=-2, entry_date=TODAY,
             )
 
     def test_custom_date_and_time(self):
@@ -70,7 +73,7 @@ class TestAddItem:
         mc.execute.return_value.fetchone.return_value = make_nutrition_row(nutrients={})
         try:
             nutrition_store.add_item(food_name="Water", nutrients=None,
-                                    entry_date="2026-03-20")
+                                    entry_date=TODAY)
             # Should not raise
         finally:
             p.stop()
@@ -87,7 +90,7 @@ class TestAddItem:
         mc.execute.return_value.fetchone.return_value = None  # ON CONFLICT DO NOTHING
         try:
             result = nutrition_store.add_item(
-                food_name="Salmon", entry_date="2026-03-20",
+                food_name="Salmon", entry_date=TODAY,
             )
             assert result["inserted"] is False
             assert result["duplicate"] is True
@@ -105,7 +108,7 @@ class TestAddItem:
         import pytest
         with pytest.raises(ValueError, match="calories"):
             nutrition_store.add_item(
-                food_name="Test", entry_date="2026-03-20",
+                food_name="Test", entry_date=TODAY,
                 nutrients={"calories": 9999},
             )
 

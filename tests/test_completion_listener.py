@@ -23,13 +23,13 @@ def _reset():
 @pytest.fixture(autouse=True)
 def _mock_lazy_imports():
     """Pre-set the lazy import globals so _ensure_imports doesn't load real modules."""
-    completion_listener.ask_aria = AsyncMock(return_value="Default response")
+    completion_listener.ask_haiku = AsyncMock(return_value="Default response")
     completion_listener._generate_tts = AsyncMock(return_value=b"audio")
     completion_listener.push_audio = MagicMock()
     completion_listener.push_audio.push_audio = MagicMock(return_value=True)
     completion_listener.process_actions = MagicMock(side_effect=lambda r, **kw: r)
     yield
-    completion_listener.ask_aria = None
+    completion_listener.ask_haiku = None
     completion_listener._generate_tts = None
     completion_listener.push_audio = None
     completion_listener.process_actions = None
@@ -47,12 +47,12 @@ class TestOnCompletion:
             "notify": "1",
             "description": "Generate sunset image",
         }
-        completion_listener.ask_aria = AsyncMock(return_value="Your sunset image is ready!")
+        completion_listener.ask_haiku = AsyncMock(return_value="Your sunset image is ready!")
 
         await completion_listener._on_completion("t1", "completed", "Image at /tmp/sunset.png")
 
-        completion_listener.ask_aria.assert_called_once()
-        assert "sunset" in completion_listener.ask_aria.call_args[0][0].lower()
+        completion_listener.ask_haiku.assert_called_once()
+        assert "sunset" in completion_listener.ask_haiku.call_args[0][0].lower()
 
     @pytest.mark.asyncio
     @patch("completion_listener.redis_client")
@@ -64,7 +64,7 @@ class TestOnCompletion:
             "description": "Silent task",
         }
         mock_aria = AsyncMock()
-        completion_listener.ask_aria = mock_aria
+        completion_listener.ask_haiku = mock_aria
 
         await completion_listener._on_completion("t1", "completed", "done")
         mock_aria.assert_not_called()
@@ -80,7 +80,7 @@ class TestOnCompletion:
             "description": "Broken task",
         }
         mock_aria = AsyncMock(return_value="Sorry, that task failed.")
-        completion_listener.ask_aria = mock_aria
+        completion_listener.ask_haiku = mock_aria
 
         await completion_listener._on_completion("t1", "error", "command not found")
 
@@ -99,7 +99,7 @@ class TestOnCompletion:
             "description": "Test task",
             "channel": "voice",
         }
-        completion_listener.ask_aria = AsyncMock(return_value="Task done!")
+        completion_listener.ask_haiku = AsyncMock(return_value="Task done!")
         completion_listener._generate_tts = AsyncMock(side_effect=Exception("TTS failed"))
 
         await completion_listener._on_completion("t1", "completed", "done")
@@ -126,7 +126,7 @@ class TestChannelAwareDelivery:
             "description": "Test task",
             "channel": "sms",
         }
-        completion_listener.ask_aria = AsyncMock(return_value="Result ready!")
+        completion_listener.ask_haiku = AsyncMock(return_value="Result ready!")
 
         await completion_listener._on_completion("t1", "completed", "done")
 
@@ -145,7 +145,7 @@ class TestChannelAwareDelivery:
             "description": "Test task",
             "channel": "voice",
         }
-        completion_listener.ask_aria = AsyncMock(return_value="Here you go!")
+        completion_listener.ask_haiku = AsyncMock(return_value="Here you go!")
 
         await completion_listener._on_completion("t1", "completed", "done")
 
@@ -166,7 +166,7 @@ class TestChannelAwareDelivery:
             "description": "Old task",
             # no "channel" key
         }
-        completion_listener.ask_aria = AsyncMock(return_value="Done!")
+        completion_listener.ask_haiku = AsyncMock(return_value="Done!")
 
         await completion_listener._on_completion("t1", "completed", "done")
 
@@ -199,7 +199,7 @@ class TestActionBlockProcessing:
             "description": "Test task",
         }
         raw = 'Done!<!--ACTION::{"action":"set_timer","minutes":5,"message":"hi"}-->'
-        completion_listener.ask_aria = AsyncMock(return_value=raw)
+        completion_listener.ask_haiku = AsyncMock(return_value=raw)
         mock_pa = MagicMock(return_value="Done!")
         completion_listener.process_actions = mock_pa
 
@@ -218,7 +218,7 @@ class TestActionBlockProcessing:
             "description": "Test task",
         }
         raw = 'Timer set!<!--ACTION::{"action":"set_timer"}-->'
-        completion_listener.ask_aria = AsyncMock(return_value=raw)
+        completion_listener.ask_haiku = AsyncMock(return_value=raw)
         # process_actions strips the block
         completion_listener.process_actions = MagicMock(return_value="Timer set!")
 
@@ -242,7 +242,7 @@ class TestFullPipeline:
             "description": "Check system uptime",
         }
         mock_aria = AsyncMock(return_value="Your system has been up for 12 days.")
-        completion_listener.ask_aria = mock_aria
+        completion_listener.ask_haiku = mock_aria
 
         await completion_listener._on_completion(
             "t1", "completed", "12:34:56 up 12 days, 3:45, 2 users"

@@ -10,6 +10,7 @@ Install test deps:
     pip install pytest pytest-asyncio hypothesis
 """
 
+import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -38,6 +39,24 @@ def _block_real_database(request):
         yield
         return
     with patch("db.get_pool", return_value=MagicMock()) as m:
+        yield m
+
+
+@pytest.fixture(autouse=True)
+def _block_real_subprocess(request):
+    """Prevent real Claude CLI subprocess spawning in unit tests.
+
+    Blocks asyncio.create_subprocess_exec to catch any test that forgets
+    to mock it. Tests that mock at the module level (e.g.,
+    patch("amnesia_pool.asyncio.create_subprocess_exec")) take priority
+    over this global guard. Integration tests are excluded.
+    """
+    if "integration" in str(request.fspath):
+        yield
+        return
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock,
+               side_effect=RuntimeError(
+                   "SAFETY: real subprocess spawn blocked in test")) as m:
         yield m
 
 

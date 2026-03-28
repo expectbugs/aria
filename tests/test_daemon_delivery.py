@@ -24,7 +24,7 @@ class TestVoiceTaskDeliveryRouting:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon._generate_tts", new_callable=AsyncMock, return_value=b"wav")
-    @patch("daemon.ask_claude", new_callable=AsyncMock,
+    @patch("daemon._route_query", new_callable=AsyncMock,
            return_value='Here is the answer! <!--ACTION::{"action": "set_delivery", "method": "voice"}-->')
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_voice_delivery_generates_tts(self, mock_ctx, mock_claude,
@@ -45,7 +45,7 @@ class TestVoiceTaskDeliveryRouting:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon.sms.send_long_to_owner")
-    @patch("daemon.ask_claude", new_callable=AsyncMock,
+    @patch("daemon._route_query", new_callable=AsyncMock,
            return_value='Text answer <!--ACTION::{"action": "set_delivery", "method": "sms"}-->')
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_sms_delivery_sends_text(self, mock_ctx, mock_claude,
@@ -69,7 +69,7 @@ class TestSmsWebhookDeliveryRouting:
     @patch("daemon.db.get_conn")
     @patch("daemon.log_request")
     @patch("daemon._generate_tts", new_callable=AsyncMock, return_value=b"wav")
-    @patch("daemon.ask_claude", new_callable=AsyncMock,
+    @patch("daemon._route_query", new_callable=AsyncMock,
            return_value='Voice answer <!--ACTION::{"action": "set_delivery", "method": "voice"}-->')
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_sms_to_voice_routing(self, mock_ctx, mock_claude,
@@ -93,7 +93,7 @@ class TestFileTaskDeliveryRouting:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon._generate_tts", new_callable=AsyncMock, return_value=b"wav")
-    @patch("daemon.ask_claude", new_callable=AsyncMock, return_value="Analysis")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Analysis")
     @patch("daemon.build_request_context", new_callable=AsyncMock, return_value="")
     async def test_default_voice_delivery(self, mock_ctx, mock_claude,
                                             mock_tts, mock_log):

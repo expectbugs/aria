@@ -208,3 +208,38 @@ CREATE TABLE IF NOT EXISTS monitor_state (
     value REAL NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Tool usage traces (LoRA training data collection)
+CREATE TABLE IF NOT EXISTS tool_traces (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    request_input TEXT,
+    tool_name TEXT NOT NULL,
+    tool_input TEXT,
+    tool_output TEXT,
+    was_correct BOOLEAN DEFAULT TRUE,
+    correction TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tool_traces_timestamp ON tool_traces(timestamp);
+
+-- Entity mentions (future Neo4j knowledge graph)
+CREATE TABLE IF NOT EXISTS entity_mentions (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    source TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_value TEXT NOT NULL,
+    context_snippet TEXT,
+    source_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_entity_mentions_value ON entity_mentions(entity_value);
+
+-- Interaction quality signals (LoRA preference training data)
+CREATE TABLE IF NOT EXISTS interaction_quality (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    request_id INTEGER,
+    quality_signal TEXT NOT NULL,
+    details TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_interaction_quality_timestamp ON interaction_quality(timestamp);

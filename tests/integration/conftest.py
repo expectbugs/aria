@@ -33,6 +33,8 @@ ALL_TABLES = [
     "legal_entries", "timers", "nutrition_entries", "locations",
     "fitbit_snapshots", "fitbit_exercise", "request_log",
     "sms_log", "sms_outbound", "tick_state", "nudge_cooldowns",
+    "nudge_log", "processed_webhooks", "monitor_state",
+    "tool_traces", "entity_mentions", "interaction_quality",
 ]
 
 
@@ -85,6 +87,7 @@ def test_pool(test_database):
         test_database,
         min_size=2,
         max_size=5,
+        open=True,
         kwargs={"row_factory": dict_row, "autocommit": True},
     )
     yield pool

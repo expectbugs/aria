@@ -191,8 +191,8 @@ Currently, any message starting with "good morning" triggers a full morning brie
 
 ---
 
-#### D2. ~~Single Claude session serializes all requests~~ **RESOLVED v0.4.19**
-ARIA Primary switched to Anthropic API — stateless per call, no subprocess lock. Concurrent requests no longer blocked.
+#### D2. ~~Single Claude session serializes all requests~~ **RESOLVED v0.4.19, evolved v0.5.0**
+v0.4.19: ARIA Primary switched to Anthropic API — stateless per call. v0.5.0: Switched to CLI session pool (deep + fast) with API as fallback. Deep and fast sessions run concurrently (separate locks).
 
 #### D4. ~~Context builder can produce very large strings~~ **RESOLVED v0.4.13-v0.4.14**
 v0.4.13: Tier 1 always-inject, datetime consolidation, context size logging. v0.4.14: Removed 14-day raw health dump (~2-5K chars), scoped health context to today+yesterday+7d summaries. Context overflow on health conversations eliminated.
@@ -225,11 +225,14 @@ S9 (ACTION markup leak), S11 (quiet hours reminder loss), M14 (tick error isolat
 
 M17 (nutrition false positive), S12 (leave location trigger), m15 (briefing once per day), m14 (remove piper-tts)
 
+### Resolved in v0.5.0
+
+D2 evolved (CLI session pool replaces API, deep+fast concurrent sessions), M16 fully resolved (session pool has explicit stop() in lifespan shutdown)
+
 ### Remaining
 
-1. **D2** — Single Claude session serializes all requests *(architectural)*
-2. **D4** — Context builder can produce very large strings *(architectural)*
+None — all tracked issues resolved.
 
 ---
 
-*This review covers all 23 Python source files totaling ~5,500 lines of application code, plus schema.sql and requirements.txt.*
+*Original review covered 23 Python source files. Codebase has grown significantly since (v0.5.0: session_pool.py, query.py, training_store.py, and others added).*

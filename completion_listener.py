@@ -16,7 +16,7 @@ import redis_client
 import sms
 
 # Lazy imports to avoid loading TTS/API at module import time (causes test hangs)
-ask_aria = None
+ask_haiku = None
 _generate_tts = None
 push_audio = None
 process_actions = None
@@ -24,13 +24,13 @@ process_actions = None
 
 def _ensure_imports():
     """Lazy-load heavy modules on first use."""
-    global ask_aria, _generate_tts, push_audio, process_actions
-    if ask_aria is None:
-        from aria_api import ask_aria as _ask
+    global ask_haiku, _generate_tts, push_audio, process_actions
+    if ask_haiku is None:
+        from aria_api import ask_haiku as _ask_haiku
         from tts import _generate_tts as _tts
         from actions import process_actions as _pa_fn
         import push_audio as _pa
-        ask_aria = _ask
+        ask_haiku = _ask_haiku
         _generate_tts = _tts
         push_audio = _pa
         process_actions = _pa_fn
@@ -82,7 +82,7 @@ async def _on_completion(task_id: str, status: str, result_text: str):
                 f"but don't be overly apologetic."
             )
 
-        response = await ask_aria(prompt)
+        response = await ask_haiku(prompt)
 
         # Process any ACTION blocks (execute + strip from response text)
         response = process_actions(response)
