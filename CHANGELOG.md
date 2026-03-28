@@ -6,6 +6,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.5.3] — 2026-03-28
+
+### Fixed
+
+- **S14: ACTION blocks inside code fences no longer executed** — `_extract_action_jsons()` now strips triple-backtick code blocks before scanning for ACTION markers. Claude can safely demonstrate ACTION block syntax in code examples.
+- **S15: Nested `-->` in ACTION JSON no longer truncates** — Replaced non-greedy `.*?` regex with balanced-brace parser (`_extract_action_jsons()` in actions.py). JSON values containing `-->` (e.g., timer messages with ACTION-like markup) are now parsed correctly.
+- **Malformed ACTION marker detection** — When balanced-brace parser can't extract a marker (malformed JSON, unterminated strings), the failure is now reported instead of silently dropped.
+
+### Changed
+
+- **Version** bumped to 0.5.3
+
+---
+
 ## [0.5.2] — 2026-03-28
 
 ### Added

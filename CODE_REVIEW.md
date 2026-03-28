@@ -233,11 +233,13 @@ D2 evolved (CLI session pool replaces API, deep+fast concurrent sessions), M16 f
 
 Partial ACTION marker leak (found by Hypothesis fuzz testing, fixed in actions.py)
 
-### Remaining (found by pipeline testing suite, v0.5.2)
+### Resolved in v0.5.3
 
-1. **S14. ACTION blocks inside code fences are executed** — regex `<!--ACTION::(\{.*?\})-->` matches ACTION blocks inside triple-backtick code blocks. If Claude demonstrates an ACTION block in a code example, it would be executed. Fix: skip content inside ``` fences before regex extraction. **File:** `actions.py:186` **Priority:** Low (Claude rarely demonstrates ACTION syntax) **Found by:** `test_pipeline_adversarial.py::TestACTIONInjection::test_action_inside_code_block_still_extracted`
+S14 (ACTION in code fences) and S15 (nested --> truncation) — both fixed via `_extract_action_jsons()` balanced-brace parser replacing regex extraction. Found by adversarial pipeline tests.
 
-2. **S15. Nested `-->` in ACTION JSON truncates outer block** — The non-greedy `.*?` in `<!--ACTION::(\{.*?\})-->` stops at the FIRST `-->` encountered, even if it's inside a JSON string value. When a description or timer message contains `-->`, the outer JSON is truncated and fails to parse. The action is silently dropped. Fix: use balanced-brace parsing or escape `-->` in JSON values before regex extraction. **File:** `actions.py:186` **Priority:** Medium (timer messages containing ACTION-like text would be silently lost) **Found by:** `test_pipeline_adversarial.py::TestACTIONInjection::test_nested_action_not_double_executed`, `TestDataIntegrityStress::test_timer_message_containing_action_markup`
+### Remaining
+
+None — all tracked issues resolved.
 
 ---
 

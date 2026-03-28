@@ -1,2 +1,2 @@
 """ARIA version — single source of truth for runtime version string."""
-__version__ = "0.5.2"
+__version__ = "0.5.3"

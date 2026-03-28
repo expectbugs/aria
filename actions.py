@@ -17,6 +17,59 @@ import redis_client
 
 log = logging.getLogger("aria")
 
+# Regex to strip fenced code blocks before ACTION extraction (S14 fix)
+_CODE_FENCE = re.compile(r'```.*?```', re.DOTALL)
+
+
+def _extract_action_jsons(text: str) -> list[str]:
+    """Extract ACTION block JSON strings using balanced-brace matching.
+
+    Fixes two bugs:
+    - S14: Strips fenced code blocks first so ACTION blocks inside
+      code examples are not executed.
+    - S15: Uses balanced-brace counting instead of non-greedy .*? regex
+      so that JSON values containing '-->' do not truncate the outer block.
+    """
+    # Strip code blocks before extraction (S14)
+    stripped = _CODE_FENCE.sub('', text)
+
+    results = []
+    marker = '<!--ACTION::{'
+    pos = 0
+    while True:
+        start = stripped.find(marker, pos)
+        if start == -1:
+            break
+        # Start of JSON is at the '{'
+        json_start = start + len('<!--ACTION::')
+        # Find matching closing brace via balanced counting
+        depth = 0
+        i = json_start
+        while i < len(stripped):
+            ch = stripped[i]
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    # Found the matching close brace
+                    json_str = stripped[json_start:i + 1]
+                    # Verify the --> closing marker follows
+                    rest = stripped[i + 1:i + 4]
+                    if rest == '-->':
+                        results.append(json_str)
+                    break
+            elif ch == '"':
+                # Skip string contents (handle escaped quotes)
+                i += 1
+                while i < len(stripped) and stripped[i] != '"':
+                    if stripped[i] == '\\':
+                        i += 1  # skip escaped char
+                    i += 1
+            i += 1
+        pos = i + 1 if i < len(stripped) else len(stripped)
+    return results
+
 
 _FISH_KEYWORDS = re.compile(
     r'\b(salmon|fish|tuna|sardine|mackerel|trout|cod|tilapia|halibut)\b', re.IGNORECASE
@@ -183,7 +236,13 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             audit logging to the request_log table. If None, audit logging
             is skipped (useful in tests).
     """
-    action_jsons = re.findall(r'<!--ACTION::(\{.*?\})-->', response_text, re.DOTALL)
+    action_jsons = _extract_action_jsons(response_text)
+
+    # Detect ACTION markers that the balanced-brace parser couldn't extract
+    # (malformed JSON, unterminated strings, etc.) — report as parse failures
+    _marker_count = response_text.count('<!--ACTION::')
+    _code_stripped = _CODE_FENCE.sub('', response_text)
+    _marker_count = _code_stripped.count('<!--ACTION::')
 
     # --- Phase 1: Parse ---
     parsed_actions = []
@@ -193,6 +252,14 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             parsed_actions.append(json.loads(action_json))
         except json.JSONDecodeError as e:
             parse_failures.append(f"Invalid ACTION JSON: {e}")
+
+    # Detect malformed ACTION markers that the parser couldn't extract
+    if _marker_count > len(action_jsons):
+        parse_failures.append(
+            f"Found {_marker_count} ACTION markers but only extracted "
+            f"{len(action_jsons)} — {_marker_count - len(action_jsons)} "
+            f"had malformed JSON"
+        )
 
     # --- Phase 2: Pre-validate nutrition/health ---
     if parsed_actions:
@@ -376,8 +443,13 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             if log_fn:
                 log_fn("ACTION", "error", error=str(e))
 
-    # Strip action blocks from spoken response (complete blocks + partial/truncated markers)
-    clean_response = re.sub(r'<!--ACTION::.*?-->', '', response_text, flags=re.DOTALL)
+    # Strip action blocks from spoken response:
+    # 1. Complete blocks with balanced braces (handles nested --> in JSON)
+    # 2. Partial/truncated markers (incomplete ACTION blocks)
+    # 3. ACTION blocks inside code fences are already ignored by extraction,
+    #    but strip them from speech output too
+    clean_response = _CODE_FENCE.sub('', response_text)
+    clean_response = re.sub(r'<!--ACTION::\{.*?\}-->', '', clean_response, flags=re.DOTALL)
     clean_response = re.sub(r'<!--ACTION::.*', '', clean_response, flags=re.DOTALL).strip()
 
     if failures:
