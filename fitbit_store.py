@@ -313,16 +313,17 @@ def get_trend(days: int = 7) -> str:
 def get_exercise_state() -> dict | None:
     """Get current exercise mode state, or None if not active."""
     with db.get_conn() as conn:
+        # Auto-expire stale sessions in SQL — avoids aware/naive datetime issues
+        conn.execute(
+            """UPDATE fitbit_exercise SET active = FALSE, ended_at = NOW(),
+               end_reason = 'auto-expired after 90 minutes'
+               WHERE active = TRUE AND started_at < NOW() - INTERVAL '90 minutes'"""
+        )
         row = conn.execute(
-            "SELECT * FROM fitbit_exercise WHERE active = TRUE ORDER BY started_at DESC LIMIT 1",
+            "SELECT * FROM fitbit_exercise WHERE active = TRUE "
+            "ORDER BY started_at DESC LIMIT 1",
         ).fetchone()
     if not row:
-        return None
-
-    # Auto-expire after 90 minutes as safety net
-    started = row["started_at"]
-    if (datetime.now().astimezone() - started).total_seconds() > 5400:
-        end_exercise("auto-expired after 90 minutes")
         return None
 
     result = db.serialize_row(row)

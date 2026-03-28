@@ -328,21 +328,19 @@ class TestExerciseMode:
             p.stop()
 
     def test_get_exercise_state_auto_expire(self):
+        """Expired sessions are cleaned up via SQL UPDATE, not Python datetime."""
         mc, p = _patch_db()
-        # Exercise started > 90 min ago
-        old_start = datetime.now(timezone.utc) - timedelta(minutes=100)
-        mc.execute.return_value.fetchone.return_value = {
-            "id": 1, "active": True, "exercise_type": "general",
-            "started_at": old_start, "ended_at": None,
-            "end_reason": None, "resting_hr": 65, "max_hr": 178,
-            "target_zones": {}, "hr_readings": [],
-            "nudge_count": 0, "summary": None,
-        }
+        # After the UPDATE, no active rows remain → fetchone returns None
+        mc.execute.return_value.fetchone.return_value = None
         try:
-            with patch("fitbit_store.end_exercise") as mock_end:
-                result = fitbit_store.get_exercise_state()
-                assert result is None
-                mock_end.assert_called_once_with("auto-expired after 90 minutes")
+            result = fitbit_store.get_exercise_state()
+            assert result is None
+            # Verify the SQL UPDATE for auto-expire was issued
+            calls = mc.execute.call_args_list
+            expire_sql = calls[0][0][0]
+            assert "UPDATE fitbit_exercise" in expire_sql
+            assert "auto-expired after 90 minutes" in expire_sql
+            assert "INTERVAL '90 minutes'" in expire_sql
         finally:
             p.stop()
 

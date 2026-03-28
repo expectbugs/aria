@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.41] — 2026-03-27
+
+### Fixed
+
+- **Exercise auto-expire via SQL** — `get_exercise_state()` now expires stale sessions (>90 min) via SQL `UPDATE ... WHERE started_at < NOW() - INTERVAL '90 minutes'` instead of Python datetime comparison. Eliminates fragile aware/naive datetime mixing. The UPDATE is a no-op when no rows match.
+
+### Changed
+
+- **Version** bumped to 0.4.41
+
+---
+
 ## [0.4.40] — 2026-03-27
 
 ### Added
