@@ -100,8 +100,8 @@ KNOWN_PLACES = {
 NUDGE_INTERVAL_MIN = 30           # minutes between nudge evaluations
 QUIET_HOURS_START = 0              # midnight (0-23)
 QUIET_HOURS_END = 7                # 7am (0-23)
-MAX_NUDGES_PER_DAY = 6            # global cap: max nudge messages per 24h
-MAX_NUDGES_PER_HOUR = 2           # global cap: max nudge messages per 1h
+MAX_NUDGES_PER_DAY = 15           # unified cap: max deliveries per 24h (nudges + findings)
+MAX_NUDGES_PER_HOUR = 2           # global cap: max deliveries per 1h
 STALE_REMINDER_DAYS = 3           # auto-expire reminders overdue by this many days
 
 # --- Twilio (SMS/MMS/Voice) ---
@@ -135,9 +135,15 @@ GOOGLE_CLIENT_SECRET = "your-client-secret"
 GOOGLE_REDIRECT_URI = "http://127.0.0.1:8080/callback"
 GOOGLE_TOKEN_FILE = DATA_DIR / "google_tokens.json"
 GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.events",    # read-write events
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",          # send emails
 ]
+
+# --- Gmail Intelligence ---
+GMAIL_POLL_INTERVAL_MIN = 3            # minutes between Gmail syncs
+GMAIL_RULES_FILE = DATA_DIR / "gmail_rules.yaml"
+GMAIL_ATTACHMENTS_DIR = DATA_DIR / "email_attachments"
 
 # --- Whisper STT (faster-whisper + CTranslate2) ---
 WHISPER_MODEL = "large-v3-turbo"     # "large-v3" for max accuracy, "large-v3-turbo" for speed
@@ -169,8 +175,7 @@ DEFERRED_DELIVERY_EXPIRES_HOURS = 12    # expire undelivered deferred items
 # --- Domain Monitors (Phase 1) ---
 MONITORS_ENABLED = True                   # master switch for all monitors
 MONITOR_FINDING_TTL_HOURS = 24            # auto-expire undelivered findings after this
-MONITOR_DELIVERY_MAX_PER_DAY = 4          # max finding deliveries per 24h (separate from nudges)
-MONITOR_DELIVERY_MIN_INTERVAL_MIN = 30    # min minutes between finding deliveries
+MONITOR_DELIVERY_MIN_INTERVAL_MIN = 30    # min minutes between unified deliveries (nudges + findings)
 
 # --- Hardware capabilities ---
 # Set based on what this machine can do. Daemon checks these at runtime.

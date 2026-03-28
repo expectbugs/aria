@@ -8,9 +8,13 @@ CREATE TABLE IF NOT EXISTS events (
     date DATE NOT NULL,
     time TIME,
     notes TEXT,
+    google_id TEXT,
+    google_etag TEXT,
+    last_synced TIMESTAMPTZ,
     created TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
+CREATE INDEX IF NOT EXISTS idx_events_google_id ON events(google_id);
 
 -- Reminders
 CREATE TABLE IF NOT EXISTS reminders (
@@ -137,33 +141,52 @@ CREATE TABLE IF NOT EXISTS fitbit_exercise (
 );
 CREATE INDEX IF NOT EXISTS idx_exercise_active ON fitbit_exercise(active);
 
--- Google Calendar cached events (synced via API)
-CREATE TABLE IF NOT EXISTS google_calendar_events (
-    event_id TEXT PRIMARY KEY,
-    calendar_id TEXT NOT NULL DEFAULT 'primary',
-    summary TEXT,
-    start_time TIMESTAMPTZ,
-    end_time TIMESTAMPTZ,
-    location TEXT,
-    status TEXT,
-    data JSONB NOT NULL,
-    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_gcal_start ON google_calendar_events(start_time);
-
--- Google Gmail cached message metadata (synced via API)
-CREATE TABLE IF NOT EXISTS google_gmail_messages (
-    message_id TEXT PRIMARY KEY,
-    thread_id TEXT,
+-- Email cache — full body + full-text search (Gmail integration)
+CREATE TABLE IF NOT EXISTS email_cache (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    from_address TEXT NOT NULL,
+    from_name TEXT,
+    to_addresses TEXT,
     subject TEXT,
-    sender TEXT,
-    date TIMESTAMPTZ,
     snippet TEXT,
-    label_ids TEXT[],
-    data JSONB NOT NULL,
-    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    body TEXT,
+    body_search tsvector
+        GENERATED ALWAYS AS (to_tsvector('english', coalesce(subject, '') || ' ' || coalesce(body, ''))) STORED,
+    labels TEXT[],
+    has_attachments BOOLEAN DEFAULT FALSE,
+    attachment_paths TEXT[],
+    gmail_category TEXT,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_gmail_date ON google_gmail_messages(date);
+CREATE INDEX IF NOT EXISTS idx_email_cache_timestamp ON email_cache(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_email_cache_from ON email_cache(from_address);
+CREATE INDEX IF NOT EXISTS idx_email_cache_thread ON email_cache(thread_id);
+CREATE INDEX IF NOT EXISTS idx_email_body_search ON email_cache USING GIN(body_search);
+
+-- Email classifications (training data + audit trail)
+CREATE TABLE IF NOT EXISTS email_classifications (
+    id SERIAL PRIMARY KEY,
+    email_id TEXT NOT NULL REFERENCES email_cache(id),
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    tier TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    confidence FLOAT,
+    reason TEXT,
+    user_override TEXT,
+    surfaced BOOLEAN DEFAULT FALSE,
+    acted_on BOOLEAN DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_email_class_email ON email_classifications(email_id);
+
+-- Calendar sync state (singleton row for incremental sync token)
+CREATE TABLE IF NOT EXISTS calendar_sync_state (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    sync_token TEXT,
+    last_full_sync TIMESTAMPTZ,
+    last_incremental_sync TIMESTAMPTZ
+);
 
 -- Request log
 CREATE TABLE IF NOT EXISTS request_log (
