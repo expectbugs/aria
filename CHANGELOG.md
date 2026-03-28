@@ -6,6 +6,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.5.4] — 2026-03-28
+
+### Added
+
+- **Production data replay tests (Tier 3)** — 7 new test files with ~229 tests replaying real production data through code paths:
+  - `test_production_fitbit_replay.py` (37 tests) — all 9 real Fitbit snapshots through every extraction function
+  - `test_production_nutrition_replay.py` (42 tests) — all 56 real nutrition entries through validation, aggregation, context
+  - `test_production_request_replay.py` (39 tests) — real request_log inputs through context/action pipelines
+  - `test_production_health_nutrition_integrity.py` (19 tests) — cross-store data integrity checks
+  - `test_production_edge_inputs.py` (39 tests) — real edge-case user inputs
+  - `test_production_context_replay.py` (19 tests) — context builders with real multi-store state
+  - `test_future_phase_contracts.py` (34 tests) — forward-looking API contracts for Phases 1-3
+- **Production data fixtures** in `tests/integration/fixtures/` — sanitized exports of Fitbit snapshots, nutrition entries, health entries, request_log samples, and locations
+
+### Discovered (data quality issue)
+
+- **Combo egg entry missing choline** — "Large coffee + 2 hard-boiled eggs + smoothie" has cholesterol_mg=372 (correct for 2 eggs) but choline_mg is completely absent from the JSONB. Eggs have ~147mg choline each (294mg total), critical for NAFLD tracking. This is a data issue (Claude omitted choline when logging the combo meal), not a code bug.
+
+### Changed
+
+- **Version** bumped to 0.5.4
+- **Total test count:** 1779 tests across 77 files, all passing
+
+---
+
 ## [0.5.3] — 2026-03-28
 
 ### Fixed

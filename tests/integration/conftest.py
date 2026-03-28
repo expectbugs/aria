@@ -12,6 +12,7 @@ Prerequisites:
   - Or create the database manually:  createdb -U aria aria_test
 """
 
+import json
 import sys
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -120,6 +121,86 @@ def clean_tables(test_pool):
             "TRUNCATE " + ", ".join(ALL_TABLES) + " CASCADE"
         )
     yield
+
+
+# ---------------------------------------------------------------------------
+# Fixture loading — real production data shapes for replay tests
+# ---------------------------------------------------------------------------
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def load_fixture(name: str) -> list[dict]:
+    """Load a JSON fixture file from tests/integration/fixtures/."""
+    path = FIXTURES_DIR / name
+    if not path.exists():
+        raise FileNotFoundError(f"Fixture not found: {path}")
+    with open(path) as f:
+        return json.load(f)
+
+
+def load_fitbit_snapshots_into_db():
+    """Load all real Fitbit snapshots into the test database."""
+    snapshots = load_fixture("fitbit_snapshots.json")
+    for snap in snapshots:
+        with db.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO fitbit_snapshots (date, data)
+                   VALUES (%s, %s)
+                   ON CONFLICT (date) DO UPDATE SET data = EXCLUDED.data""",
+                (snap["date"], psycopg.types.json.Json(snap["data"])),
+            )
+    return snapshots
+
+
+def load_nutrition_entries_into_db():
+    """Load all real nutrition entries into the test database."""
+    entries = load_fixture("nutrition_entries.json")
+    for e in entries:
+        with db.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO nutrition_entries
+                   (id, date, time, meal_type, food_name, source, servings,
+                    serving_size, nutrients, notes, content_hash, created)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (e["id"], e["date"], e["time"], e["meal_type"], e["food_name"],
+                 e.get("source", "manual"), e.get("servings", 1.0),
+                 e.get("serving_size"), psycopg.types.json.Json(e.get("nutrients", {})),
+                 e.get("notes"), e.get("content_hash"), e.get("created")),
+            )
+    return entries
+
+
+def load_health_entries_into_db():
+    """Load all real health entries into the test database."""
+    entries = load_fixture("health_entries.json")
+    for e in entries:
+        with db.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO health_entries
+                   (id, date, category, description, severity, sleep_hours,
+                    meal_type, content_hash, created)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (e["id"], e["date"], e["category"], e["description"],
+                 e.get("severity"), e.get("sleep_hours"), e.get("meal_type"),
+                 e.get("content_hash"), e.get("created")),
+            )
+    return entries
+
+
+def load_locations_into_db():
+    """Load location samples into the test database."""
+    entries = load_fixture("locations_sample.json")
+    for e in entries:
+        with db.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO locations
+                   (timestamp, lat, lon, location, accuracy_m, speed_mps, battery_pct)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (e.get("timestamp"), e["lat"], e["lon"], e.get("location"),
+                 e.get("accuracy_m"), e.get("speed_mps"), e.get("battery_pct")),
+            )
+    return entries
 
 
 # ---------------------------------------------------------------------------
