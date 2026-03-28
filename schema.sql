@@ -243,3 +243,85 @@ CREATE TABLE IF NOT EXISTS interaction_quality (
     details TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_interaction_quality_timestamp ON interaction_quality(timestamp);
+
+-- Monitor findings (Phase 1 — domain monitors produce structured findings)
+CREATE TABLE IF NOT EXISTS monitor_findings (
+    id SERIAL PRIMARY KEY,
+    domain TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    urgency TEXT NOT NULL DEFAULT 'info',
+    data JSONB,
+    fingerprint TEXT NOT NULL,
+    delivered BOOLEAN NOT NULL DEFAULT FALSE,
+    delivered_at TIMESTAMPTZ,
+    delivery_method TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_findings_undelivered ON monitor_findings(delivered, urgency);
+CREATE INDEX IF NOT EXISTS idx_findings_fingerprint ON monitor_findings(fingerprint, delivered);
+CREATE INDEX IF NOT EXISTS idx_findings_created ON monitor_findings(created_at);
+
+-- Verification log (Phase 3 — LoRA training data for hallucination prevention)
+CREATE TABLE IF NOT EXISTS verification_log (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    request_text TEXT,
+    response_text TEXT,
+    claim_text TEXT,
+    claim_type TEXT NOT NULL,
+    verification_status TEXT NOT NULL,
+    evidence TEXT,
+    retry_attempt INTEGER NOT NULL DEFAULT 0,
+    original_response TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_verification_log_timestamp ON verification_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_verification_log_status ON verification_log(verification_status);
+
+-- Delivery decision log (Phase 2)
+CREATE TABLE IF NOT EXISTS delivery_log (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    content_type TEXT NOT NULL,
+    source_channel TEXT,
+    hint TEXT,
+    chosen_method TEXT NOT NULL,
+    reason TEXT,
+    user_location TEXT,
+    user_activity TEXT,
+    delivered BOOLEAN DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_delivery_log_timestamp ON delivery_log(timestamp);
+
+-- Device state tracking (forward-looking for glasses/watch/mic)
+CREATE TABLE IF NOT EXISTS device_state (
+    device TEXT PRIMARY KEY,
+    connected BOOLEAN NOT NULL DEFAULT FALSE,
+    battery_pct INTEGER,
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    capabilities JSONB NOT NULL DEFAULT '{}'
+);
+
+-- Seed initial device state rows
+INSERT INTO device_state (device, connected, capabilities) VALUES
+    ('phone', FALSE, '{"voice_in": true, "voice_out": true, "display": true, "sms": true}'),
+    ('glasses', FALSE, '{"display": true, "voice_in": true}'),
+    ('watch', FALSE, '{"voice_in": true, "voice_out": true, "haptic": true}'),
+    ('mic', FALSE, '{"voice_in": true, "ambient": true}')
+ON CONFLICT (device) DO NOTHING;
+
+-- Deferred delivery queue (Phase 2)
+CREATE TABLE IF NOT EXISTS deferred_deliveries (
+    id SERIAL PRIMARY KEY,
+    content TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'normal',
+    source TEXT NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    delivered BOOLEAN NOT NULL DEFAULT FALSE,
+    delivered_at TIMESTAMPTZ,
+    delivery_method TEXT,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_deferred_undelivered ON deferred_deliveries(delivered, expires_at);

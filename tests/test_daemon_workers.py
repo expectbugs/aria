@@ -12,6 +12,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 import pytest
 
 import daemon
+from tests.helpers import make_action_result
 
 
 @pytest.fixture(autouse=True)
@@ -21,10 +22,20 @@ def reset_tasks():
     daemon._tasks.clear()
 
 
+@pytest.fixture(autouse=True)
+def _bypass_verification():
+    """Worker tests focus on delivery/task mechanics, not verification.
+    Make _verify_and_maybe_retry a passthrough that returns its input."""
+    async def _passthrough(text, context, result, log_fn=None):
+        return result
+    with patch("daemon._verify_and_maybe_retry", new=_passthrough):
+        yield
+
+
 class TestProcessTask:
     @pytest.mark.asyncio
     @patch("daemon._generate_tts", new_callable=AsyncMock, return_value=b"wavdata")
-    @patch("daemon.process_actions", return_value="Hello!")
+    @patch("daemon.process_actions", return_value=make_action_result(clean_response="Hello!"))
     @patch("daemon.ask", new_callable=AsyncMock)
     async def test_success(self, mock_ask, mock_actions, mock_tts):
         mock_ask.return_value = MagicMock(response="Hello!")
@@ -51,7 +62,7 @@ class TestProcessTask:
     @pytest.mark.asyncio
     @patch("daemon._generate_tts", new_callable=AsyncMock,
            side_effect=RuntimeError("TTS failed"))
-    @patch("daemon.process_actions", return_value="OK")
+    @patch("daemon.process_actions", return_value=make_action_result(clean_response="OK"))
     @patch("daemon.ask", new_callable=AsyncMock)
     async def test_tts_error(self, mock_ask, mock_actions, mock_tts):
         mock_ask.return_value = MagicMock(response="OK")
@@ -70,7 +81,7 @@ class TestProcessFileTask:
     @patch("daemon.build_request_context", new_callable=AsyncMock, return_value="ctx")
     async def test_image_file(self, mock_ctx, mock_claude, mock_actions,
                                 mock_tts, mock_log):
-        mock_actions.return_value = "Analysis done"
+        mock_actions.return_value = make_action_result(clean_response="Analysis done")
         daemon._tasks["t1"] = {"status": "processing", "created": 0}
 
         await daemon._process_file_task(
@@ -89,12 +100,11 @@ class TestProcessFileTask:
     @patch("daemon.build_request_context", new_callable=AsyncMock, return_value="")
     async def test_sms_delivery(self, mock_ctx, mock_claude, mock_actions,
                                   mock_sms, mock_log):
-        mock_actions.return_value = "Result"
         # Simulate set_delivery metadata
         def actions_side_effect(resp, metadata=None, **kw):
             if metadata is not None:
                 metadata["delivery"] = "sms"
-            return "Result"
+            return make_action_result(clean_response="Result")
         mock_actions.side_effect = actions_side_effect
 
         daemon._tasks["t1"] = {"status": "processing", "created": 0}
@@ -109,7 +119,7 @@ class TestProcessVoiceTask:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon._generate_tts", new_callable=AsyncMock, return_value=b"wav")
-    @patch("daemon.process_actions", return_value="Hello!")
+    @patch("daemon.process_actions", return_value=make_action_result(clean_response="Hello!"))
     @patch("daemon._route_query", new_callable=AsyncMock, return_value="Hello!")
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_full_pipeline(self, mock_ctx, mock_claude, mock_actions,
@@ -152,7 +162,7 @@ class TestProcessVoiceTask:
         def actions_with_sms(resp, metadata=None, **kw):
             if metadata is not None:
                 metadata["delivery"] = "sms"
-            return "SMS response"
+            return make_action_result(clean_response="SMS response")
         mock_actions.side_effect = actions_with_sms
 
         mock_engine = MagicMock()
@@ -174,7 +184,7 @@ class TestProcessSms:
     @patch("daemon.db.get_conn")
     @patch("daemon.log_request")
     @patch("daemon.sms.send_sms")
-    @patch("daemon.process_actions", return_value="Got it!")
+    @patch("daemon.process_actions", return_value=make_action_result(clean_response="Got it!"))
     @patch("daemon._route_query", new_callable=AsyncMock, return_value="Got it!")
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_text_only_sms(self, mock_ctx, mock_claude, mock_actions,
@@ -191,7 +201,7 @@ class TestProcessSms:
     @patch("daemon.db.get_conn")
     @patch("daemon.log_request")
     @patch("daemon.sms.send_long_sms")
-    @patch("daemon.process_actions", return_value="I see the label.")
+    @patch("daemon.process_actions", return_value=make_action_result(clean_response="I see the label."))
     @patch("daemon._route_query", new_callable=AsyncMock, return_value="I see the label.")
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_long_response_split(self, mock_ctx, mock_claude,
@@ -202,7 +212,7 @@ class TestProcessSms:
         mock_conn.return_value.__exit__ = MagicMock(return_value=False)
 
         long_response = "x" * 2000
-        mock_actions.return_value = long_response
+        mock_actions.return_value = make_action_result(clean_response=long_response)
 
         await daemon._process_sms("+15551234567", "test", [])
         mock_send_long.assert_called_once_with("+15551234567", long_response)

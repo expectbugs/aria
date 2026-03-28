@@ -24,11 +24,12 @@ import location_store
 import redis_client
 import sms
 
-from actions import process_actions
+from actions import process_actions, ActionResult
 from session_pool import get_session_pool
 from aria_api import _is_simple_query, ask_aria as _ask_aria_fallback, ask_haiku
 from claude_session import ClaudeSession  # kept for Action ARIA (Step 6)
 from version import __version__
+import delivery_engine
 import task_dispatcher
 import completion_listener
 from amnesia_pool import get_pool as get_amnesia_pool
@@ -129,6 +130,50 @@ async def _route_query(text: str, context: str = "",
     except Exception as e:
         log.warning("Session pool failed, falling back to API: %s", e)
         return await _ask_aria_fallback(text, context, file_blocks)
+
+
+async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
+                                   log_fn=None) -> ActionResult:
+    """Verify claims in response. Retry up to 2x on action claim violations.
+
+    Only retries when claims_without_actions is non-empty (ARIA said "I logged"
+    but emitted no ACTION blocks). Date/numeric claim issues are logged but
+    do not trigger retries.
+    """
+    if not getattr(config, 'VERIFICATION_ENABLED', True):
+        return result
+
+    from verification import needs_verification, verify_response, log_verification
+
+    if not needs_verification(text, result.clean_response, result):
+        return result
+
+    verification = verify_response(result.clean_response, result, context)
+    log_verification(verification, retry_attempt=0,
+                     request_text=text, response_text=result.clean_response)
+
+    if verification.ok or not verification.needs_retry:
+        return result
+
+    log.warning("[VERIFY] Claim violation detected, retrying: %s", text[:100])
+    pool = get_session_pool()
+    for attempt in range(1, 3):
+        correction = verification.correction_prompt
+        retry_resp = await pool.query_deep(correction, "")
+        result = process_actions(retry_resp, metadata=result.metadata, log_fn=log_fn)
+        verification = verify_response(result.clean_response, result, context)
+        log_verification(verification, retry_attempt=attempt,
+                         request_text=text, response_text=result.clean_response)
+        if verification.ok or not verification.needs_retry:
+            break
+
+    if not verification.ok:
+        result.warnings.append(
+            "[VERIFY] Response may contain unverified claims after retries."
+        )
+        log.warning("[VERIFY] Retries exhausted for: %s", text[:100])
+
+    return result
 
 
 # --- File Processing ---
@@ -269,6 +314,9 @@ async def update_location(loc: LocationUpdate, request: Request):
         lat=loc.lat, lon=loc.lon, accuracy=loc.accuracy,
         speed=loc.speed, battery=loc.battery,
     )
+    # Update phone device state for delivery engine
+    delivery_engine.update_device_state("phone", connected=True,
+                                         battery_pct=loc.battery)
     return {"status": "ok", "timestamp": entry["timestamp"],
             "location": entry.get("location", "")}
 
@@ -354,7 +402,9 @@ async def ask(req: AskRequest, request: Request):
         extra_context = await _get_context_for_text(text)
         response = await _route_query(text, extra_context)
         delivery_meta = {"channel": "voice"}
-        response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await _verify_and_maybe_retry(text, extra_context, result, log_fn=log_request)
+        response = result.to_response()
 
         duration = time.time() - start
         log_request(text, "ok", response=response, duration=duration)
@@ -385,7 +435,38 @@ async def _process_task(task_id: str, req: AskRequest, request: Request):
     """Background worker for async ask processing."""
     try:
         result = await ask(req, request)
-        audio = await _generate_tts(result.response)
+        response_text = result.response
+
+        # Delivery engine — no hint (ask() doesn't expose metadata)
+        decision = delivery_engine.evaluate("response", "normal", "voice")
+        delivery_engine.log_decision(decision, "response", "voice", None)
+        delivery = decision.method
+
+        if delivery == "image":
+            try:
+                from sms import _render_sms_image
+                import push_image as _pi
+                import os as _os
+                img_path = _render_sms_image(response_text, header="ARIA")
+                _pi.push_image(img_path, caption="ARIA")
+                _os.unlink(img_path)
+            except Exception as ie:
+                log.error("[DELIVERY] Image delivery failed: %s", ie)
+            _tasks[task_id].update({"status": "done", "audio": b"", "delivery": "image"})
+            return
+        elif delivery == "defer":
+            delivery_engine.queue_deferred(response_text, "response", "normal", "voice", decision.reason)
+            _tasks[task_id].update({"status": "done", "audio": b"", "delivery": "deferred"})
+            return
+        elif delivery == "sms":
+            try:
+                sms.send_long_to_owner(response_text)
+            except Exception as se:
+                log.error("[DELIVERY] SMS delivery failed: %s", se)
+            _tasks[task_id].update({"status": "done", "audio": b"", "delivery": "sms"})
+            return
+
+        audio = await _generate_tts(response_text)
         _tasks[task_id].update({"status": "done", "audio": audio})
     except Exception as e:
         log.exception("Task %s failed: %s", task_id, e)
@@ -433,8 +514,15 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
 
         response = await _route_query(user_text, extra_context, file_blocks)
         delivery_meta = {"channel": "voice"}
-        response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
-        delivery = delivery_meta.get("delivery", "voice")
+        result = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
+        response = result.to_response()
+
+        # Delivery engine decides channel
+        hint = delivery_meta.get("delivery")
+        decision = delivery_engine.evaluate("response", "normal", "file", hint)
+        delivery_engine.log_decision(decision, "response", "file", hint)
+        delivery = decision.method
 
         duration = time.time() - start
         log_request(f"[file:{filename}] {user_text}", "ok",
@@ -446,8 +534,23 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
                 sms.send_long_to_owner(response)
             except Exception as se:
                 log.error("SMS delivery from file request failed: %s", se)
-            # No voice output — user explicitly requested SMS
             _tasks[task_id].update({"status": "done", "audio": b"", "delivery": "sms"})
+            return
+        elif delivery == "image":
+            try:
+                from sms import _render_sms_image
+                import push_image as _pi
+                import os as _os
+                img_path = _render_sms_image(response, header="ARIA")
+                _pi.push_image(img_path, caption="ARIA")
+                _os.unlink(img_path)
+            except Exception as ie:
+                log.error("[DELIVERY] Image delivery failed: %s", ie)
+            _tasks[task_id].update({"status": "done", "audio": b"", "delivery": "image"})
+            return
+        elif delivery == "defer":
+            delivery_engine.queue_deferred(response, "response", "normal", "file", decision.reason)
+            _tasks[task_id].update({"status": "done", "audio": b"", "delivery": "deferred"})
             return
 
         audio = await _generate_tts(response)
@@ -623,33 +726,55 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
         extra_context = await _get_context_for_text(user_text)
         response = await _route_query(user_text, extra_context)
         delivery_meta = {"channel": "voice"}
-        response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
-        delivery = delivery_meta.get("delivery", "voice")
+        result = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
+        response = result.to_response()
 
-        # Step 3: Handle delivery routing
-        if delivery == "sms":
-            # User asked for text delivery — send SMS, no voice output
-            try:
-                sms.send_long_to_owner(response)
-            except Exception as se:
-                log.error("SMS delivery from voice request failed: %s", se)
-
-            duration = time.time() - start
-            log_request(f"[voice] {user_text}", "ok", response=response, duration=duration)
-            _tasks[task_id].update({
-                "status": "done",
-                "audio": b"",
-                "transcript": user_text,
-                "delivery": "sms",
-            })
-            return
-
-        # Step 4: Generate TTS audio
-        audio = await _generate_tts(response)
+        # Delivery engine decides channel
+        hint = delivery_meta.get("delivery")
+        decision = delivery_engine.evaluate("response", "normal", "voice", hint)
+        delivery_engine.log_decision(decision, "response", "voice", hint)
+        delivery = decision.method
 
         duration = time.time() - start
         log_request(f"[voice] {user_text}", "ok", response=response, duration=duration)
 
+        # Step 3: Handle delivery routing
+        if delivery == "sms":
+            try:
+                sms.send_long_to_owner(response)
+            except Exception as se:
+                log.error("SMS delivery from voice request failed: %s", se)
+            _tasks[task_id].update({
+                "status": "done", "audio": b"",
+                "transcript": user_text, "delivery": "sms",
+            })
+            return
+        elif delivery == "image":
+            try:
+                from sms import _render_sms_image
+                import push_image as _pi
+                import os as _os
+                img_path = _render_sms_image(response, header="ARIA")
+                _pi.push_image(img_path, caption="ARIA")
+                _os.unlink(img_path)
+            except Exception as ie:
+                log.error("[DELIVERY] Image delivery failed: %s", ie)
+            _tasks[task_id].update({
+                "status": "done", "audio": b"",
+                "transcript": user_text, "delivery": "image",
+            })
+            return
+        elif delivery == "defer":
+            delivery_engine.queue_deferred(response, "response", "normal", "voice", decision.reason)
+            _tasks[task_id].update({
+                "status": "done", "audio": b"",
+                "transcript": user_text, "delivery": "deferred",
+            })
+            return
+
+        # Step 4: Generate TTS audio (voice delivery)
+        audio = await _generate_tts(response)
         _tasks[task_id].update({
             "status": "done",
             "audio": audio,
@@ -841,11 +966,17 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
         response = await _route_query(user_text, extra_context,
                                      file_blocks if file_blocks else None)
         delivery_meta = {"channel": "sms"}
-        response = process_actions(response, metadata=delivery_meta, log_fn=log_request)
-        delivery = delivery_meta.get("delivery", "sms")
+        result = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
+        response = result.to_response()
+
+        # Delivery engine decides channel
+        hint = delivery_meta.get("delivery")
+        decision = delivery_engine.evaluate("response", "normal", "sms", hint)
+        delivery_engine.log_decision(decision, "response", "sms", hint)
+        delivery = decision.method
 
         if delivery == "voice":
-            # User requested voice delivery — generate TTS and push audio
             try:
                 audio = await _generate_tts(response)
                 wav_path = config.DATA_DIR / "sms_voice_response.wav"
@@ -857,6 +988,18 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
                 log.error("Voice delivery failed, falling back to SMS: %s", ve)
                 if response.strip():
                     sms.send_long_sms(from_number, response)
+        elif delivery == "image":
+            try:
+                from sms import _render_sms_image
+                import push_image as _pi
+                import os as _os
+                img_path = _render_sms_image(response, header="ARIA")
+                _pi.push_image(img_path, caption="ARIA")
+                _os.unlink(img_path)
+            except Exception as ie:
+                log.error("[DELIVERY] Image delivery failed: %s", ie)
+        elif delivery == "defer":
+            delivery_engine.queue_deferred(response, "response", "normal", "sms", decision.reason)
         else:
             # Default SMS delivery
             if response.strip():

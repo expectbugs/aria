@@ -2,6 +2,24 @@
 
 from datetime import date, time, datetime
 
+from actions import ActionResult
+
+
+def make_action_result(clean_response="", actions_found=None, action_types=None,
+                       failures=None, warnings=None, metadata=None,
+                       claims_without_actions=None, expect_actions_missing=None):
+    """Create an ActionResult for testing. All list/dict args default to empty."""
+    return ActionResult(
+        clean_response=clean_response,
+        actions_found=actions_found or [],
+        action_types=action_types or [],
+        failures=failures or [],
+        warnings=warnings or [],
+        metadata=metadata or {},
+        claims_without_actions=claims_without_actions or [],
+        expect_actions_missing=expect_actions_missing or [],
+    )
+
 
 def make_event_row(id="abc12345", title="Dentist", d=date(2026, 3, 20),
                    t=time(14, 30), notes=None):

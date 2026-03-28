@@ -82,6 +82,7 @@ import news
 import fitbit_store
 import nutrition_store
 import redis_client
+import monitors
 
 
 def gather_always_context() -> str:
@@ -133,6 +134,16 @@ def gather_always_context() -> str:
     task_status = redis_client.format_task_status(active_tasks)
     if task_status:
         parts.append(task_status)
+
+    # Undelivered monitor findings (Tier 1 — ARIA should see these)
+    try:
+        findings = monitors.get_undelivered(min_urgency="low")
+        if findings:
+            parts.append("Monitor alerts: " + "; ".join(
+                f"[{f['urgency']}] {f['summary']}" for f in findings[:5]
+            ))
+    except Exception:
+        pass  # monitors table may not exist yet during migration
 
     return "\n".join(parts)
 
@@ -549,6 +560,17 @@ async def gather_debrief_context() -> str:
     except Exception:
         pass
 
+    # Monitor findings from today
+    try:
+        today_findings = [f for f in monitors.get_recent(hours=24)
+                          if f.get("created_at", "").startswith(today)]
+        if today_findings:
+            parts.append("\nMonitor findings today:")
+            for f in today_findings:
+                parts.append(f"  - [{f['urgency']}] {f['domain']}: {f['summary']}")
+    except Exception:
+        pass
+
     return "\n".join(parts)
 
 
@@ -664,5 +686,15 @@ async def gather_briefing_context() -> str:
         parts.append("\nUpcoming legal dates:")
         for l in legal_upcoming:
             parts.append(f"  - [id={l['id']}] {l['date']}: {l['description']}")
+
+    # Monitor findings from last 24h
+    try:
+        recent_findings = monitors.get_recent(hours=24)
+        if recent_findings:
+            parts.append("\nMonitor findings (last 24h):")
+            for f in recent_findings:
+                parts.append(f"  - [{f['urgency']}] {f['domain']}: {f['summary']}")
+    except Exception:
+        pass
 
     return "\n".join(parts)

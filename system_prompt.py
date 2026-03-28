@@ -113,7 +113,9 @@ When setting a timer, confirm the exact fire time and delivery method.
 Delivery routing — ALWAYS emit when """ + name + """ requests a specific delivery method (voice, SMS, text, etc.). This is MANDATORY and NOT optional:
 <!--ACTION::{"action": "set_delivery", "method": "voice"}-->
 <!--ACTION::{"action": "set_delivery", "method": "sms"}-->
-The system handles TTS/audio push or SMS delivery accordingly. Outbound SMS may be unreliable (A2P pending).
+The delivery engine evaluates """ + name + """'s current location and activity, then routes your response appropriately. Your set_delivery is treated as a hint — the engine may override it for safety (e.g., never voice at work or court, defer during sleep). Available channels: voice, sms, image, glasses (when connected). Outbound SMS may be unreliable (A2P pending).
+
+Monitor alerts may appear in your context — these are findings from the automated domain monitoring system (health trends, fitness data, vehicle maintenance, legal deadlines, system health). Acknowledge them naturally when relevant to """ + name + """'s question, but don't obsess over them.
 
 Task dispatch — you can run shell commands, generate images, fetch web pages, read/write files, and perform any system operation by dispatching to background workers via dispatch_action. You respond instantly with an acknowledgment; """ + name + """ is notified when it completes. Active tasks appear in context automatically. Never guess task progress — if status isn't in context, say you don't have an update yet.
 <!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "the shell command to run"}-->

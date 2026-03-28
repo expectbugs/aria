@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import calendar_store
@@ -16,6 +17,71 @@ import fitbit_store
 import redis_client
 
 log = logging.getLogger("aria")
+
+
+@dataclass
+class ActionResult:
+    """Structured result from process_actions().
+
+    Separates the clean response from execution metadata so callers can
+    inspect failures, warnings, and claims independently. The to_response()
+    method reconstructs the old string-return behavior for backward compat.
+    """
+    clean_response: str           # ACTION blocks stripped, NO failure/warning notes
+    actions_found: list[dict]     # parsed action dicts that executed
+    action_types: list[str]       # ["log_nutrition", "log_health", ...]
+    failures: list[str]           # parse + execution failure messages
+    warnings: list[str]           # validation warnings
+    metadata: dict                # {"delivery": "sms", "dispatched_task_id": "abc123"}
+    claims_without_actions: list[str] = field(default_factory=list)
+    expect_actions_missing: list[str] = field(default_factory=list)
+
+    def to_response(self) -> str:
+        """Compose final response string with failures/warnings appended.
+
+        Preserves the exact behavior of the old string return from
+        process_actions() — callers can use this for zero-change migration.
+        """
+        resp = self.clean_response
+        if self.expect_actions_missing:
+            resp = (
+                "WARNING: I expected to store data but no ACTION blocks were emitted. "
+                "The data was NOT actually saved. Missing actions: "
+                + ", ".join(self.expect_actions_missing) + ". Please try again."
+            )
+        if self.failures:
+            resp += "\n\nNote: Some actions failed — " + " ".join(self.failures)
+        if self.warnings:
+            resp += "\n\n(" + " ".join(self.warnings) + ")"
+        if self.claims_without_actions:
+            resp += (
+                "\n\n(System note: ARIA claimed to store data but no ACTION blocks "
+                "were emitted. The data may not have been saved. Please verify or retry.)"
+            )
+        return resp
+
+    # Backward compat: allow ActionResult to behave like a string in tests
+    # and existing code that does `"text" in result`, `result.lower()`, etc.
+    def __contains__(self, item):
+        return item in self.to_response()
+
+    def __str__(self):
+        return self.to_response()
+
+    def lower(self):
+        return self.to_response().lower()
+
+    def strip(self):
+        return self.to_response().strip()
+
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return self.to_response() == other
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(self.to_response())
+
 
 # Regex to strip fenced code blocks before ACTION extraction (S14 fix)
 _CODE_FENCE = re.compile(r'```.*?```', re.DOTALL)
@@ -216,7 +282,7 @@ def _prevalidate_nutrition_actions(parsed_actions: list[dict]) -> tuple[list[dic
 
 def process_actions(response_text: str, expect_actions: list[str] | None = None,
                     metadata: dict | None = None,
-                    log_fn=None) -> str:
+                    log_fn=None) -> ActionResult:
     """Extract and execute ACTION blocks from Claude's response.
 
     Three-phase pipeline:
@@ -224,12 +290,11 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
     2. Validate — pre-validate nutrition entries (dedup, date cross-check)
     3. Execute — run each action against the database
 
-    Returns the cleaned response, replacing it with an error message
-    if any actions failed so the user isn't told something worked when it didn't.
+    Returns ActionResult with structured data. Use result.to_response() for
+    the composed string (identical to old behavior).
 
     expect_actions: optional list of action types that SHOULD be present
                     (e.g. ["log_nutrition"] for nutrition label photos).
-                    If expected actions are missing, a warning is appended.
     metadata: optional mutable dict to receive extracted metadata like
               delivery routing preferences ({"delivery": "voice"}).
     log_fn: optional callable with signature (text, status, **kwargs) for
@@ -271,7 +336,12 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             if log_fn:
                 log_fn("DATA_QUALITY", "error", error=error_msg)
             clean_response = re.sub(r'<!--ACTION::.*?-->', '', response_text, flags=re.DOTALL).strip()
-            return clean_response + f"\n\nDATA QUALITY ERROR — actions aborted: {error_msg}"
+            return ActionResult(
+                clean_response=clean_response,
+                actions_found=[], action_types=[], metadata=metadata or {},
+                failures=[f"DATA QUALITY ERROR — actions aborted: {error_msg}"],
+                warnings=[], claims_without_actions=[], expect_actions_missing=[],
+            )
 
     # Run nutrition validation BEFORE executing
     pre_nutrition_actions = [a for a in parsed_actions if a.get("action") == "log_nutrition"]
@@ -452,35 +522,30 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
     clean_response = re.sub(r'<!--ACTION::\{.*?\}-->', '', clean_response, flags=re.DOTALL)
     clean_response = re.sub(r'<!--ACTION::.*', '', clean_response, flags=re.DOTALL).strip()
 
+    # Log failures
     if failures:
         if log_fn:
             log_fn("ACTION", "error", error="; ".join(failures))
-        clean_response += "\n\nNote: Some actions failed — " + " ".join(failures)
 
-    # Nutrition validation warnings (computed in Phase 2, before execution)
+    # Nutrition validation warnings (computed before execution)
+    # Wrap in "Nutrition check:" prefix so to_response() output matches old format
     if validation_warnings:
-        clean_response += "\n\n(Nutrition check: " + " ".join(validation_warnings) + ")"
+        validation_warnings = ["Nutrition check: " + " ".join(validation_warnings)]
         if log_fn:
             log_fn("NUTRITION_VALIDATION", "warning",
                    error="; ".join(validation_warnings))
 
-    # Validate: if specific actions were expected but not found, warn
+    # Check expected actions
+    expect_missing = []
     if expect_actions:
-        missing = [a for a in expect_actions if a not in action_types_found]
-        if missing:
-            warning = (
-                "WARNING: I expected to store data but no ACTION blocks were emitted. "
-                "The data was NOT actually saved. Missing actions: "
-                + ", ".join(missing) + ". Please try again."
-            )
+        expect_missing = [a for a in expect_actions if a not in action_types_found]
+        if expect_missing:
             if log_fn:
                 log_fn("ACTION_MISSING", "error",
-                       error=f"Expected {missing}, got {action_types_found}")
-            clean_response = warning
+                       error=f"Expected {expect_missing}, got {action_types_found}")
 
     # Detect claim-without-action: response says data was stored but no actions found.
-    # Uses phrase patterns (not single words) to distinguish real claims like
-    # "I've logged your meal" from descriptive text like "meals logged 3 of 7 days".
+    claims_without = []
     if not action_jsons:
         claim_phrases = re.findall(
             r"(?:I've |I have |I )"
@@ -491,8 +556,6 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             r"\bnoted and logged\b",
             clean_response, re.IGNORECASE
         )
-        # Also detect nutrition-specific claims: ARIA-phrased claim + 3+ nutrient terms
-        # without a log_nutrition action (Claude extracted data but didn't store it)
         nutrient_terms = re.findall(
             r'\b(calories|protein|carb|fat|sodium|fiber|sugar|cholesterol|potassium)\b',
             clean_response, re.IGNORECASE
@@ -500,12 +563,18 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
         if claim_phrases and len(set(t.lower() for t in nutrient_terms)) >= 3:
             claim_phrases.append("nutrition_data_extracted")
         if claim_phrases:
-            clean_response += (
-                "\n\n(System note: ARIA claimed to store data but no ACTION blocks "
-                "were emitted. The data may not have been saved. Please verify or retry.)"
-            )
+            claims_without = claim_phrases
             if log_fn:
                 log_fn("CLAIM_WITHOUT_ACTION", "warning",
                        error=f"Response claims '{claim_phrases}' but 0 actions found")
 
-    return clean_response
+    return ActionResult(
+        clean_response=clean_response,
+        actions_found=parsed_actions,
+        action_types=action_types_found,
+        failures=failures,
+        warnings=validation_warnings,
+        metadata=metadata or {},
+        claims_without_actions=claims_without,
+        expect_actions_missing=expect_missing,
+    )

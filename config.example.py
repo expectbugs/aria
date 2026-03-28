@@ -143,6 +143,25 @@ COLLECT_ENTITY_MENTIONS = True      # extract entities from responses
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 HAIKU_MAX_TOKENS = 2048
 
+# --- Response Verification (Phase 3) ---
+VERIFICATION_ENABLED = True             # master switch for claim verification
+VERIFICATION_MAX_RETRIES = 2            # max retries on action claim violations
+
+# --- Context Window Management (Phase 3) ---
+SESSION_MAX_CONTEXT_BYTES = 500000      # ~125K tokens, recycle threshold (~62% of 200K)
+
+# --- Delivery Intelligence (Phase 2) ---
+DELIVERY_ENGINE_ENABLED = True          # master switch for delivery engine
+DELIVERY_LOCATION_STALE_MINUTES = 30    # treat location as "unknown" after this
+DELIVERY_LOG_ENABLED = True             # log all delivery decisions
+DEFERRED_DELIVERY_EXPIRES_HOURS = 12    # expire undelivered deferred items
+
+# --- Domain Monitors (Phase 1) ---
+MONITORS_ENABLED = True                   # master switch for all monitors
+MONITOR_FINDING_TTL_HOURS = 24            # auto-expire undelivered findings after this
+MONITOR_DELIVERY_MAX_PER_DAY = 4          # max finding deliveries per 24h (separate from nudges)
+MONITOR_DELIVERY_MIN_INTERVAL_MIN = 30    # min minutes between finding deliveries
+
 # --- Hardware capabilities ---
 # Set based on what this machine can do. Daemon checks these at runtime.
 ENABLE_GPU = False              # True if NVIDIA GPU available (for Whisper, LoRA, etc.)

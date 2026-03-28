@@ -75,14 +75,14 @@ class TestProcessActionsInvariants:
         inputs = ["", "hello", "x" * 10000, "\n\n\n", "\t\t"]
         for text in inputs:
             result = actions.process_actions(text)
-            assert isinstance(result, str)
+            assert isinstance(result.to_response(), str)
 
     @settings(max_examples=50, deadline=5000)
     @given(text=st.text(min_size=0, max_size=500))
     def test_hypothesis_process_actions_never_raises(self, text):
         """Hypothesis: given random text, process_actions never raises."""
         result = actions.process_actions(text)
-        assert isinstance(result, str)
+        assert isinstance(result.to_response(), str)
 
     @settings(max_examples=50, deadline=5000)
     @given(text=st.text(min_size=0, max_size=500))

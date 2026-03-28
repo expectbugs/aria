@@ -41,6 +41,20 @@ def _mock_sms():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def _mock_delivery_engine():
+    """Mock delivery engine to pass through hint as-is.
+    Tick tests focus on timer/nudge logic, not delivery routing."""
+    from delivery_engine import DeliveryDecision
+    def _passthrough(content_type="response", priority="normal",
+                     source="voice", hint=None):
+        method = hint or ("sms" if source == "sms" else "voice")
+        return DeliveryDecision(method=method, reason="test passthrough")
+    with patch("delivery_engine.evaluate", side_effect=_passthrough), \
+         patch("delivery_engine.log_decision"):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # process_timers()
 # ---------------------------------------------------------------------------

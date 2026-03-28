@@ -387,7 +387,7 @@ class TestACTIONInjection:
         # but process_actions should catch the exception gracefully
         cleaned = actions.process_actions(resp)
         # Either it was stored or the error was reported — no crash
-        assert isinstance(cleaned, str)
+        assert isinstance(cleaned.to_response(), str)
 
     def test_javascript_in_description(self):
         """JavaScript in description — stored safely, no execution risk."""
@@ -904,7 +904,7 @@ class TestEdgeCaseResponses:
         )
         cleaned = actions.process_actions(resp)
         # Unknown action type "" should be logged and ignored
-        assert isinstance(cleaned, str)
+        assert isinstance(cleaned.to_response(), str)
 
     def test_action_json_is_array_not_object(self):
         """ACTION block containing a JSON array instead of object."""
@@ -912,19 +912,19 @@ class TestEdgeCaseResponses:
         cleaned = actions.process_actions(resp)
         # json.loads will succeed (it's valid JSON) but .get("action") on
         # a list will raise AttributeError — caught by the exception handler
-        assert isinstance(cleaned, str)
+        assert isinstance(cleaned.to_response(), str)
 
     def test_action_json_is_string(self):
         """ACTION block containing a JSON string instead of object."""
         resp = 'Done. <!--ACTION::"just a string"-->'
         cleaned = actions.process_actions(resp)
-        assert isinstance(cleaned, str)
+        assert isinstance(cleaned.to_response(), str)
 
     def test_action_json_is_number(self):
         """ACTION block containing a JSON number instead of object."""
         resp = 'Done. <!--ACTION::42-->'
         cleaned = actions.process_actions(resp)
-        assert isinstance(cleaned, str)
+        assert isinstance(cleaned.to_response(), str)
 
     def test_response_with_markdown(self):
         """Response with markdown headers, code blocks, bullet points."""
@@ -1190,7 +1190,7 @@ class TestCrossCuttingAdversarial:
         )
         cleaned = actions.process_actions(resp)
         # Unknown actions are logged and ignored, no crash
-        assert isinstance(cleaned, str)
+        assert isinstance(cleaned.to_response(), str)
 
     def test_partial_action_block_truncated(self):
         """Response truncated mid-ACTION block — partial block stripped."""

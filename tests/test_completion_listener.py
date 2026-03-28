@@ -27,7 +27,13 @@ def _mock_lazy_imports():
     completion_listener._generate_tts = AsyncMock(return_value=b"audio")
     completion_listener.push_audio = MagicMock()
     completion_listener.push_audio.push_audio = MagicMock(return_value=True)
-    completion_listener.process_actions = MagicMock(side_effect=lambda r, **kw: r)
+    from actions import ActionResult
+    def _mock_process_actions(r, **kw):
+        return ActionResult(
+            clean_response=r, actions_found=[], action_types=[], failures=[],
+            warnings=[], metadata={}, claims_without_actions=[], expect_actions_missing=[],
+        )
+    completion_listener.process_actions = MagicMock(side_effect=_mock_process_actions)
     yield
     completion_listener.ask_haiku = None
     completion_listener._generate_tts = None
@@ -200,7 +206,12 @@ class TestActionBlockProcessing:
         }
         raw = 'Done!<!--ACTION::{"action":"set_timer","minutes":5,"message":"hi"}-->'
         completion_listener.ask_haiku = AsyncMock(return_value=raw)
-        mock_pa = MagicMock(return_value="Done!")
+        from actions import ActionResult
+        mock_result = ActionResult(
+            clean_response="Done!", actions_found=[], action_types=[], failures=[],
+            warnings=[], metadata={}, claims_without_actions=[], expect_actions_missing=[],
+        )
+        mock_pa = MagicMock(return_value=mock_result)
         completion_listener.process_actions = mock_pa
 
         await completion_listener._on_completion("t1", "completed", "result")
@@ -219,8 +230,13 @@ class TestActionBlockProcessing:
         }
         raw = 'Timer set!<!--ACTION::{"action":"set_timer"}-->'
         completion_listener.ask_haiku = AsyncMock(return_value=raw)
-        # process_actions strips the block
-        completion_listener.process_actions = MagicMock(return_value="Timer set!")
+        # process_actions strips the block — returns ActionResult
+        from actions import ActionResult
+        mock_result = ActionResult(
+            clean_response="Timer set!", actions_found=[], action_types=[], failures=[],
+            warnings=[], metadata={}, claims_without_actions=[], expect_actions_missing=[],
+        )
+        completion_listener.process_actions = MagicMock(return_value=mock_result)
 
         await completion_listener._on_completion("t1", "completed", "result")
 

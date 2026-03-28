@@ -6,6 +6,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.6.0] — 2026-03-28
+
+### Added — Phase 1: Agent System Foundation
+
+- **Domain monitor framework** (`monitors/` package) — pure Python + SQL monitors that produce structured `Finding` objects with fingerprint deduplication, TTL-based expiry, and delivery pipeline
+- **5 domain monitors**: health (NAFLD biomarker trends, nutrient compliance), fitness (HR/HRV/sleep trends, step averages), vehicle (maintenance interval tracking), legal (graduated 7d/3d/1d/overdue deadline warnings), system (disk usage, log sizes, cron freshness, GPU temp, Portage sync freshness)
+- **Portage sync monitor** — tracks last `emerge --sync` on beardos and slappy, warns at 14d (normal) and 30d (urgent)
+- **Finding delivery pipeline** in tick.py — composes via Haiku, delivers via SMS/image, independent frequency caps from nudges
+- **Context injection** — undelivered findings in Tier 1 (always visible), recent findings in briefing/debrief
+- **`monitor_findings` table** with fingerprint deduplication indexes
+
+### Added — Phase 3: Response Verification Pipeline
+
+- **`ActionResult` dataclass** — replaces string return from `process_actions()` with structured data (clean_response, actions_found, action_types, failures, warnings, claims_without_actions, expect_actions_missing). Backward-compatible via `to_response()`, `__contains__`, `__str__`, `lower()`
+- **`verification.py`** — claim extraction and verification engine with action claim retry loop (max 2 retries), date claim detection, numeric calorie claim checking against nutrition_store
+- **Context window management** in session_pool.py — tracks estimated context bytes per session, proactively recycles at ~62% of 200K window (~125K tokens), enhanced history injection with Haiku-generated summary of older turns + 10 verbatim recent turns
+- **`verification_log` table** — logs all claim checks for LoRA training data
+
+### Added — Phase 2: Delivery Intelligence Engine
+
+- **`delivery_engine.py`** — pure decision function that evaluates user state (location, activity, time, device connectivity) and returns a `DeliveryDecision`. Safety overrides: never voice at work/court, defer during sleep
+- **Forward-looking device support** — `device_state` table pre-seeded with phone, glasses (Even Realities G2), watch (Pixel Watch 4), mic (DJI Mic 3). Routing rules include all devices; falls back gracefully when devices aren't connected
+- **Deferred delivery queue** — `deferred_deliveries` table stores content when delivery is deferred (sleeping, in court). tick.py re-evaluates user state every minute and delivers when appropriate. Expires after 12h
+- **`delivery_log` table** — logs all delivery decisions with user state snapshot
+- **All delivery paths** route through the engine: daemon workers (voice, file, SMS, task), tick.py (timers, findings, nudges), completion_listener (task completions)
+- Image delivery branch added to all workers (renders response as image, pushes to phone)
+
+### Changed
+
+- **`process_actions()` return type** changed from `str` to `ActionResult` — all 5 call sites updated
+- **Session pool** now tracks context bytes and recycles proactively
+- **Version** bumped to 0.6.0
+- **Total test count:** 1836 tests across 82 files, all passing
+
+---
+
 ## [0.5.4] — 2026-03-28
 
 ### Added

@@ -237,10 +237,14 @@ Partial ACTION marker leak (found by Hypothesis fuzz testing, fixed in actions.p
 
 S14 (ACTION in code fences) and S15 (nested --> truncation) — both fixed via `_extract_action_jsons()` balanced-brace parser replacing regex extraction. Found by adversarial pipeline tests.
 
+### Resolved in v0.6.0
+
+M17 structurally superseded — claim-without-action detection now produces structured `ActionResult.claims_without_actions` data instead of directly appending warnings. The verification pipeline (`verification.py`) consumes this data and triggers retries when appropriate, eliminating the false-positive problem for nutrition queries (verification gates on actual claim patterns, not just nutrient term counts). S8 fully resolved — all delivery paths (file, voice, SMS, task) now route through `delivery_engine.evaluate()` which enforces location-aware delivery decisions at the handler level.
+
 ### Remaining
 
 None — all tracked issues resolved.
 
 ---
 
-*Original review covered 23 Python source files. Codebase has grown significantly since (v0.5.0: session_pool.py, query.py, training_store.py, and others added). v0.5.2 pipeline testing suite (1550 tests) found 2 new issues + 1 fixed edge case.*
+*Original review covered 23 Python source files. Codebase now at 39+ source files (v0.6.0: monitors/, verification.py, delivery_engine.py added). v0.6.0 total: 1836 tests across 82 files.*

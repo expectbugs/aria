@@ -163,12 +163,10 @@ class TestEggCholine:
                     f"Standalone egg entry '{food}' missing choline_mg"
                 )
 
-    def test_combo_egg_entry_missing_choline(self):
-        """The combo entry 'Large coffee + 2 eggs + smoothie' is missing choline.
+    def test_combo_egg_entry_has_choline(self):
+        """The combo entry 'Large coffee + 2 eggs + smoothie' must have choline.
 
-        BUG FOUND: The combined breakfast entry includes 2 hard-boiled eggs but
-        choline_mg is not set in the nutrients dict. Eggs have ~147mg choline each,
-        so this entry should have ~294mg choline.
+        Fixed in v0.5.4: 2 hard-boiled eggs = ~294mg choline (critical for NAFLD).
         """
         nutrition = _load_nutrition()
         combo_entries = [n for n in nutrition
@@ -180,11 +178,8 @@ class TestEggCholine:
         for entry in combo_entries:
             nutrients = entry.get("nutrients", {})
             choline = nutrients.get("choline_mg")
-            # BUG FOUND: choline_mg is missing from combo entries that include eggs
-            # TODO: fix — should be ~294mg for 2 eggs
-            assert choline is None, (
-                f"Expected choline_mg=None in combo entry (known bug), "
-                f"but got {choline} — bug may be fixed!"
+            assert choline is not None and choline >= 294, (
+                f"Combo egg entry must have choline_mg >= 294 (2 eggs), got {choline}"
             )
 
 

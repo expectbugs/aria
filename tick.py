@@ -126,9 +126,13 @@ def fire_timer(timer: dict):
     Marks timer complete BEFORE delivery attempt. If delivery fails,
     logs loudly but does not retry (prevents infinite retry loops).
     """
-    delivery = timer.get("delivery", "sms")
+    import delivery_engine as _de
+    hint = timer.get("delivery", "sms")
     message = timer.get("message", timer.get("label", "Timer fired"))
     priority = timer.get("priority", "gentle")
+    decision = _de.evaluate("timer", priority, "timer", hint)
+    _de.log_decision(decision, "timer", "timer", hint)
+    delivery = decision.method
 
     # Skip quiet hours unless urgent
     if is_quiet_hours() and priority != "urgent":
@@ -735,10 +739,209 @@ def process_fitbit_poll():
         save_state(state)
 
 
+# --- Monitor Processing ---
+
+def process_monitors():
+    """Run domain monitors on their configured schedules.
+
+    Each monitor has a schedule_minutes interval. Last-run timestamps are
+    tracked in tick_state. Findings are stored with fingerprint deduplication.
+    """
+    if not getattr(config, "MONITORS_ENABLED", True):
+        return
+
+    from monitors import store_finding, cleanup_expired
+    from monitors.health import HealthMonitor
+    from monitors.fitness import FitnessMonitor
+    from monitors.vehicle import VehicleMonitor
+    from monitors.legal import LegalMonitor
+    from monitors.system import SystemMonitor
+
+    state = load_state()
+    now = datetime.now()
+
+    monitor_classes = [
+        HealthMonitor, FitnessMonitor, VehicleMonitor,
+        LegalMonitor, SystemMonitor,
+    ]
+
+    for cls in monitor_classes:
+        monitor = cls()
+        key = f"last_monitor_{monitor.domain}"
+        last_run = state.get(key, "")
+        cutoff = (now - timedelta(minutes=monitor.schedule_minutes)).isoformat()
+
+        if last_run and last_run >= cutoff:
+            continue  # not due yet
+
+        if monitor.waking_only and is_quiet_hours():
+            continue
+
+        try:
+            findings = monitor.run()
+            for finding in findings:
+                store_finding(finding)
+            state[key] = now.isoformat()
+            if findings:
+                log.info("[MONITOR] %s: %d findings", monitor.domain, len(findings))
+        except Exception:
+            log.exception("[MONITOR] %s monitor failed", monitor.domain)
+
+    save_state(state)
+
+
+def deliver_findings():
+    """Deliver undelivered monitor findings with urgency >= normal.
+
+    Uses the same Haiku composition as nudges but with independent frequency caps.
+    """
+    if not getattr(config, "MONITORS_ENABLED", True):
+        return
+
+    from monitors import get_undelivered, mark_delivered
+
+    # During quiet hours, only deliver urgent findings
+    min_urgency = "urgent" if is_quiet_hours() else "normal"
+    findings = get_undelivered(min_urgency=min_urgency)
+    if not findings:
+        return
+
+    # Frequency cap: min interval between deliveries
+    state = load_state()
+    min_interval = getattr(config, "MONITOR_DELIVERY_MIN_INTERVAL_MIN", 30)
+    last_delivery = state.get("last_finding_delivery", "")
+    cutoff = (datetime.now() - timedelta(minutes=min_interval)).isoformat()
+    if last_delivery and last_delivery >= cutoff:
+        return  # too soon
+
+    # Daily cap
+    max_per_day = getattr(config, "MONITOR_DELIVERY_MAX_PER_DAY", 4)
+    try:
+        with db.get_conn() as conn:
+            row = conn.execute(
+                """SELECT COUNT(*) AS cnt FROM monitor_findings
+                   WHERE delivered = TRUE
+                   AND delivered_at > NOW() - INTERVAL '24 hours'"""
+            ).fetchone()
+        if row and row["cnt"] >= max_per_day:
+            log.info("[MONITOR] Finding delivery suppressed (daily cap %d reached)",
+                     max_per_day)
+            return
+    except Exception:
+        pass
+
+    # Compose message via daemon /nudge endpoint
+    descriptions = [f"[{f['urgency']}] {f['summary']}" for f in findings[:5]]
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{DAEMON_URL}/nudge",
+            json={"triggers": descriptions},
+            headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+            timeout=300,
+        )
+        if resp.status_code != 200:
+            log.error("[MONITOR] Finding compose failed: HTTP %s", resp.status_code)
+            return
+
+        message = resp.json().get("message", "")
+        if not message:
+            log.warning("[MONITOR] Finding compose returned empty message")
+            return
+    except Exception as e:
+        log.error("[MONITOR] Finding compose failed: %s", e)
+        return
+
+    # Deliver
+    try:
+        sms.send_long_to_owner(message)
+    except Exception as e:
+        log.error("[MONITOR] Finding delivery failed: %s", e)
+        return
+
+    # Mark delivered
+    finding_ids = [f["id"] for f in findings[:5]]
+    mark_delivered(finding_ids, "sms")
+    state["last_finding_delivery"] = datetime.now().isoformat()
+    save_state(state)
+    log.info("[MONITOR] Delivered %d findings", len(finding_ids))
+
+
+# --- Deferred Delivery Processing ---
+
+def process_deferred_deliveries():
+    """Attempt to deliver queued deferred items when user state allows.
+
+    Re-evaluates user state for each item. If the engine no longer returns
+    "defer", delivers using the new method. Expired items are cleaned up.
+    """
+    import delivery_engine as _de
+
+    pending = _de.get_pending_deferred()
+    if not pending:
+        return
+
+    for item in pending:
+        decision = _de.evaluate(
+            content_type=item.get("content_type", "response"),
+            priority=item.get("priority", "normal"),
+            source=item.get("source", "voice"),
+        )
+
+        if decision.method == "defer":
+            continue  # still not a good time
+
+        content = item["content"]
+        delivered = False
+
+        if decision.method == "voice":
+            try:
+                import httpx
+                resp = httpx.post(
+                    f"{DAEMON_URL}/ask/audio",
+                    json={"text": content},
+                    headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+                    timeout=60,
+                )
+                if resp.status_code == 200:
+                    wav_path = config.DATA_DIR / "deferred_audio.wav"
+                    wav_path.write_bytes(resp.content)
+                    import push_audio
+                    delivered = push_audio.push_audio(str(wav_path))
+            except Exception as e:
+                log.error("[DELIVERY] Deferred voice delivery failed: %s", e)
+
+        elif decision.method == "sms":
+            try:
+                sms.send_long_to_owner(content)
+                delivered = True
+            except Exception as e:
+                log.error("[DELIVERY] Deferred SMS delivery failed: %s", e)
+
+        elif decision.method == "image":
+            try:
+                from sms import _render_sms_image
+                import push_image
+                import os
+                img_path = _render_sms_image(content, header="ARIA")
+                delivered = push_image.push_image(img_path, caption="ARIA (deferred)")
+                os.unlink(img_path)
+            except Exception as e:
+                log.error("[DELIVERY] Deferred image delivery failed: %s", e)
+
+        if delivered:
+            _de.mark_deferred_delivered(item["id"], decision.method)
+            log.info("[DELIVERY] Deferred item %d delivered via %s",
+                     item["id"], decision.method)
+
+    # Clean up expired items
+    _de.cleanup_expired_deferred()
+
+
 # --- Main ---
 
 def main():
-    """Single tick — check timers, location reminders, exercise, fitbit, and maybe nudges.
+    """Single tick — check timers, location reminders, exercise, fitbit, monitors, nudges, deferred.
 
     Each job is isolated so one failure doesn't block the rest.
     """
@@ -747,6 +950,9 @@ def main():
         ("location_reminders", check_location_reminders),
         ("exercise", process_exercise_tick),
         ("fitbit_poll", process_fitbit_poll),
+        ("monitors", process_monitors),
+        ("finding_delivery", deliver_findings),
+        ("deferred_deliveries", process_deferred_deliveries),
     ]:
         try:
             job_fn()
@@ -786,6 +992,13 @@ def main():
         run_nudge_evaluation()
     except Exception:
         log.exception("Tick job 'nudge_evaluation' failed")
+
+    # Cleanup: expired monitor findings
+    try:
+        from monitors import cleanup_expired
+        cleanup_expired()
+    except Exception:
+        log.exception("Tick job 'finding_cleanup' failed")
 
 
 if __name__ == "__main__":

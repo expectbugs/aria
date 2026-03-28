@@ -234,12 +234,12 @@ class TestProcessActionsContract:
 
     def test_always_returns_str(self):
         result = actions.process_actions("no actions here")
-        assert isinstance(result, str)
+        assert isinstance(result.to_response(), str)
 
     def test_always_returns_str_with_actions(self):
         text = 'Done <!--ACTION::{"action":"set_delivery","method":"voice"}-->'
         result = actions.process_actions(text)
-        assert isinstance(result, str)
+        assert isinstance(result.to_response(), str)
 
     def test_metadata_delivery_set(self):
         text = 'Ok <!--ACTION::{"action":"set_delivery","method":"voice"}-->'

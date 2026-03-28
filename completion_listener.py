@@ -85,12 +85,24 @@ async def _on_completion(task_id: str, status: str, result_text: str):
         response = await ask_haiku(prompt)
 
         # Process any ACTION blocks (execute + strip from response text)
-        response = process_actions(response)
+        result = process_actions(response)
+        response = result.to_response()
 
-        # Deliver via the same channel the original request came in on
-        channel = task_data.get("channel", "voice")
+        # Delivery engine decides channel
+        import delivery_engine as _de
+        decision = _de.evaluate(
+            content_type="task_completion", priority="normal",
+            source=task_data.get("channel", "voice"),
+        )
+        _de.log_decision(decision, "task_completion",
+                         task_data.get("channel", "voice"), None)
+        channel = decision.method
 
-        if channel == "sms":
+        if channel == "defer":
+            _de.queue_deferred(response, "task_completion", "normal",
+                               task_data.get("channel", "voice"), decision.reason)
+            log.info("Task %s result deferred: %s", task_id, decision.reason)
+        elif channel == "sms":
             try:
                 sms.send_long_to_owner(response)
                 log.info("Task %s result delivered via SMS", task_id)

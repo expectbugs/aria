@@ -317,15 +317,18 @@ class TestPhase2DeliveryMetadata:
 # ---------------------------------------------------------------------------
 
 class TestPhase3ProcessActionsReturnType:
-    """process_actions() always returns str."""
+    """process_actions() returns ActionResult (Phase 3 implemented)."""
 
-    def test_returns_str_no_actions(self):
-        """Plain text with no actions returns str."""
+    def test_returns_action_result_no_actions(self):
+        """Plain text with no actions returns ActionResult."""
         result = actions.process_actions("Hello, I can help with that.")
-        assert isinstance(result, str)
+        assert isinstance(result, actions.ActionResult)
+        assert result.clean_response == "Hello, I can help with that."
+        assert result.actions_found == []
+        assert result.failures == []
 
-    def test_returns_str_with_actions(self):
-        """Text with valid actions returns str."""
+    def test_returns_action_result_with_actions(self):
+        """Text with valid actions returns ActionResult."""
         today = date.today().isoformat()
         resp = (
             'Done! '
@@ -333,18 +336,19 @@ class TestPhase3ProcessActionsReturnType:
             '"category":"meal","description":"test meal","meal_type":"lunch"}-->'
         )
         result = actions.process_actions(resp)
-        assert isinstance(result, str)
+        assert isinstance(result, actions.ActionResult)
+        assert "log_health" in result.action_types
 
-    def test_returns_str_with_malformed_json(self):
-        """Malformed JSON in ACTION block still returns str."""
-        resp = 'Oops <!--ACTION::{bad json here}-->'
-        result = actions.process_actions(resp)
-        assert isinstance(result, str)
+    def test_to_response_returns_str(self):
+        """to_response() always returns str."""
+        result = actions.process_actions("Hello")
+        assert isinstance(result.to_response(), str)
 
-    def test_returns_str_empty_input(self):
-        """Empty string input returns str."""
-        result = actions.process_actions("")
-        assert isinstance(result, str)
+    def test_str_contains_compat(self):
+        """ActionResult supports 'in' operator via __contains__."""
+        result = actions.process_actions("Hello, I can help!")
+        assert "Hello" in result
+        assert "ACTION" not in result
 
 
 class TestPhase3ActionBlockStripping:

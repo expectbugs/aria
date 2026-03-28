@@ -45,6 +45,8 @@ ALL_TABLES = [
     "sms_log", "sms_outbound", "tick_state", "nudge_cooldowns",
     "nudge_log", "processed_webhooks", "monitor_state",
     "tool_traces", "entity_mentions", "interaction_quality",
+    "monitor_findings", "verification_log",
+    "delivery_log", "device_state", "deferred_deliveries",
 ]
 
 

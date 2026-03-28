@@ -55,6 +55,10 @@ class _Session:
         self._request_count = 0
         self._history_injected = False
         self._spawned_at: datetime | None = None
+        self._context_bytes = 0       # estimated context window usage
+        self._max_context_bytes = getattr(
+            config, "SESSION_MAX_CONTEXT_BYTES", 500_000
+        )  # ~125K tokens ≈ 62% of 200K window
 
     def _is_alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
@@ -83,6 +87,7 @@ class _Session:
         )
         self._request_count = 0
         self._history_injected = False
+        self._context_bytes = 0
         self._spawned_at = datetime.now()
         log.info("Session '%s' spawned (pid=%s, effort=%s)",
                  self.name, self._proc.pid, self._effort)
@@ -116,8 +121,7 @@ class _Session:
 
             # History injection on first query after spawn/recycle
             if not self._history_injected:
-                turns = get_recent_turns()
-                history_block = _format_history_for_injection(turns)
+                history_block = await self._prepare_history()
                 if history_block:
                     parts.append(history_block)
                 self._history_injected = True
@@ -132,6 +136,12 @@ class _Session:
                 content = [{"type": "text", "text": prompt}] + file_blocks
             else:
                 content = prompt
+
+            # Track estimated context size (input)
+            input_bytes = len(prompt)
+            if file_blocks:
+                input_bytes += sum(len(json.dumps(b)) for b in file_blocks)
+            self._context_bytes += input_bytes
 
             # Send user message as NDJSON
             msg = json.dumps({
@@ -165,7 +175,18 @@ class _Session:
                             raise RuntimeError(
                                 f"Session '{self.name}' error: "
                                 f"{data.get('result', 'unknown')}")
-                        return data.get("result", "")
+                        result = data.get("result", "")
+                        # Track output size + check context pressure
+                        self._context_bytes += len(result)
+                        if self._context_bytes > self._max_context_bytes:
+                            log.info(
+                                "[CONTEXT] Session '%s' at %d bytes "
+                                "(~%dK tokens), scheduling recycle",
+                                self.name, self._context_bytes,
+                                self._context_bytes // 4000,
+                            )
+                            self._request_count = self._max_requests
+                        return result
 
                     elif msg_type == "control_request":
                         # Auto-approve any permission/hook requests
@@ -194,6 +215,36 @@ class _Session:
                 await self._kill()
                 raise
 
+    async def _prepare_history(self) -> str:
+        """Prepare history for injection after spawn/recycle.
+
+        Returns verbatim recent turns (10) plus a Haiku-generated summary
+        of older turns (11-30) for continuity across context window recycles.
+        """
+        recent = get_recent_turns(10)
+        verbatim = _format_history_for_injection(recent)
+
+        # Try to summarize older conversation via Haiku
+        try:
+            all_turns = get_recent_turns(30)
+            older = all_turns[:-10] if len(all_turns) > 10 else []
+            if older:
+                from aria_api import ask_haiku
+                older_text = _format_history_for_injection(older)
+                summary = await ask_haiku(
+                    "Summarize this conversation history in 3-4 sentences. "
+                    "Focus on: topics discussed, decisions made, pending items, "
+                    "and the user's current mood/situation.\n\n" + older_text
+                )
+                return (
+                    f"[CONVERSATION SUMMARY — earlier session]\n{summary}\n"
+                    f"[/CONVERSATION SUMMARY]\n\n{verbatim}"
+                )
+        except Exception as e:
+            log.warning("History summary failed (using verbatim only): %s", e)
+
+        return verbatim
+
     def get_status(self) -> dict:
         """Return status info for health checks."""
         return {
@@ -204,6 +255,10 @@ class _Session:
             "max_requests": self._max_requests,
             "pid": self._proc.pid if self._is_alive() else None,
             "spawned_at": self._spawned_at.isoformat() if self._spawned_at else None,
+            "context_bytes": self._context_bytes,
+            "context_pct": round(
+                self._context_bytes / self._max_context_bytes * 100, 1
+            ) if self._max_context_bytes else 0,
         }
 
 

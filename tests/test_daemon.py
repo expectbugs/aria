@@ -12,6 +12,7 @@ from starlette.testclient import TestClient
 
 import daemon
 import config
+from tests.helpers import make_action_result
 
 
 # ---------------------------------------------------------------------------
@@ -90,14 +91,17 @@ class TestAuth:
 # ---------------------------------------------------------------------------
 
 class TestAskEndpoint:
+    @patch("daemon._verify_and_maybe_retry", new_callable=AsyncMock)
     @patch("daemon.process_actions")
     @patch("daemon._route_query", new_callable=AsyncMock)
     @patch("daemon._get_context_for_text", new_callable=AsyncMock)
     @patch("daemon.log_request")
-    def test_successful_ask(self, mock_log, mock_ctx, mock_claude, mock_actions, client):
+    def test_successful_ask(self, mock_log, mock_ctx, mock_claude, mock_actions, mock_verify, client):
         mock_ctx.return_value = "context"
         mock_claude.return_value = "Hello from ARIA!"
-        mock_actions.return_value = "Hello from ARIA!"
+        result = make_action_result(clean_response="Hello from ARIA!")
+        mock_actions.return_value = result
+        mock_verify.return_value = result
 
         resp = client.post("/ask", json={"text": "Hello"}, headers=AUTH)
         assert resp.status_code == 200

@@ -37,7 +37,7 @@ class TestProcessActionsNeverCrashes:
              patch("actions.nutrition_store", MagicMock()), \
              patch("actions.fitbit_store", MagicMock()):
             result = actions.process_actions(text)
-            assert isinstance(result, str)
+            assert isinstance(result.to_response(), str)
 
     @given(st.text(min_size=1, max_size=200))
     @settings(max_examples=100)
@@ -64,7 +64,7 @@ class TestMalformedActionBlocks:
     def test_malformed_blocks_dont_crash(self, block):
         with patch("actions.calendar_store", MagicMock()):
             result = actions.process_actions(f"Text {block}")
-            assert isinstance(result, str)
+            assert isinstance(result.to_response(), str)
             assert "<!--ACTION" not in result
 
 

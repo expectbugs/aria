@@ -20,6 +20,29 @@ def reset_tasks():
     daemon._tasks.clear()
 
 
+@pytest.fixture(autouse=True)
+def _mock_delivery_engine():
+    """Mock delivery engine to pass through hint — delivery tests test
+    the routing logic, not the engine's state inference."""
+    from delivery_engine import DeliveryDecision
+    def _passthrough(content_type="response", priority="normal",
+                     source="voice", hint=None):
+        method = hint or ("sms" if source == "sms" else "voice")
+        return DeliveryDecision(method=method, reason="test passthrough")
+    with patch("delivery_engine.evaluate", side_effect=_passthrough), \
+         patch("delivery_engine.log_decision"):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _bypass_verification():
+    """Delivery tests focus on routing, not verification."""
+    async def _passthrough(text, context, result, log_fn=None):
+        return result
+    with patch("daemon._verify_and_maybe_retry", new=_passthrough):
+        yield
+
+
 class TestVoiceTaskDeliveryRouting:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
