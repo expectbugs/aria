@@ -15,6 +15,26 @@ import db
 log = logging.getLogger("aria.fitbit_store")
 
 
+def _safe_int(val, default: int = 0) -> int:
+    """Cast to int, handling string/None from Fitbit API."""
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(val, default: float = 0.0) -> float:
+    """Cast to float, handling string/None from Fitbit API."""
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def save_snapshot(snapshot: dict):
     """Save a daily data snapshot. Merges with existing data if present."""
     day = snapshot.get("date", date.today().isoformat())
@@ -67,16 +87,17 @@ def get_sleep_summary(day: str = "today") -> dict | None:
     main = next((s for s in sleeps if s.get("isMainSleep")), sleeps[0])
     summary = main.get("levels", {}).get("summary", {})
 
+    total_min = _safe_int(main.get("minutesAsleep"))
     return {
-        "total_minutes": main.get("minutesAsleep", 0),
-        "deep_minutes": summary.get("deep", {}).get("minutes", 0),
-        "light_minutes": summary.get("light", {}).get("minutes", 0),
-        "rem_minutes": summary.get("rem", {}).get("minutes", 0),
-        "wake_minutes": summary.get("wake", {}).get("minutes", 0),
-        "efficiency": main.get("efficiency", 0),
+        "total_minutes": total_min,
+        "deep_minutes": _safe_int(summary.get("deep", {}).get("minutes")),
+        "light_minutes": _safe_int(summary.get("light", {}).get("minutes")),
+        "rem_minutes": _safe_int(summary.get("rem", {}).get("minutes")),
+        "wake_minutes": _safe_int(summary.get("wake", {}).get("minutes")),
+        "efficiency": _safe_int(main.get("efficiency")),
         "start_time": main.get("startTime", ""),
         "end_time": main.get("endTime", ""),
-        "duration_hours": round(main.get("minutesAsleep", 0) / 60, 1),
+        "duration_hours": round(total_min / 60, 1),
     }
 
 
@@ -89,13 +110,14 @@ def get_heart_summary(day: str = "today") -> dict | None:
     hr = snap["heart_rate"]
     value = hr.get("value", {})
 
+    rhr = value.get("restingHeartRate")
     return {
-        "resting_hr": value.get("restingHeartRate"),
+        "resting_hr": _safe_int(rhr) if rhr is not None else None,
         "zones": [
             {
                 "name": z.get("name", ""),
-                "minutes": z.get("minutes", 0),
-                "calories_out": z.get("caloriesOut", 0),
+                "minutes": _safe_int(z.get("minutes")),
+                "calories_out": _safe_float(z.get("caloriesOut")),
             }
             for z in value.get("heartRateZones", [])
         ],
@@ -113,9 +135,11 @@ def get_hrv_summary(day: str = "today") -> dict | None:
     if not value:
         return None
 
+    rmssd = value.get("dailyRmssd")
+    deep = value.get("deepRmssd")
     return {
-        "rmssd": value.get("dailyRmssd"),
-        "deep_rmssd": value.get("deepRmssd"),
+        "rmssd": _safe_float(rmssd) if rmssd is not None else None,
+        "deep_rmssd": _safe_float(deep) if deep is not None else None,
     }
 
 
@@ -127,19 +151,19 @@ def get_activity_summary(day: str = "today") -> dict | None:
 
     act = snap["activity"]
     return {
-        "steps": act.get("steps", 0),
+        "steps": _safe_int(act.get("steps")),
         "distance_miles": round(
-            sum(d.get("distance", 0) for d in act.get("distances", [])
+            sum(_safe_float(d.get("distance")) for d in act.get("distances", [])
                 if d.get("activity") == "total"), 2
         ),
-        "calories_total": act.get("caloriesOut", 0),
-        "calories_active": act.get("activityCalories", 0),
+        "calories_total": _safe_int(act.get("caloriesOut")),
+        "calories_active": _safe_int(act.get("activityCalories")),
         "active_minutes": (
-            act.get("fairlyActiveMinutes", 0) +
-            act.get("veryActiveMinutes", 0)
+            _safe_int(act.get("fairlyActiveMinutes")) +
+            _safe_int(act.get("veryActiveMinutes"))
         ),
-        "sedentary_minutes": int(act.get("sedentaryMinutes", 0)),
-        "floors": act.get("floors", 0),
+        "sedentary_minutes": _safe_int(act.get("sedentaryMinutes")),
+        "floors": _safe_int(act.get("floors")),
     }
 
 
@@ -155,9 +179,9 @@ def get_spo2_summary(day: str = "today") -> dict | None:
         return None
 
     return {
-        "avg": value.get("avg"),
-        "min": value.get("min"),
-        "max": value.get("max"),
+        "avg": _safe_float(value.get("avg")) if value.get("avg") is not None else None,
+        "min": _safe_float(value.get("min")) if value.get("min") is not None else None,
+        "max": _safe_float(value.get("max")) if value.get("max") is not None else None,
     }
 
 
@@ -241,26 +265,26 @@ def get_trend(days: int = 7) -> str:
 
         hr = snap.get("heart_rate", {})
         rhr = hr.get("value", {}).get("restingHeartRate") if hr else None
-        if rhr:
-            resting_hrs.append(rhr)
+        if rhr is not None:
+            resting_hrs.append(_safe_int(rhr))
 
         hrv = snap.get("hrv", {})
         rmssd = hrv.get("value", {}).get("dailyRmssd") if hrv else None
-        if rmssd:
-            hrvs.append(rmssd)
+        if rmssd is not None:
+            hrvs.append(_safe_float(rmssd))
 
         sleep_data = snap.get("sleep")
         if sleep_data:
             sleeps = sleep_data.get("sleep", [])
             if sleeps:
                 main = next((s for s in sleeps if s.get("isMainSleep")), sleeps[0])
-                mins = main.get("minutesAsleep", 0)
+                mins = _safe_int(main.get("minutesAsleep"))
                 if mins:
                     sleep_hours.append(round(mins / 60, 1))
 
         act = snap.get("activity")
         if act:
-            steps = act.get("steps", 0)
+            steps = _safe_int(act.get("steps"))
             if steps:
                 step_counts.append(steps)
 

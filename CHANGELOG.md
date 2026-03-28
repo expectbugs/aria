@@ -6,6 +6,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.40] — 2026-03-27
+
+### Added
+
+- **`version.py`** — single source of truth for ARIA runtime version string. Eliminates stale hardcoded versions.
+- **Fitbit API type safety** — `_safe_int()` and `_safe_float()` helpers in `fitbit_store.py` cast all numeric values at the extraction boundary. Applied to all 7 summary/extraction functions (`get_sleep_summary`, `get_heart_summary`, `get_hrv_summary`, `get_activity_summary`, `get_spo2_summary`, `get_briefing_context`, `get_trend`). Prevents `TypeError`/`ValueError` crashes when Fitbit API returns strings instead of ints (documented in CLAUDE.md, previously only fixed for `sedentaryMinutes`).
+- **9 new tests** for safe casting: unit tests for helpers, string-input scenarios for all summary functions and trend.
+
+### Fixed
+
+- **Removed orphaned `test_migrate.py`** — integration test for deleted `migrate.py` (removed in v0.4.39 cleanup).
+
+### Changed
+
+- **Version** bumped to 0.4.40
+
+---
+
 ## [0.4.39] — 2026-03-27
 
 ### Fixed

@@ -384,3 +384,140 @@ class TestExerciseMode:
     def test_coaching_context_not_active(self, mock_state):
         mock_state.return_value = None
         assert fitbit_store.get_exercise_coaching_context() == ""
+
+
+class TestSafeCasting:
+    """Verify Fitbit API string values are cast to int/float at extraction boundary."""
+
+    def test_safe_int_normal(self):
+        assert fitbit_store._safe_int(42) == 42
+
+    def test_safe_int_string(self):
+        assert fitbit_store._safe_int("8500") == 8500
+
+    def test_safe_int_none(self):
+        assert fitbit_store._safe_int(None) == 0
+
+    def test_safe_int_none_custom_default(self):
+        assert fitbit_store._safe_int(None, default=-1) == -1
+
+    def test_safe_int_garbage(self):
+        assert fitbit_store._safe_int("abc") == 0
+
+    def test_safe_float_normal(self):
+        assert fitbit_store._safe_float(35.5) == 35.5
+
+    def test_safe_float_string(self):
+        assert fitbit_store._safe_float("96.5") == 96.5
+
+    def test_safe_float_none(self):
+        assert fitbit_store._safe_float(None) == 0.0
+
+    def test_safe_float_garbage(self):
+        assert fitbit_store._safe_float("abc") == 0.0
+
+    @patch("fitbit_store.get_snapshot")
+    def test_activity_summary_with_string_values(self, mock_snap):
+        """Fitbit has returned string ints before — verify no crash."""
+        snap = dict(SAMPLE_SNAPSHOT)
+        snap["activity"] = {
+            "steps": "8500",
+            "caloriesOut": "2400",
+            "activityCalories": "800",
+            "fairlyActiveMinutes": "20",
+            "veryActiveMinutes": "15",
+            "sedentaryMinutes": "600",
+            "floors": "5",
+            "distances": [{"activity": "total", "distance": "5.2"}],
+        }
+        mock_snap.return_value = snap
+        result = fitbit_store.get_activity_summary("2026-03-20")
+        assert result["steps"] == 8500
+        assert isinstance(result["steps"], int)
+        assert result["calories_total"] == 2400
+        assert result["active_minutes"] == 35
+        assert result["distance_miles"] == 5.2
+        assert result["sedentary_minutes"] == 600
+        assert result["floors"] == 5
+
+    @patch("fitbit_store.get_snapshot")
+    def test_sleep_summary_with_string_values(self, mock_snap):
+        snap = dict(SAMPLE_SNAPSHOT)
+        snap["sleep"] = {
+            "sleep": [{
+                "isMainSleep": True,
+                "minutesAsleep": "420",
+                "efficiency": "88",
+                "startTime": "2026-03-19T23:00:00",
+                "endTime": "2026-03-20T06:00:00",
+                "levels": {
+                    "summary": {
+                        "deep": {"minutes": "60"},
+                        "light": {"minutes": "200"},
+                        "rem": {"minutes": "120"},
+                        "wake": {"minutes": "40"},
+                    }
+                },
+            }]
+        }
+        mock_snap.return_value = snap
+        result = fitbit_store.get_sleep_summary("2026-03-20")
+        assert result["total_minutes"] == 420
+        assert isinstance(result["total_minutes"], int)
+        assert result["deep_minutes"] == 60
+        assert result["duration_hours"] == 7.0
+
+    @patch("fitbit_store.get_snapshot")
+    def test_heart_summary_with_string_values(self, mock_snap):
+        snap = dict(SAMPLE_SNAPSHOT)
+        snap["heart_rate"] = {
+            "value": {
+                "restingHeartRate": "65",
+                "heartRateZones": [
+                    {"name": "Fat Burn", "minutes": "30", "caloriesOut": "200.5"},
+                ],
+            }
+        }
+        mock_snap.return_value = snap
+        result = fitbit_store.get_heart_summary("2026-03-20")
+        assert result["resting_hr"] == 65
+        assert isinstance(result["resting_hr"], int)
+        assert result["zones"][0]["minutes"] == 30
+        assert result["zones"][0]["calories_out"] == 200.5
+
+    @patch("fitbit_store.get_snapshot")
+    def test_hrv_summary_with_string_values(self, mock_snap):
+        snap = dict(SAMPLE_SNAPSHOT)
+        snap["hrv"] = {"value": {"dailyRmssd": "35.5", "deepRmssd": "42.0"}}
+        mock_snap.return_value = snap
+        result = fitbit_store.get_hrv_summary("2026-03-20")
+        assert result["rmssd"] == 35.5
+        assert isinstance(result["rmssd"], float)
+
+    @patch("fitbit_store.get_snapshot")
+    def test_spo2_summary_with_string_values(self, mock_snap):
+        snap = dict(SAMPLE_SNAPSHOT)
+        snap["spo2"] = {"value": {"avg": "96.5", "min": "94", "max": "99"}}
+        mock_snap.return_value = snap
+        result = fitbit_store.get_spo2_summary("2026-03-20")
+        assert result["avg"] == 96.5
+        assert isinstance(result["avg"], float)
+
+    def test_trend_with_string_values(self):
+        mc, p = _patch_db()
+        mc.execute.return_value.fetchall.return_value = [
+            {"date": date(2026, 3, 19), "data": {
+                "heart_rate": {"value": {"restingHeartRate": "65"}},
+                "hrv": {"value": {"dailyRmssd": "35"}},
+                "sleep": {"sleep": [{"isMainSleep": True, "minutesAsleep": "420"}]},
+                "activity": {"steps": "8000"},
+            }},
+        ]
+        try:
+            trend = fitbit_store.get_trend(days=7)
+            assert "Avg resting HR" in trend
+            assert "Avg HRV" in trend
+            assert "Avg sleep" in trend
+            assert "Avg steps" in trend
+        finally:
+            p.stop()
