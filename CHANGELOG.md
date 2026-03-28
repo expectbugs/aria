@@ -23,7 +23,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **`/email/search` endpoint** — Full-text email search via daemon
 - **`query.py email` subcommand** — CLI email search: `--search`, `--from`, `--days`, `--limit`
 
-### Changed
+### Changed — Unified Delivery Pipeline (tick.py overhaul)
+
+- **`run_unified_delivery()`** replaces separate `run_nudge_evaluation()` + `deliver_findings()` — nudges and monitor findings are now grouped into a single composed message and count as one delivery against unified caps
+- **ABC category system** — `classify_category()` in monitors/__init__.py assigns each nudge/finding to: A (briefing-only, suppressed from independent delivery), B (first-of-day delivers, subsequent only group with C items), C (always delivers when cooldown allows)
+- **`process_safety_net()`** — 11:50pm catch-all: if no briefing/debrief was delivered today, composes and sends a summary of Category A items that would otherwise be lost
+- **Tick heartbeat** — `last_tick_run` written to tick_state at the top of every tick, proving cron is running regardless of whether any jobs fire
+- **MAX_NUDGES_PER_DAY** increased from 6 to 15 (unified cap covers both nudges and findings)
+- **Minimum delivery interval** — unified deliveries respect `MONITOR_DELIVERY_MIN_INTERVAL_MIN` between sends
+- **`deliver_findings()` removed** — findings now flow through the unified delivery pipeline
+
+### Changed — Other
 
 - **`process_actions()` is now async** — calendar and email handlers await Google API calls. All 7 call sites updated (daemon.py, verification.py, completion_listener.py)
 - **`calendar_store.py` write methods now async** — `add_event()`, `modify_event()`, `delete_event()` write to Google Calendar first, with offline fallback
@@ -31,7 +41,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **Calendar sync interval** changed from 5 min to 15 min (incremental via syncToken)
 - **Gmail sync** now fetches full bodies (format=full) with MIME body extraction
 - **`google_store.py` deleted** — functions split into `gmail_store.py` and `calendar_store.py`
-- **OAuth scopes expanded** — `calendar.events` (read-write), `gmail.send` added
+- **OAuth scopes** — `gmail.modify` replaces `gmail.readonly` + `gmail.send`; `calendar.events` replaces `calendar.readonly`
 - **Version** bumped to 0.8.0
 - **Total test count:** 1926 tests across 86 files, all passing
 
