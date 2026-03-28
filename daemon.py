@@ -27,6 +27,7 @@ import sms
 from actions import process_actions
 from aria_api import ask_aria as ask_claude  # API-powered primary (drop-in replacement)
 from claude_session import ClaudeSession  # kept for Action ARIA (Step 6)
+from version import __version__
 import task_dispatcher
 import completion_listener
 from amnesia_pool import get_pool as get_amnesia_pool
@@ -63,10 +64,18 @@ async def lifespan(app: FastAPI):
     db.close()
 
 
-app = FastAPI(title="ARIA", version="0.4.32", lifespan=lifespan)
+app = FastAPI(title="ARIA", version=__version__, lifespan=lifespan)
 
 # Async task storage: task_id -> {"status": "processing"/"done"/"error", "audio": bytes, "error": str}
 _tasks: dict[str, dict] = {}
+
+
+def _cleanup_expired_tasks():
+    """Remove tasks older than 2 hours to prevent memory leaks."""
+    now = time.time()
+    expired = [k for k, v in _tasks.items() if now - v.get("created", now) > 7200]
+    for k in expired:
+        del _tasks[k]
 
 # Ensure dirs exist (still needed for inbox, mms_outbox, etc.)
 config.LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -352,6 +361,7 @@ async def _process_task(task_id: str, req: AskRequest, request: Request):
 async def ask_start(req: AskRequest, request: Request):
     """Start processing a request asynchronously. Returns a task_id to poll."""
     verify_auth(request)
+    _cleanup_expired_tasks()
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Empty input")
@@ -424,6 +434,7 @@ async def ask_file(request: Request):
     Poll /ask/status/{task_id} then /ask/result/{task_id} for the audio response.
     """
     verify_auth(request)
+    _cleanup_expired_tasks()
 
     content_type = request.headers.get("content-type", "")
 
@@ -470,12 +481,7 @@ async def ask_file(request: Request):
 async def ask_result(task_id: str, request: Request):
     """Poll for async task result. Returns 202 if processing, 200 with audio if done."""
     verify_auth(request)
-
-    # Clean up expired tasks (older than 2 hours — allows hour-long tasks like image gen)
-    now = time.time()
-    expired = [k for k, v in _tasks.items() if now - v.get("created", now) > 7200]
-    for k in expired:
-        del _tasks[k]
+    _cleanup_expired_tasks()
 
     task = _tasks.get(task_id)
     if not task:
@@ -501,6 +507,7 @@ async def ask_status(task_id: str, request: Request):
     The actual audio is fetched separately via /ask/result/{task_id}.
     """
     verify_auth(request)
+    _cleanup_expired_tasks()
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Unknown task")
@@ -629,6 +636,7 @@ async def ask_voice(request: Request):
     if not getattr(config, 'ENABLE_WHISPER', False):
         raise HTTPException(status_code=503, detail="Whisper STT not enabled on this host")
     verify_auth(request)
+    _cleanup_expired_tasks()
 
     audio_bytes = await request.body()
     if not audio_bytes:

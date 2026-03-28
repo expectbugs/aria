@@ -6,6 +6,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.45] — 2026-03-27
+
+### Added
+
+- **`_cleanup_expired_tasks()` helper** in `daemon.py` — removes tasks older than 2 hours. Called from 5 endpoints (`ask_start`, `ask_file`, `ask_voice`, `ask_status`, `ask_result`) to prevent unbounded `_tasks` dict growth from unpolled tasks.
+- **4 new tests** for task cleanup: old entries removed, entries without `created` preserved, empty dict safe, cleanup runs on status poll.
+
+### Fixed
+
+- **Task memory leak** — `_tasks` dict only cleaned when `/ask/result` was polled. Unpolled tasks (Tasker crash, network drop) accumulated forever. Now cleaned on every task creation and status poll.
+- **Stale version in `/health`** — daemon.py now imports `__version__` from `version.py` instead of hardcoding. `/health` endpoint reports correct version.
+
+### Changed
+
+- **Version** bumped to 0.4.45
+
+---
+
 ## [0.4.44] — 2026-03-27
 
 ### Added

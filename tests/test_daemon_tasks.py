@@ -61,6 +61,33 @@ class TestTaskExpiration:
         assert "active" in daemon._tasks
 
 
+class TestCleanupExpiredTasks:
+    def test_removes_old_entries(self):
+        daemon._tasks["old"] = {"status": "done", "audio": b"", "created": time.time() - 8000}
+        daemon._tasks["fresh"] = {"status": "done", "audio": b"", "created": time.time()}
+        daemon._cleanup_expired_tasks()
+        assert "old" not in daemon._tasks
+        assert "fresh" in daemon._tasks
+
+    def test_preserves_entries_without_created(self):
+        """Tasks without 'created' field default to now (not expired)."""
+        daemon._tasks["no_created"] = {"status": "processing"}
+        daemon._cleanup_expired_tasks()
+        assert "no_created" in daemon._tasks
+
+    def test_empty_dict_no_error(self):
+        daemon._cleanup_expired_tasks()
+        assert daemon._tasks == {}
+
+    def test_cleanup_runs_on_status_poll(self, client):
+        """ask_status should clean expired tasks (Tasker's primary polling path)."""
+        daemon._tasks["old"] = {"status": "done", "audio": b"", "created": time.time() - 8000}
+        daemon._tasks["t1"] = {"status": "processing", "created": time.time()}
+        client.get("/ask/status/t1", headers=AUTH)
+        assert "old" not in daemon._tasks
+        assert "t1" in daemon._tasks
+
+
 class TestTaskStatusEndpoint:
     def test_processing_returns_202(self, client):
         daemon._tasks["t1"] = {"status": "processing", "created": time.time()}
