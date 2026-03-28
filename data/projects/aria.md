@@ -1,7 +1,7 @@
 # ARIA — Ambient Reasoning & Intelligence Assistant
 
 ## Status
-Phase 4 in progress (v0.4.38). **Notification pipeline + data integrity overhaul in progress.** ARIA Primary on Anthropic API (Opus 4.6), Action ARIA (Opus, max effort) + Amnesia pool for background tasks, Redis dispatch + completion notifications. Slappy failover fully operational with auto-deploy, db sync, health monitoring.
+Phase 4 in progress (v0.4.45). **Audit fixes complete, preparing for Phase 0 (CLI session pool).** ARIA Primary on Anthropic API (Opus 4.6), Action ARIA (Opus, max effort) + Amnesia pool for background tasks, Redis dispatch + completion notifications. Slappy failover fully operational with auto-deploy, db sync, health monitoring.
 
 ## Architecture
 - FastAPI daemon on beardos (primary, RTX 3090) with slappy as warm failover
@@ -31,7 +31,7 @@ Phase 4 in progress (v0.4.38). **Notification pipeline + data integrity overhaul
 - Fitbit integration (HR, HRV, SpO2, sleep, activity, exercise coaching with HR zones)
 - Whisper STT (batch, voice pipeline, real-time WebSocket streaming)
 - All data stores on PostgreSQL 17 (migrated from JSON in v0.4.0)
-- 887 automated tests (unit + integration)
+- 910 automated tests (unit + integration)
 - File inbox (received files saved for future reference)
 - Automatic failover (beardos → slappy) with auto-deploy, db sync, health alerts
 - Data sync via rsync every 5 minutes, PostgreSQL backup/restore every 5 minutes, code auto-deploy every minute
