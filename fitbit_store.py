@@ -185,6 +185,57 @@ def get_spo2_summary(day: str = "today") -> dict | None:
     }
 
 
+def get_breathing_rate_summary(day: str = "today") -> dict | None:
+    """Extract breathing rate from a daily snapshot."""
+    snap = get_snapshot(day)
+    if not snap or not snap.get("breathing_rate"):
+        return None
+
+    br = snap["breathing_rate"]
+    value = br.get("value", {})
+    if not value:
+        return None
+
+    rate = value.get("breathingRate")
+    return {
+        "rate": _safe_float(rate) if rate is not None else None,
+    }
+
+
+def get_temperature_summary(day: str = "today") -> dict | None:
+    """Extract skin temperature variation from a daily snapshot."""
+    snap = get_snapshot(day)
+    if not snap or not snap.get("temperature"):
+        return None
+
+    temp = snap["temperature"]
+    value = temp.get("value", {})
+    if not value:
+        return None
+
+    relative = value.get("nightlyRelative")
+    return {
+        "nightly_relative": _safe_float(relative) if relative is not None else None,
+    }
+
+
+def get_vo2max_summary(day: str = "today") -> dict | None:
+    """Extract VO2 Max estimate from a daily snapshot."""
+    snap = get_snapshot(day)
+    if not snap or not snap.get("vo2max"):
+        return None
+
+    vo2 = snap["vo2max"]
+    value = vo2.get("value", {})
+    if not value:
+        return None
+
+    score = value.get("vo2Max")
+    return {
+        "vo2max": _safe_float(score) if score is not None else None,
+    }
+
+
 def get_briefing_context(day: str = "today") -> str:
     """Build a human-readable Fitbit summary for ARIA context injection."""
     parts = []
@@ -221,22 +272,17 @@ def get_briefing_context(day: str = "today") -> str:
             f"{activity['active_minutes']} active min"
         )
 
-    snap = get_snapshot(day)
-    if snap:
-        br = snap.get("breathing_rate")
-        if br and br.get("value"):
-            br_val = br["value"]
-            parts.append(f"Breathing rate: {br_val.get('breathingRate', '?')} breaths/min")
+    br = get_breathing_rate_summary(day)
+    if br and br.get("rate") is not None:
+        parts.append(f"Breathing rate: {br['rate']:.1f} breaths/min")
 
-        temp = snap.get("temperature")
-        if temp and temp.get("value"):
-            t_val = temp["value"]
-            parts.append(f"Skin temp variation: {t_val.get('nightlyRelative', '?')}°F from baseline")
+    temp = get_temperature_summary(day)
+    if temp and temp.get("nightly_relative") is not None:
+        parts.append(f"Skin temp variation: {temp['nightly_relative']:.1f}°F from baseline")
 
-        vo2 = snap.get("vo2max")
-        if vo2 and vo2.get("value"):
-            v_val = vo2["value"]
-            parts.append(f"VO2 Max: {v_val.get('vo2Max', '?')} mL/kg/min")
+    vo2 = get_vo2max_summary(day)
+    if vo2 and vo2.get("vo2max") is not None:
+        parts.append(f"VO2 Max: {vo2['vo2max']:.1f} mL/kg/min")
 
     if not parts:
         return ""

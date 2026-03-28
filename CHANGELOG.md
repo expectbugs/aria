@@ -6,6 +6,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.46] — 2026-03-27
+
+### Added
+
+- **`get_breathing_rate_summary()`**, **`get_temperature_summary()`**, **`get_vo2max_summary()`** — three new extraction functions in `fitbit_store.py` for breathing rate, skin temperature, and VO2 Max. Follows the same pattern as the existing 5 summary functions: `get_snapshot()` + `_safe_float()` casting + typed dict return. Completes the extraction boundary — no raw JSONB values leak past the summary layer.
+- **Late-night debrief rule in system prompt** — second shift past-midnight "good night" handling moved from deleted `data/projects/aria.md` into `system_prompt.py` with explicit 12am-6am time boundary.
+- **9 new tests** for the three summary functions (normal values, missing data, string casting).
+
+### Removed
+
+- **`data/projects/aria.md`** — stale project brief, redundant with system prompt and MEMORY.md. The one unique rule (late-night debrief) was moved to `system_prompt.py`.
+
+### Changed
+
+- **`get_briefing_context()`** — now calls the three new summary functions instead of accessing raw snapshot JSONB directly. All 8 Fitbit data types now go through the typed extraction boundary.
+- **Version** bumped to 0.4.46
+
+---
+
 ## [0.4.45] — 2026-03-27
 
 ### Added

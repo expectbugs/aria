@@ -187,15 +187,78 @@ class TestSpo2Summary:
         assert result["min"] == 94
 
 
-class TestBriefingContext:
+class TestBreathingRateSummary:
     @patch("fitbit_store.get_snapshot")
+    def test_extracts_breathing_rate(self, mock_snap):
+        mock_snap.return_value = SAMPLE_SNAPSHOT
+        result = fitbit_store.get_breathing_rate_summary("2026-03-20")
+        assert result["rate"] == 16.0
+        assert isinstance(result["rate"], float)
+
+    @patch("fitbit_store.get_snapshot")
+    def test_no_breathing_data(self, mock_snap):
+        mock_snap.return_value = {}
+        assert fitbit_store.get_breathing_rate_summary("2026-03-20") is None
+
+    @patch("fitbit_store.get_snapshot")
+    def test_string_value(self, mock_snap):
+        mock_snap.return_value = {"breathing_rate": {"value": {"breathingRate": "16"}}}
+        result = fitbit_store.get_breathing_rate_summary("2026-03-20")
+        assert result["rate"] == 16.0
+
+
+class TestTemperatureSummary:
+    @patch("fitbit_store.get_snapshot")
+    def test_extracts_temperature(self, mock_snap):
+        mock_snap.return_value = SAMPLE_SNAPSHOT
+        result = fitbit_store.get_temperature_summary("2026-03-20")
+        assert result["nightly_relative"] == -0.3
+        assert isinstance(result["nightly_relative"], float)
+
+    @patch("fitbit_store.get_snapshot")
+    def test_no_temperature_data(self, mock_snap):
+        mock_snap.return_value = {}
+        assert fitbit_store.get_temperature_summary("2026-03-20") is None
+
+    @patch("fitbit_store.get_snapshot")
+    def test_string_value(self, mock_snap):
+        mock_snap.return_value = {"temperature": {"value": {"nightlyRelative": "-0.3"}}}
+        result = fitbit_store.get_temperature_summary("2026-03-20")
+        assert result["nightly_relative"] == -0.3
+
+
+class TestVo2maxSummary:
+    @patch("fitbit_store.get_snapshot")
+    def test_extracts_vo2max(self, mock_snap):
+        mock_snap.return_value = SAMPLE_SNAPSHOT
+        result = fitbit_store.get_vo2max_summary("2026-03-20")
+        assert result["vo2max"] == 38.5
+        assert isinstance(result["vo2max"], float)
+
+    @patch("fitbit_store.get_snapshot")
+    def test_no_vo2max_data(self, mock_snap):
+        mock_snap.return_value = {}
+        assert fitbit_store.get_vo2max_summary("2026-03-20") is None
+
+    @patch("fitbit_store.get_snapshot")
+    def test_string_value(self, mock_snap):
+        mock_snap.return_value = {"vo2max": {"value": {"vo2Max": "38.5"}}}
+        result = fitbit_store.get_vo2max_summary("2026-03-20")
+        assert result["vo2max"] == 38.5
+
+
+class TestBriefingContext:
+    @patch("fitbit_store.get_vo2max_summary")
+    @patch("fitbit_store.get_temperature_summary")
+    @patch("fitbit_store.get_breathing_rate_summary")
     @patch("fitbit_store.get_activity_summary")
     @patch("fitbit_store.get_spo2_summary")
     @patch("fitbit_store.get_hrv_summary")
     @patch("fitbit_store.get_heart_summary")
     @patch("fitbit_store.get_sleep_summary")
     def test_builds_full_context(self, mock_sleep, mock_hr, mock_hrv,
-                                  mock_spo2, mock_act, mock_snap):
+                                  mock_spo2, mock_act, mock_br, mock_temp,
+                                  mock_vo2):
         mock_sleep.return_value = {
             "duration_hours": 7.0, "deep_minutes": 60, "rem_minutes": 120,
             "light_minutes": 200, "wake_minutes": 40, "efficiency": 88,
@@ -207,7 +270,9 @@ class TestBriefingContext:
             "steps": 8500, "distance_miles": 5.2,
             "calories_total": 2400, "active_minutes": 35,
         }
-        mock_snap.return_value = SAMPLE_SNAPSHOT
+        mock_br.return_value = {"rate": 16.0}
+        mock_temp.return_value = {"nightly_relative": -0.3}
+        mock_vo2.return_value = {"vo2max": 38.5}
 
         ctx = fitbit_store.get_briefing_context("2026-03-20")
         assert "Sleep: 7.0h" in ctx
@@ -215,22 +280,29 @@ class TestBriefingContext:
         assert "HRV" in ctx
         assert "SpO2" in ctx
         assert "8,500 steps" in ctx
-        assert "VO2 Max" in ctx
+        assert "Breathing rate: 16.0" in ctx
+        assert "Skin temp variation: -0.3" in ctx
+        assert "VO2 Max: 38.5" in ctx
 
-    @patch("fitbit_store.get_snapshot")
+    @patch("fitbit_store.get_vo2max_summary")
+    @patch("fitbit_store.get_temperature_summary")
+    @patch("fitbit_store.get_breathing_rate_summary")
     @patch("fitbit_store.get_activity_summary")
     @patch("fitbit_store.get_spo2_summary")
     @patch("fitbit_store.get_hrv_summary")
     @patch("fitbit_store.get_heart_summary")
     @patch("fitbit_store.get_sleep_summary")
     def test_empty_data(self, mock_sleep, mock_hr, mock_hrv,
-                        mock_spo2, mock_act, mock_snap):
+                        mock_spo2, mock_act, mock_br, mock_temp,
+                        mock_vo2):
         mock_sleep.return_value = None
         mock_hr.return_value = None
         mock_hrv.return_value = None
         mock_spo2.return_value = None
         mock_act.return_value = None
-        mock_snap.return_value = None
+        mock_br.return_value = None
+        mock_temp.return_value = None
+        mock_vo2.return_value = None
         assert fitbit_store.get_briefing_context("2026-03-20") == ""
 
 
