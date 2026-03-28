@@ -310,9 +310,9 @@ def _prevalidate_nutrition_actions(parsed_actions: list[dict]) -> tuple[list[dic
     return cleaned, hard_errors
 
 
-def process_actions(response_text: str, expect_actions: list[str] | None = None,
-                    metadata: dict | None = None,
-                    log_fn=None) -> ActionResult:
+async def process_actions(response_text: str, expect_actions: list[str] | None = None,
+                          metadata: dict | None = None,
+                          log_fn=None) -> ActionResult:
     """Extract and execute ACTION blocks from Claude's response.
 
     Three-phase pipeline:
@@ -322,6 +322,10 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
 
     Returns ActionResult with structured data. Use result.to_response() for
     the composed string (identical to old behavior).
+
+    Async because calendar_store write operations and send_email call
+    the Google API. All callers are already async (daemon.py, verification.py,
+    completion_listener.py).
 
     expect_actions: optional list of action types that SHOULD be present
                     (e.g. ["log_nutrition"] for nutrition label photos).
@@ -397,7 +401,7 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             action_types_found.append(act)
 
             if act == "add_event":
-                calendar_store.add_event(
+                await calendar_store.add_event(
                     title=action["title"],
                     event_date=action["date"],
                     time=action.get("time"),
@@ -417,10 +421,10 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             elif act == "modify_event":
                 updates = {k: v for k, v in action.items()
                            if k not in ("action", "id")}
-                if not calendar_store.modify_event(action["id"], **updates):
+                if not await calendar_store.modify_event(action["id"], **updates):
                     failures.append("Couldn't modify event — no event found with that ID.")
             elif act == "delete_event":
-                if not calendar_store.delete_event(action["id"]):
+                if not await calendar_store.delete_event(action["id"]):
                     failures.append(f"Couldn't delete event — no event found with that ID.")
             elif act == "delete_reminder":
                 if not calendar_store.delete_reminder(action["id"]):
@@ -537,6 +541,21 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
                         metadata["dispatched_task_id"] = task_id
                 else:
                     failures.append("Failed to dispatch task — Redis unavailable")
+            elif act == "send_email":
+                try:
+                    import google_client
+                    client = google_client.get_client()
+                    result = await client.gmail_send_message(
+                        to=action["to"],
+                        subject=action["subject"],
+                        body=action["body"],
+                        in_reply_to=action.get("in_reply_to"),
+                        thread_id=action.get("thread_id"),
+                    )
+                    log.info("Email sent to %s (id=%s)", action["to"],
+                             result.get("id", "?"))
+                except Exception as e:
+                    failures.append(f"Failed to send email: {e}")
             else:
                 log.warning("Unknown ACTION type ignored: %s", act)
         except Exception as e:

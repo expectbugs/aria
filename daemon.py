@@ -162,7 +162,7 @@ async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
     for attempt in range(1, 3):
         correction = verification.correction_prompt
         retry_resp = await pool.query_deep(correction, "")
-        result = process_actions(retry_resp, metadata=result.metadata, log_fn=log_fn)
+        result = await process_actions(retry_resp, metadata=result.metadata, log_fn=log_fn)
         verification = verify_response(result.clean_response, result, context)
         log_verification(verification, retry_attempt=attempt,
                          request_text=text, response_text=result.clean_response)
@@ -428,7 +428,7 @@ async def ask(req: AskRequest, request: Request):
         extra_context = await _get_context_for_text(text)
         response = await _route_query(text, extra_context)
         delivery_meta = {"channel": "voice"}
-        result = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
         result = await _verify_and_maybe_retry(text, extra_context, result, log_fn=log_request)
         response = result.to_response()
 
@@ -464,7 +464,7 @@ async def _process_task(task_id: str, text: str):
         extra_context = await _get_context_for_text(text)
         response = await _route_query(text, extra_context)
         delivery_meta = {"channel": "voice"}
-        result = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
         result = await _verify_and_maybe_retry(text, extra_context, result, log_fn=log_request)
         response_text = result.to_response()
 
@@ -526,7 +526,7 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
 
         response = await _route_query(user_text, extra_context, file_blocks)
         delivery_meta = {"channel": "voice"}
-        result = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
         result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
         response = result.to_response()
 
@@ -713,7 +713,7 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
         extra_context = await _get_context_for_text(user_text)
         response = await _route_query(user_text, extra_context)
         delivery_meta = {"channel": "voice"}
-        result = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
         result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
         response = result.to_response()
 
@@ -917,7 +917,7 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
         response = await _route_query(user_text, extra_context,
                                      file_blocks if file_blocks else None)
         delivery_meta = {"channel": "sms"}
-        result = process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
         result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
         response = result.to_response()
 

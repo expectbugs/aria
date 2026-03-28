@@ -79,7 +79,7 @@ async def _on_completion(task_id: str, status: str, result_text: str):
         response = await ask_haiku(prompt)
 
         # Process any ACTION blocks (execute + strip from response text)
-        result = process_actions(response)
+        result = await process_actions(response)
         response = result.to_response()
 
         # Delivery routing via shared execute_delivery (push voice — no task to poll)
