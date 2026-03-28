@@ -525,7 +525,18 @@ class TestEvaluateNudges:
         assert len(meal_triggers) > 0
 
 
-class TestRunNudgeEvaluation:
+class TestRunUnifiedDelivery:
+    """Tests for the unified nudge + finding delivery pipeline."""
+
+    # Common mock stack for unified delivery tests.
+    # monitors.get_undelivered and monitors.classify_category are imported
+    # inside run_unified_delivery(), so we patch them at the monitors module level.
+
+    @patch("tick.save_state")
+    @patch("tick.load_state", return_value={})
+    @patch("monitors.mark_delivered")
+    @patch("monitors.get_undelivered", return_value=[])
+    @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
     @patch("tick.sms.send_long_to_owner")
@@ -535,24 +546,29 @@ class TestRunNudgeEvaluation:
     @patch("tick.is_quiet_hours", return_value=False)
     def test_sends_nudge_sms(self, mock_quiet, mock_cooldowns,
                               mock_nudges, mock_counts, mock_send,
-                              mock_save_cd, mock_log_nudge):
+                              mock_save_cd, mock_log_nudge, mock_classify,
+                              mock_get_undelivered, mock_mark, mock_load_state,
+                              mock_save_state):
         mock_nudges.return_value = [("meal_reminder", "No meals today")]
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"message": "Hey, grab some food!"}
 
         with patch("httpx.post", return_value=mock_resp):
-            tick.run_nudge_evaluation()
+            tick.run_unified_delivery()
         mock_send.assert_called_once_with("Hey, grab some food!")
         mock_save_cd.assert_called_once()
-        # C5: Logged as "sent"
         mock_log_nudge.assert_called_once()
         assert mock_log_nudge.call_args[0][3] == "sent"
 
     @patch("tick.is_quiet_hours", return_value=True)
     def test_skips_during_quiet_hours(self, mock_quiet):
-        tick.run_nudge_evaluation()  # should return immediately
+        tick.run_unified_delivery()  # should return immediately
 
+    @patch("tick.save_state")
+    @patch("tick.load_state", return_value={})
+    @patch("monitors.get_undelivered", return_value=[])
+    @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
     @patch("tick.sms.send_long_to_owner")
@@ -563,19 +579,25 @@ class TestRunNudgeEvaluation:
     def test_compose_failure_no_cooldown_update(self, mock_quiet, mock_cooldowns,
                                                  mock_nudges, mock_counts,
                                                  mock_send, mock_save_cd,
-                                                 mock_log_nudge):
+                                                 mock_log_nudge, mock_classify,
+                                                 mock_get_undelivered,
+                                                 mock_load_state, mock_save_state):
         """C5: On compose failure, do NOT update cooldowns."""
         mock_nudges.return_value = [("meal_reminder", "No meals today")]
         mock_resp = MagicMock()
         mock_resp.status_code = 500
 
         with patch("httpx.post", return_value=mock_resp):
-            tick.run_nudge_evaluation()
+            tick.run_unified_delivery()
         mock_send.assert_not_called()
         mock_save_cd.assert_not_called()
         mock_log_nudge.assert_called_once()
         assert mock_log_nudge.call_args[0][3] == "compose_failed"
 
+    @patch("tick.save_state")
+    @patch("tick.load_state", return_value={})
+    @patch("monitors.get_undelivered", return_value=[])
+    @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
     @patch("tick.sms.send_long_to_owner", side_effect=Exception("SMS failed"))
@@ -586,7 +608,9 @@ class TestRunNudgeEvaluation:
     def test_delivery_failure_no_cooldown_update(self, mock_quiet, mock_cooldowns,
                                                    mock_nudges, mock_counts,
                                                    mock_send, mock_save_cd,
-                                                   mock_log_nudge):
+                                                   mock_log_nudge, mock_classify,
+                                                   mock_get_undelivered,
+                                                   mock_load_state, mock_save_state):
         """C5: On delivery failure, do NOT update cooldowns."""
         mock_nudges.return_value = [("meal_reminder", "No meals today")]
         mock_resp = MagicMock()
@@ -594,34 +618,39 @@ class TestRunNudgeEvaluation:
         mock_resp.json.return_value = {"message": "Hey, eat something!"}
 
         with patch("httpx.post", return_value=mock_resp):
-            tick.run_nudge_evaluation()
+            tick.run_unified_delivery()
         mock_send.assert_called_once()
         mock_save_cd.assert_not_called()
         mock_log_nudge.assert_called_once()
         assert mock_log_nudge.call_args[0][3] == "delivery_failed"
 
+    @patch("monitors.get_undelivered", return_value=[])
+    @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
     @patch("tick.sms.send_long_to_owner")
-    @patch("tick._get_nudge_counts", return_value=(6, 0))
+    @patch("tick._get_nudge_counts", return_value=(15, 0))
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
     @patch("tick.is_quiet_hours", return_value=False)
     def test_daily_cap_suppresses_nudge(self, mock_quiet, mock_cooldowns,
                                          mock_nudges, mock_counts,
                                          mock_send, mock_save_cd,
-                                         mock_log_nudge):
-        """C4: Daily nudge cap prevents sending."""
+                                         mock_log_nudge, mock_classify,
+                                         mock_get_undelivered):
+        """C4: Daily cap prevents sending."""
         mock_nudges.return_value = [("meal_reminder", "No meals today")]
 
         with patch("httpx.post") as mock_httpx:
-            tick.run_nudge_evaluation()
+            tick.run_unified_delivery()
         mock_httpx.assert_not_called()
         mock_send.assert_not_called()
         mock_save_cd.assert_not_called()
         mock_log_nudge.assert_called_once()
         assert mock_log_nudge.call_args[0][3] == "suppressed_daily_cap"
 
+    @patch("monitors.get_undelivered", return_value=[])
+    @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
     @patch("tick.sms.send_long_to_owner")
@@ -632,17 +661,22 @@ class TestRunNudgeEvaluation:
     def test_hourly_cap_suppresses_nudge(self, mock_quiet, mock_cooldowns,
                                           mock_nudges, mock_counts,
                                           mock_send, mock_save_cd,
-                                          mock_log_nudge):
-        """C4: Hourly nudge cap prevents sending."""
+                                          mock_log_nudge, mock_classify,
+                                          mock_get_undelivered):
+        """C4: Hourly cap prevents sending."""
         mock_nudges.return_value = [("meal_reminder", "No meals today")]
 
         with patch("httpx.post") as mock_httpx:
-            tick.run_nudge_evaluation()
+            tick.run_unified_delivery()
         mock_httpx.assert_not_called()
         mock_send.assert_not_called()
         mock_log_nudge.assert_called_once()
         assert mock_log_nudge.call_args[0][3] == "suppressed_hourly_cap"
 
+    @patch("tick.save_state")
+    @patch("tick.load_state", return_value={})
+    @patch("monitors.get_undelivered", return_value=[])
+    @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
     @patch("tick.sms.send_long_to_owner")
@@ -653,7 +687,9 @@ class TestRunNudgeEvaluation:
     def test_success_updates_cooldowns(self, mock_quiet, mock_cooldowns,
                                         mock_nudges, mock_counts,
                                         mock_send, mock_save_cd,
-                                        mock_log_nudge):
+                                        mock_log_nudge, mock_classify,
+                                        mock_get_undelivered,
+                                        mock_load_state, mock_save_state):
         """C5: On success, cooldowns ARE updated."""
         mock_nudges.return_value = [("meal_reminder", "No meals today")]
         mock_resp = MagicMock()
@@ -661,9 +697,66 @@ class TestRunNudgeEvaluation:
         mock_resp.json.return_value = {"message": "Time to eat!"}
 
         with patch("httpx.post", return_value=mock_resp):
-            tick.run_nudge_evaluation()
+            tick.run_unified_delivery()
         mock_send.assert_called_once()
         mock_save_cd.assert_called_once()
+
+    @patch("monitors.get_undelivered", return_value=[])
+    @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "A")
+    @patch("tick.sms.send_long_to_owner")
+    @patch("tick._get_nudge_counts", return_value=(0, 0))
+    @patch("tick.evaluate_nudges")
+    @patch("tick.load_cooldowns", return_value={})
+    @patch("tick.is_quiet_hours", return_value=False)
+    def test_category_a_suppressed(self, mock_quiet, mock_cooldowns,
+                                    mock_nudges, mock_counts, mock_send,
+                                    mock_classify, mock_get_undelivered):
+        """Category A items are suppressed from delivery (briefing-only)."""
+        mock_nudges.return_value = [("fitbit_sleep", "Poor sleep last night")]
+        tick.run_unified_delivery()
+        mock_send.assert_not_called()
+
+    @patch("tick.save_state")
+    @patch("tick.load_state", return_value={})
+    @patch("monitors.mark_delivered")
+    @patch("monitors.get_undelivered")
+    @patch("monitors.classify_category")
+    @patch("tick._log_nudge")
+    @patch("tick.save_cooldowns")
+    @patch("tick.sms.send_long_to_owner")
+    @patch("tick._get_nudge_counts", return_value=(0, 0))
+    @patch("tick.evaluate_nudges")
+    @patch("tick.load_cooldowns", return_value={})
+    @patch("tick.is_quiet_hours", return_value=False)
+    def test_groups_nudges_and_findings(self, mock_quiet, mock_cooldowns,
+                                         mock_nudges, mock_counts, mock_send,
+                                         mock_save_cd, mock_log_nudge,
+                                         mock_classify, mock_get_undelivered,
+                                         mock_mark, mock_load_state,
+                                         mock_save_state):
+        """Nudges and findings compose into ONE delivery."""
+        mock_nudges.return_value = [("calendar_warning", "Meeting in 30 min")]
+        mock_get_undelivered.return_value = [
+            {"id": 1, "urgency": "normal", "summary": "Disk at 92%",
+             "check_key": "disk_warning"},
+        ]
+        mock_classify.side_effect = lambda k, source="nudge": "C"
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": "Meeting soon + disk warning"}
+
+        with patch("httpx.post", return_value=mock_resp) as mock_httpx:
+            tick.run_unified_delivery()
+
+        # One compose call with both items
+        call_args = mock_httpx.call_args
+        triggers = call_args[1]["json"]["triggers"]
+        assert len(triggers) == 2
+        # One SMS delivery
+        mock_send.assert_called_once()
+        # Findings marked delivered
+        mock_mark.assert_called_once_with([1], "sms")
 
 
 # ---------------------------------------------------------------------------
@@ -776,7 +869,7 @@ class TestExerciseTick:
 # ---------------------------------------------------------------------------
 
 class TestMainTick:
-    @patch("tick.run_nudge_evaluation")
+    @patch("tick.run_unified_delivery")
     @patch("tick.db.get_transaction")
     @patch("tick.process_fitbit_poll")
     @patch("tick.process_exercise_tick")
@@ -808,7 +901,7 @@ class TestMainTick:
     @patch("tick.check_location_reminders")
     @patch("tick.process_exercise_tick")
     @patch("tick.process_fitbit_poll")
-    @patch("tick.run_nudge_evaluation")
+    @patch("tick.run_unified_delivery")
     @patch("tick.db.get_transaction")
     def test_job_isolation(self, mock_txn, mock_nudge,
                            mock_fitbit, mock_exercise, mock_loc, mock_timers):
@@ -830,7 +923,7 @@ class TestMainTick:
         mock_exercise.assert_called_once()
         mock_fitbit.assert_called_once()
 
-    @patch("tick.run_nudge_evaluation")
+    @patch("tick.run_unified_delivery")
     @patch("tick.db.get_transaction")
     @patch("tick.process_fitbit_poll")
     @patch("tick.process_exercise_tick")
@@ -849,7 +942,7 @@ class TestMainTick:
         tick.main()
         mock_nudge.assert_not_called()
 
-    @patch("tick.run_nudge_evaluation")
+    @patch("tick.run_unified_delivery")
     @patch("tick.db.get_transaction")
     @patch("tick.process_fitbit_poll")
     @patch("tick.process_exercise_tick")

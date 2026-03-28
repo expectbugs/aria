@@ -14,6 +14,7 @@ import legal_store
 import location_store
 import timer_store
 import context
+from tests.integration.conftest import seed_event
 
 
 class TestNutritionFitbitIntegration:
@@ -101,8 +102,8 @@ class TestBriefingContextIntegration:
         tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
         # Seed calendar
-        calendar_store.add_event(title="Doctor", event_date=today, time="10:00")
-        calendar_store.add_event(title="Meeting", event_date=tomorrow, time="14:00")
+        seed_event(title="Doctor", event_date=today, time="10:00")
+        seed_event(title="Meeting", event_date=tomorrow, time="14:00")
 
         # Seed reminder
         calendar_store.add_reminder(text="Buy groceries", due=today)
@@ -136,7 +137,7 @@ class TestDebriefContextIntegration:
         today = datetime.now().strftime("%Y-%m-%d")
 
         # Seed today's activity
-        calendar_store.add_event(title="Completed task", event_date=today)
+        seed_event(title="Completed task", event_date=today)
         health_store.add_entry(today, "meal", "dinner salad", meal_type="dinner")
 
         debrief = await context.gather_debrief_context()

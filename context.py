@@ -87,7 +87,6 @@ import fitbit_store
 import nutrition_store
 import redis_client
 import monitors
-import gmail_store
 
 
 def gather_always_context() -> str:
@@ -326,6 +325,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     # --- Email ---
     if _match_keywords(text_lower, _EMAIL_SUBSTRINGS, _EMAIL_REGEX):
         try:
+            import gmail_store
             email_ctx = gmail_store.get_email_context(today)
             if email_ctx:
                 ctx_parts.append(email_ctx)
@@ -576,6 +576,7 @@ async def gather_debrief_context() -> str:
 
     # Email activity today
     try:
+        import gmail_store
         email_ctx = gmail_store.get_email_context(today)
         if email_ctx:
             parts.append(f"\n{email_ctx}")
@@ -711,6 +712,7 @@ async def gather_briefing_context() -> str:
 
     # Email summary
     try:
+        import gmail_store
         email_brief = gmail_store.get_briefing_context()
         if email_brief:
             parts.append(f"\n{email_brief}")

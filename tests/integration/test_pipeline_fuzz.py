@@ -35,14 +35,14 @@ class TestActionBlockFuzz:
     @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
     def test_random_text_never_crashes(self, text):
         """process_actions handles arbitrary text without exceptions."""
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert isinstance(result.to_response(), str)
 
     @given(text=st.text(min_size=0, max_size=5000))
     @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
     def test_random_text_strips_action_markers(self, text):
         """Output from process_actions never contains raw ACTION markers."""
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert "<!--ACTION::" not in result
 
     @given(json_str=st.text(min_size=0, max_size=500))
@@ -50,20 +50,20 @@ class TestActionBlockFuzz:
     def test_random_json_in_action_blocks(self, json_str):
         """Random JSON-like strings inside ACTION markers never crash."""
         text = f"Hello <!--ACTION::{json_str}--> world"
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert isinstance(result.to_response(), str)
         assert "<!--ACTION::" not in result
 
     def test_very_long_text(self):
         """50KB of random text does not crash process_actions."""
         long_text = "A" * 50_000
-        result = actions.process_actions(long_text)
+        result = actions.process_actions_sync(long_text)
         assert isinstance(result.to_response(), str)
 
     def test_only_whitespace(self):
         """Whitespace-only text does not crash process_actions."""
         for ws in ["", " ", "\t", "\n", "   \n\t  ", "\n" * 100]:
-            result = actions.process_actions(ws)
+            result = actions.process_actions_sync(ws)
             assert isinstance(result.to_response(), str)
 
     def test_only_unicode(self):
@@ -77,7 +77,7 @@ class TestActionBlockFuzz:
             "\u4e00\u4e01\u4e02" * 1000,  # CJK
         ]
         for text in texts:
-            result = actions.process_actions(text)
+            result = actions.process_actions_sync(text)
             assert isinstance(result.to_response(), str)
 
     def test_malformed_partial_markers(self):
@@ -92,27 +92,27 @@ class TestActionBlockFuzz:
             "<!--ACTION::{\"bad-->",
         ]
         for text in partials:
-            result = actions.process_actions(text)
+            result = actions.process_actions_sync(text)
             assert isinstance(result.to_response(), str)
 
     def test_nested_markers(self):
         """Nested ACTION markers do not crash."""
         text = '<!--ACTION::{"action":"set_delivery","method":"voice"}--><!--ACTION::{"action":"set_delivery","method":"sms"}-->'
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert isinstance(result.to_response(), str)
         assert "<!--ACTION::" not in result
 
     def test_empty_json_in_marker(self):
         """Empty JSON inside ACTION marker does not crash."""
         text = "Hello <!--ACTION::{}-->"
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert isinstance(result.to_response(), str)
 
     @given(text=st.text(min_size=1, max_size=200))
     @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
     def test_100_random_strings_no_crash(self, text):
         """100 random strings of various lengths never crash."""
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert isinstance(result.to_response(), str)
 
 

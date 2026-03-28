@@ -90,7 +90,7 @@ class TestUnicodeRoundtrips:
             'date': today,
             'nutrients': {'calories': 350, 'protein_g': 30},
         })}"
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "Logged!" in cleaned
 
         items = nutrition_store.get_items(day=today)

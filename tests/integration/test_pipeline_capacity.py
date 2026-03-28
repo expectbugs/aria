@@ -91,7 +91,7 @@ class TestCapacity:
         # Build a 50KB response with no ACTION blocks
         long_text = "A" * 50000
         start = time.monotonic()
-        result = actions.process_actions(long_text)
+        result = actions.process_actions_sync(long_text)
         elapsed = time.monotonic() - start
 
         assert elapsed < 2.0, f"process_actions took {elapsed:.2f}s on 50KB input"
@@ -110,7 +110,7 @@ class TestCapacity:
                 "nutrients": {"calories": 100 + i, "protein_g": 10 + i},
             }))
         response = "Here are all your items! " + " ".join(blocks)
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
 
         items = nutrition_store.get_items(day=today)
         assert len(items) == 20

@@ -137,22 +137,22 @@ class TestClaimWithoutAction:
     def test_response_with_logged_claim_triggers_detection(self):
         """A response containing 'I've logged' without ACTION blocks should produce system note."""
         fake_response = "I've logged your dinner into the nutrition tracker. Everything looks good."
-        result = actions.process_actions(fake_response)
+        result = actions.process_actions_sync(fake_response)
         assert "System note" in result or "ARIA claimed" in result
 
     def test_response_with_saved_claim_triggers_detection(self):
         fake_response = "I saved your vehicle maintenance entry."
-        result = actions.process_actions(fake_response)
+        result = actions.process_actions_sync(fake_response)
         assert "System note" in result or "ARIA claimed" in result
 
     def test_response_with_captured_claim_triggers_detection(self):
         fake_response = "I've captured all the nutrition data from that label."
-        result = actions.process_actions(fake_response)
+        result = actions.process_actions_sync(fake_response)
         assert "System note" in result or "ARIA claimed" in result
 
     def test_response_with_added_claim_triggers_detection(self):
         fake_response = "I added the multivitamin to your supplement log."
-        result = actions.process_actions(fake_response)
+        result = actions.process_actions_sync(fake_response)
         assert "System note" in result or "ARIA claimed" in result
 
     def test_nutrition_data_extracted_claim_triggers(self):
@@ -162,7 +162,7 @@ class TestClaimWithoutAction:
             "30g protein, 20g carbs, 15g fat, 800mg sodium, 5g fiber, "
             "10g sugar, and 200mg cholesterol."
         )
-        result = actions.process_actions(fake_response)
+        result = actions.process_actions_sync(fake_response)
         assert "System note" in result or "ARIA claimed" in result
 
 
@@ -446,7 +446,7 @@ class TestSystemNotePassthrough:
             "(System note: ARIA claimed to store data but no ACTION blocks "
             "were emitted. The data may not have been saved. Please verify or retry.)"
         )
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "System note" in result
 
     def test_system_note_preserved_on_reprocessing(self):
@@ -456,7 +456,7 @@ class TestSystemNotePassthrough:
             "(System note: ARIA claimed to store data but no ACTION blocks "
             "were emitted. The data may not have been saved. Please verify or retry.)"
         )
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         # The system note from the original text is preserved, plus a new one
         # gets appended because "I saved" is a claim phrase
         assert "System note" in result or "ARIA claimed" in result
@@ -474,7 +474,7 @@ class TestNoFalseActionExtraction:
             "I understand you want me to take ACTION on that. Let me think about it. "
             "The best course of ACTION would be to check the logs."
         )
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         # No action failures should occur
         assert "action failed" not in result.lower()
         # The word ACTION in natural speech is not an ACTION block
@@ -489,7 +489,7 @@ class TestNoFalseActionExtraction:
             "actually emit a single ACTION block either time. I basically lied to you, "
             "and that's not okay."
         )
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         # No ACTION blocks should be extracted from this text
         assert "action failed" not in result.lower()
 
@@ -499,7 +499,7 @@ class TestNoFalseActionExtraction:
             "Here are the action items for today: check your calendar, "
             "review the ACTION plan, and follow up on the legal case."
         )
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "action failed" not in result.lower()
 
 

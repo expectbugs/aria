@@ -131,7 +131,7 @@ class TestRegressionTimerFireAt:
     def test_relative_timer_crosses_midnight(self):
         """set_timer with minutes=5 at 23:58 should fire at 00:03 next day."""
         response = '<!--ACTION::{"action": "set_timer", "label": "Test", "minutes": 5, "delivery": "sms", "message": "Go"}-->'
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         timers = timer_store.get_active()
         assert len(timers) == 1
         fire_at = timers[0]["fire_at"]
@@ -142,7 +142,7 @@ class TestRegressionTimerFireAt:
     def test_absolute_time_past_schedules_tomorrow(self):
         """set_timer with time="14:00" at 15:00 should schedule tomorrow."""
         response = '<!--ACTION::{"action": "set_timer", "label": "Test", "time": "14:00", "delivery": "sms", "message": "Go"}-->'
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         timers = timer_store.get_active()
         assert len(timers) == 1
         assert "2026-03-29" in timers[0]["fire_at"]
@@ -151,7 +151,7 @@ class TestRegressionTimerFireAt:
     def test_absolute_time_future_schedules_today(self):
         """set_timer with time="14:00" at 10:00 should schedule today."""
         response = '<!--ACTION::{"action": "set_timer", "label": "Test", "time": "14:00", "delivery": "sms", "message": "Go"}-->'
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         timers = timer_store.get_active()
         assert len(timers) == 1
         assert "2026-03-28" in timers[0]["fire_at"]
@@ -244,7 +244,7 @@ class TestRegressionActionRegex:
 "date": "2026-03-28",
 "category": "pain",
 "description": "back pain"}-->'''
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         # The health entry should have been created
         entries = health_store.get_entries(days=1)
         assert len(entries) >= 1
@@ -258,7 +258,7 @@ class TestRegressionActionRegex:
 "category": "general",
 "description": "test"}-->
 Done.'''
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "<!--" not in result
         assert "ACTION" not in result
         assert "I logged it." in result
@@ -272,7 +272,7 @@ class TestRegressionActionFailure:
         """If an action fails, original response text must be preserved."""
         response = '''Great question! Here's what I found.
 <!--ACTION::{"action": "delete_event", "id": "nonexistent_id_xyz"}-->'''
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         # Original text preserved
         assert "Great question" in result
         # Failure note appended
@@ -285,13 +285,13 @@ class TestRegressionClaimFalsePositive:
     def test_descriptive_text_not_flagged(self):
         """'meals logged 3 of 7 days' is descriptive, not a claim."""
         response = "You've been tracking well — meals logged 3 of 7 days this week. Calories averaged 1,800 with good protein intake."
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "System note" not in result
 
     def test_actual_claim_flagged(self):
         """'I've logged your meal' without ACTION block should be flagged."""
         response = "I've logged your chicken lunch with 450 calories, 35g protein, and 12g fat."
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "System note" in result or "CLAIM_WITHOUT_ACTION" in str(result)
 
 

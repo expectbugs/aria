@@ -6,6 +6,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.8.0] — 2026-03-28
+
+### Added — Phase 4b: Gmail + Google Calendar Intelligence
+
+- **`gmail_store.py`** — Full email cache with tsvector full-text search, classification storage, context builders for ARIA injection, attachment download, From header parsing, Gmail category detection
+- **`gmail_strategy.py`** — Three-tier email classification engine: Tier 1 hard rules (YAML sender/domain/content), Tier 2 pattern scoring (Gmail category, domain reputation, promo patterns, reply history, entity DB), Tier 3 AI judgment (Haiku for uncertain emails)
+- **`monitors/gmail.py`** — GmailMonitor: classifies unclassified emails from email_cache, produces Finding objects for important/urgent/actionable emails feeding existing delivery pipeline
+- **`data/gmail_rules.yaml`** — Empty template strategy file for interactive classification session
+- **`email_cache` table** — Full email bodies with tsvector GIN index on subject+body, attachment_paths array, gmail_category
+- **`email_classifications` table** — Classification audit trail with tier, confidence, reason, user_override
+- **`calendar_sync_state` table** — Singleton row for Google Calendar incremental syncToken
+- **Google Calendar bidirectional sync** — `calendar_store.py` now writes to Google first then local, with offline resilience (google_id=NULL, synced next cycle). `sync_from_google()` for incremental sync. Google wins conflicts.
+- **`send_email` ACTION block** — ARIA can compose and send email replies via Gmail API (confirmation required — never auto-sends)
+- **Email context injection** — Keyword-triggered (email, inbox, mail, gmail) with unread important summary, morning briefing and evening debrief email sections
+- **`/email/search` endpoint** — Full-text email search via daemon
+- **`query.py email` subcommand** — CLI email search: `--search`, `--from`, `--days`, `--limit`
+
+### Changed
+
+- **`process_actions()` is now async** — calendar and email handlers await Google API calls. All 7 call sites updated (daemon.py, verification.py, completion_listener.py)
+- **`calendar_store.py` write methods now async** — `add_event()`, `modify_event()`, `delete_event()` write to Google Calendar first, with offline fallback
+- **Events table** gains `google_id`, `google_etag`, `last_synced` columns for Calendar sync
+- **Calendar sync interval** changed from 5 min to 15 min (incremental via syncToken)
+- **Gmail sync** now fetches full bodies (format=full) with MIME body extraction
+- **`google_store.py` deleted** — functions split into `gmail_store.py` and `calendar_store.py`
+- **OAuth scopes expanded** — `calendar.events` (read-write), `gmail.send` added
+- **Version** bumped to 0.8.0
+- **Total test count:** 1926 tests across 86 files, all passing
+
+---
+
 ## [0.7.0] — 2026-03-28
 
 ### Added — Phase 4a: Google Calendar + Gmail API Plumbing

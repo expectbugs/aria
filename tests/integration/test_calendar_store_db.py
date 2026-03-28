@@ -1,11 +1,38 @@
 """Integration tests for calendar_store — real SQL against PostgreSQL."""
 
+import asyncio
+from unittest.mock import AsyncMock, patch
+
 import calendar_store
+
+
+def _run(coro):
+    """Run an async function synchronously in tests."""
+    return asyncio.run(coro)
+
+
+def _add_event(**kwargs):
+    """Add event with Google API mocked out."""
+    with patch("calendar_store._google_create_event",
+               new_callable=AsyncMock, return_value=(None, None)):
+        return _run(calendar_store.add_event(**kwargs))
+
+
+def _modify_event(event_id, **kwargs):
+    with patch("calendar_store._google_update_event",
+               new_callable=AsyncMock, return_value=True):
+        return _run(calendar_store.modify_event(event_id, **kwargs))
+
+
+def _delete_event(event_id):
+    with patch("calendar_store._google_delete_event",
+               new_callable=AsyncMock, return_value=True):
+        return _run(calendar_store.delete_event(event_id))
 
 
 class TestEventsRoundtrip:
     def test_add_and_retrieve(self):
-        event = calendar_store.add_event(
+        event = _add_event(
             title="Dentist", event_date="2026-03-25", time="14:30", notes="Cleaning",
         )
         assert event["title"] == "Dentist"
@@ -18,46 +45,44 @@ class TestEventsRoundtrip:
         assert events[0]["id"] == event["id"]
 
     def test_add_event_without_time(self):
-        event = calendar_store.add_event(title="All day", event_date="2026-03-26")
+        event = _add_event(title="All day", event_date="2026-03-26")
         assert event["time"] is None
 
     def test_date_range_filter(self):
-        calendar_store.add_event(title="A", event_date="2026-03-20")
-        calendar_store.add_event(title="B", event_date="2026-03-22")
-        calendar_store.add_event(title="C", event_date="2026-03-25")
+        _add_event(title="A", event_date="2026-03-20")
+        _add_event(title="B", event_date="2026-03-22")
+        _add_event(title="C", event_date="2026-03-25")
 
         events = calendar_store.get_events(start="2026-03-21", end="2026-03-24")
         assert len(events) == 1
         assert events[0]["title"] == "B"
 
     def test_events_ordered_by_date_and_time(self):
-        calendar_store.add_event(title="Late", event_date="2026-03-20", time="16:00")
-        calendar_store.add_event(title="Early", event_date="2026-03-20", time="09:00")
-        calendar_store.add_event(title="NoTime", event_date="2026-03-20")
+        _add_event(title="Late", event_date="2026-03-20", time="16:00")
+        _add_event(title="Early", event_date="2026-03-20", time="09:00")
+        _add_event(title="NoTime", event_date="2026-03-20")
 
         events = calendar_store.get_events(start="2026-03-20", end="2026-03-20")
         titles = [e["title"] for e in events]
-        # NULL time sorts first in PostgreSQL, then by time
         assert titles.index("Early") < titles.index("Late")
 
     def test_modify_event(self):
-        event = calendar_store.add_event(title="Old", event_date="2026-03-20")
-        updated = calendar_store.modify_event(event["id"], title="New", time="10:00")
+        event = _add_event(title="Old", event_date="2026-03-20")
+        updated = _modify_event(event["id"], title="New", time="10:00")
         assert updated["title"] == "New"
         assert updated["time"] == "10:00"
-        # date should be unchanged
         assert updated["date"] == "2026-03-20"
 
     def test_modify_nonexistent_returns_none(self):
-        assert calendar_store.modify_event("nonexist", title="X") is None
+        assert _modify_event("nonexist", title="X") is None
 
     def test_delete_event(self):
-        event = calendar_store.add_event(title="Delete me", event_date="2026-03-20")
-        assert calendar_store.delete_event(event["id"]) is True
+        event = _add_event(title="Delete me", event_date="2026-03-20")
+        assert _delete_event(event["id"]) is True
         assert calendar_store.get_events() == []
 
     def test_delete_nonexistent_returns_false(self):
-        assert calendar_store.delete_event("nonexist") is False
+        assert _delete_event("nonexist") is False
 
 
 class TestRemindersRoundtrip:
@@ -110,7 +135,6 @@ class TestRemindersRoundtrip:
         reminders = calendar_store.get_reminders()
         texts = [r["text"] for r in reminders]
         assert texts.index("Sooner") < texts.index("Later")
-        # No-due should sort last (COALESCE to 9999-12-31)
         assert texts[-1] == "No due"
 
     def test_delete_reminder(self):

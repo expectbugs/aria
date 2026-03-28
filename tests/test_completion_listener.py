@@ -25,12 +25,12 @@ def _mock_lazy_imports():
     """Pre-set the lazy import globals so _ensure_imports doesn't load real modules."""
     completion_listener.ask_haiku = AsyncMock(return_value="Default response")
     from actions import ActionResult
-    def _mock_process_actions(r, **kw):
+    async def _mock_process_actions(r, **kw):
         return ActionResult(
             clean_response=r, actions_found=[], action_types=[], failures=[],
             warnings=[], metadata={}, claims_without_actions=[], expect_actions_missing=[],
         )
-    completion_listener.process_actions = MagicMock(side_effect=_mock_process_actions)
+    completion_listener.process_actions = AsyncMock(side_effect=_mock_process_actions)
     yield
     completion_listener.ask_haiku = None
     completion_listener.process_actions = None
@@ -223,7 +223,7 @@ class TestActionBlockProcessing:
             clean_response="Done!", actions_found=[], action_types=[], failures=[],
             warnings=[], metadata={}, claims_without_actions=[], expect_actions_missing=[],
         )
-        mock_pa = MagicMock(return_value=mock_result)
+        mock_pa = AsyncMock(return_value=mock_result)
         completion_listener.process_actions = mock_pa
 
         await completion_listener._on_completion("t1", "completed", "result")
@@ -248,7 +248,7 @@ class TestActionBlockProcessing:
             clean_response="Timer set!", actions_found=[], action_types=[], failures=[],
             warnings=[], metadata={}, claims_without_actions=[], expect_actions_missing=[],
         )
-        completion_listener.process_actions = MagicMock(return_value=mock_result)
+        completion_listener.process_actions = AsyncMock(return_value=mock_result)
 
         await completion_listener._on_completion("t1", "completed", "result")
 

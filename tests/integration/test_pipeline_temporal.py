@@ -170,7 +170,7 @@ class TestTimerMidnightRace:
             '<!--ACTION::{"action": "set_timer", "label": "Test", '
             '"minutes": 5, "delivery": "sms", "message": "Time is up"}-->'
         )
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         timers = timer_store.get_active()
         assert len(timers) == 1
         fire_at = timers[0]["fire_at"]
@@ -186,7 +186,7 @@ class TestTimerMidnightRace:
             '<!--ACTION::{"action": "set_timer", "label": "Early timer", '
             '"time": "00:05", "delivery": "sms", "message": "Wake up check"}-->'
         )
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         timers = timer_store.get_active()
         assert len(timers) == 1
         fire_at = timers[0]["fire_at"]
@@ -216,7 +216,7 @@ class TestTimerMidnightRace:
             '<!--ACTION::{"action": "set_timer", "label": "Exact match", '
             '"time": "14:00", "delivery": "sms", "message": "Check"}-->'
         )
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         timers = timer_store.get_active()
         assert len(timers) == 1
         fire_at = timers[0]["fire_at"]
@@ -231,7 +231,7 @@ class TestTimerMidnightRace:
             '<!--ACTION::{"action": "set_timer", "label": "Past match", '
             '"time": "14:00", "delivery": "sms", "message": "Check"}-->'
         )
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         timers = timer_store.get_active()
         assert len(timers) == 1
         fire_at = timers[0]["fire_at"]
@@ -245,7 +245,7 @@ class TestTimerMidnightRace:
             '<!--ACTION::{"action": "set_timer", "label": "Today timer", '
             '"time": "14:00", "delivery": "sms", "message": "Check"}-->'
         )
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         timers = timer_store.get_active()
         assert len(timers) == 1
         fire_at = timers[0]["fire_at"]

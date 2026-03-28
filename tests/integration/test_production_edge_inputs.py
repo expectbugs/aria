@@ -93,7 +93,7 @@ class TestTimerInput:
 
     def test_timer_exclamation_no_actions(self):
         """'Timer!' through process_actions produces no action extraction."""
-        result = actions.process_actions("Timer!")
+        result = actions.process_actions_sync("Timer!")
         assert "action failed" not in result.lower()
 
 
@@ -172,7 +172,7 @@ class TestSupplementDiscussion:
             "gives you 200 mg of magnesium glycinate, which is a well-absorbed form. "
             "That's about half the daily target of 400-420 mg."
         )
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "action failed" not in result.lower()
         # Should not detect a storage claim
         assert "System note" not in result
@@ -476,7 +476,7 @@ class TestResponsesNoFalseActions:
             "Nice hot sauce collection. Tiger Sauce Original, Yellowbird Serrano, "
             "and Frank's RedHot. Solid lineup. What's the occasion?"
         )
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "action failed" not in result.lower()
         assert "System note" not in result
 
@@ -486,7 +486,7 @@ class TestResponsesNoFalseActions:
             "Got it, received an Excel spreadsheet called 'Training Schedule 2026.xlsx', "
             "about 15KB. I can't read the contents directly though."
         )
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "action failed" not in result.lower()
         assert "System note" not in result
 
@@ -496,6 +496,6 @@ class TestResponsesNoFalseActions:
             "It's 27 and cloudy right now, warming up to 37 with some sun "
             "breaking through later today."
         )
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "action failed" not in result.lower()
         assert "System note" not in result

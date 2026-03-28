@@ -54,41 +54,41 @@ class TestProcessActionsInvariants:
             "Special chars: <>&\"' {} [] ()",
         ]
         for text in test_inputs:
-            result = actions.process_actions(text)
+            result = actions.process_actions_sync(text)
             assert "<!--ACTION::" not in result, (
                 f"ACTION marker leaked for input: {text!r}"
             )
 
     def test_process_actions_empty_returns_empty(self):
         """process_actions('') returns ''."""
-        result = actions.process_actions("")
+        result = actions.process_actions_sync("")
         assert result == ""
 
     def test_process_actions_no_actions_returns_same_text(self):
         """process_actions on text without actions returns it unchanged."""
         text = "no actions here"
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert result == text
 
     def test_process_actions_always_returns_str(self):
         """process_actions always returns str type."""
         inputs = ["", "hello", "x" * 10000, "\n\n\n", "\t\t"]
         for text in inputs:
-            result = actions.process_actions(text)
+            result = actions.process_actions_sync(text)
             assert isinstance(result.to_response(), str)
 
     @settings(max_examples=50, deadline=5000)
     @given(text=st.text(min_size=0, max_size=500))
     def test_hypothesis_process_actions_never_raises(self, text):
         """Hypothesis: given random text, process_actions never raises."""
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert isinstance(result.to_response(), str)
 
     @settings(max_examples=50, deadline=5000)
     @given(text=st.text(min_size=0, max_size=500))
     def test_hypothesis_process_actions_no_markers_in_output(self, text):
         """Hypothesis: given random text, output never contains ACTION markers."""
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert "<!--ACTION::" not in result
 
     def test_multiple_action_blocks_all_stripped(self):
@@ -100,7 +100,7 @@ class TestProcessActionsInvariants:
             '<!--ACTION::{"action":"add_event","title":"B","date":"2026-03-28"}-->'
             ' End text.'
         )
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert "<!--ACTION::" not in result
         assert "Start text." in result
         assert "Middle text." in result
@@ -113,7 +113,7 @@ class TestProcessActionsInvariants:
             'Body text'
             '<!--ACTION::{"action":"add_event","title":"X","date":"2026-03-27"}-->'
         )
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert "<!--ACTION::" not in result
         assert "Body text" in result
 

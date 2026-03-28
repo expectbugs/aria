@@ -35,6 +35,84 @@ class Finding:
     data: dict = field(default_factory=dict)
 
 
+# --- Notification categories ---
+# A = briefing-only (daily informational, no independent nudge)
+# B = repeat-low (can repeat, subsequent same-day fires wait to group with a C item)
+# C = repeat-high (always nudges when triggered and cooled down)
+
+NUDGE_CATEGORIES: dict[str, str] = {
+    "health_pattern": "A",
+    "fitbit_sleep": "A",
+    "nutrition_calorie_surplus": "A",
+    "diet_check": "A",
+    "fitbit_sedentary": "B",
+    "fitbit_activity_goal": "B",
+    "nutrition_sugar_warn": "B",
+    "nutrition_sodium_warn": "B",
+    "battery_low": "B",
+    "vehicle_maintenance": "B",
+    "calendar_warning": "C",
+    "reminder_due": "C",
+    "legal_deadline": "C",
+    "meal_reminder": "C",
+    "fitbit_hr_anomaly": "C",
+    "location_aware": "C",
+}
+
+FINDING_CATEGORIES: dict[str, str] = {
+    # Category A — daily informational
+    "choline_low": "A",
+    "choline_trend": "A",
+    "protein_low": "A",
+    "fiber_low": "A",
+    "omega3_missing": "A",
+    "surplus_trend": "A",
+    "sleep_deficit": "A",
+    "steps_below_goal": "A",
+    "irregular_sleep": "A",
+    "hr_trend_up": "A",
+    "hrv_declining": "A",
+    # Category B — repeat-low
+    "gpu_temp_elevated": "B",
+    # Category C — repeat-high
+    "disk_critical": "C",
+    "disk_warning": "C",
+    "cron_stale": "C",
+    "gpu_temp_high": "C",
+}
+
+# Dynamic keys matched by prefix
+_FINDING_CATEGORY_PREFIXES: dict[str, str] = {
+    "portage_stale_": "C",
+    "deadline_": "C",
+    "log_large_": "B",
+}
+
+
+def classify_category(key: str, source: str = "nudge") -> str:
+    """Return category A/B/C for a nudge type or finding check_key.
+
+    source: "nudge" or "finding"
+    Falls back to "B" (group-wait) for unknown keys — safe default.
+    """
+    if source == "nudge":
+        return NUDGE_CATEGORIES.get(key, "B")
+
+    cat = FINDING_CATEGORIES.get(key)
+    if cat:
+        return cat
+
+    for prefix, c in _FINDING_CATEGORY_PREFIXES.items():
+        if key.startswith(prefix):
+            return c
+
+    # Vehicle overdue pattern (oil_change_overdue, tire_rotation_overdue, etc.)
+    if key.endswith("_overdue"):
+        return "B"
+
+    return "B"
+
+
 class BaseMonitor:
     """Base class for domain monitors. Subclasses implement run()."""
     domain: str = ""

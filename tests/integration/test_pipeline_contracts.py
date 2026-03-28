@@ -233,18 +233,18 @@ class TestProcessActionsContract:
     """process_actions always returns str and respects metadata/log_fn."""
 
     def test_always_returns_str(self):
-        result = actions.process_actions("no actions here")
+        result = actions.process_actions_sync("no actions here")
         assert isinstance(result.to_response(), str)
 
     def test_always_returns_str_with_actions(self):
         text = 'Done <!--ACTION::{"action":"set_delivery","method":"voice"}-->'
-        result = actions.process_actions(text)
+        result = actions.process_actions_sync(text)
         assert isinstance(result.to_response(), str)
 
     def test_metadata_delivery_set(self):
         text = 'Ok <!--ACTION::{"action":"set_delivery","method":"voice"}-->'
         metadata = {}
-        actions.process_actions(text, metadata=metadata)
+        actions.process_actions_sync(text, metadata=metadata)
         assert metadata.get("delivery") == "voice"
 
     def test_log_fn_called_on_failure(self):
@@ -252,7 +252,7 @@ class TestProcessActionsContract:
         log_calls = []
         def log_fn(text, status, **kwargs):
             log_calls.append((text, status, kwargs))
-        actions.process_actions(text, log_fn=log_fn)
+        actions.process_actions_sync(text, log_fn=log_fn)
         assert len(log_calls) > 0
         assert any(call[1] == "error" for call in log_calls)
 

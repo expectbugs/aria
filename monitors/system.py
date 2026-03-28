@@ -103,7 +103,7 @@ class SystemMonitor(BaseMonitor):
         try:
             with db.get_conn() as conn:
                 row = conn.execute(
-                    "SELECT value FROM tick_state WHERE key = 'last_nudge_check'"
+                    "SELECT value FROM tick_state WHERE key = 'last_tick_run'"
                 ).fetchone()
         except Exception:
             return []

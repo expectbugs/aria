@@ -285,7 +285,7 @@ class TestEmptyKnownPlaces:
         seed_location("Home", lat=42.58, lon=-88.43)
         with patch("context.redis_client.get_active_tasks", return_value=[]), \
              patch("context.redis_client.format_task_status", return_value=""):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 context.build_request_context("where am i")
             )
         assert isinstance(result, str)

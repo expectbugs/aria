@@ -291,7 +291,7 @@ class TestPhase2DeliveryMetadata:
             '<!--ACTION::{"action":"set_delivery","method":"voice"}-->'
         )
         metadata = {}
-        actions.process_actions(resp, metadata=metadata)
+        actions.process_actions_sync(resp, metadata=metadata)
         assert metadata.get("delivery") == "voice"
 
     def test_sms_delivery_sets_metadata(self):
@@ -301,14 +301,14 @@ class TestPhase2DeliveryMetadata:
             '<!--ACTION::{"action":"set_delivery","method":"sms"}-->'
         )
         metadata = {}
-        actions.process_actions(resp, metadata=metadata)
+        actions.process_actions_sync(resp, metadata=metadata)
         assert metadata.get("delivery") == "sms"
 
     def test_default_delivery_sets_metadata(self):
         """set_delivery with method='default' also works."""
         resp = '<!--ACTION::{"action":"set_delivery","method":"default"}-->'
         metadata = {}
-        actions.process_actions(resp, metadata=metadata)
+        actions.process_actions_sync(resp, metadata=metadata)
         assert metadata.get("delivery") == "default"
 
 
@@ -321,7 +321,7 @@ class TestPhase3ProcessActionsReturnType:
 
     def test_returns_action_result_no_actions(self):
         """Plain text with no actions returns ActionResult."""
-        result = actions.process_actions("Hello, I can help with that.")
+        result = actions.process_actions_sync("Hello, I can help with that.")
         assert isinstance(result, actions.ActionResult)
         assert result.clean_response == "Hello, I can help with that."
         assert result.actions_found == []
@@ -335,18 +335,18 @@ class TestPhase3ProcessActionsReturnType:
             '<!--ACTION::{"action":"log_health","date":"' + today + '",'
             '"category":"meal","description":"test meal","meal_type":"lunch"}-->'
         )
-        result = actions.process_actions(resp)
+        result = actions.process_actions_sync(resp)
         assert isinstance(result, actions.ActionResult)
         assert "log_health" in result.action_types
 
     def test_to_response_returns_str(self):
         """to_response() always returns str."""
-        result = actions.process_actions("Hello")
+        result = actions.process_actions_sync("Hello")
         assert isinstance(result.to_response(), str)
 
     def test_str_contains_compat(self):
         """ActionResult supports 'in' operator via __contains__."""
-        result = actions.process_actions("Hello, I can help!")
+        result = actions.process_actions_sync("Hello, I can help!")
         assert "Hello" in result
         assert "ACTION" not in result
 
@@ -363,7 +363,7 @@ class TestPhase3ActionBlockStripping:
             '"category":"meal","description":"test","meal_type":"lunch"}-->'
             ' All done.'
         )
-        result = actions.process_actions(resp)
+        result = actions.process_actions_sync(resp)
         assert "<!--ACTION" not in result
         assert "Got it!" in result
 
@@ -380,13 +380,13 @@ class TestPhase3ActionBlockStripping:
             '  "meal_type": "lunch"\n'
             '}-->'
         )
-        result = actions.process_actions(resp)
+        result = actions.process_actions_sync(resp)
         assert "<!--ACTION" not in result
 
     def test_partial_action_stripped(self):
         """Partial/truncated ACTION block is stripped."""
         resp = 'Logging <!--ACTION::{"action":"log_health","date":"2026-01-01"'
-        result = actions.process_actions(resp)
+        result = actions.process_actions_sync(resp)
         assert "<!--ACTION" not in result
 
     def test_multiple_actions_stripped(self):
@@ -400,7 +400,7 @@ class TestPhase3ActionBlockStripping:
             '<!--ACTION::{"action":"add_reminder","text":"buy eggs"}-->'
             ' All set.'
         )
-        result = actions.process_actions(resp)
+        result = actions.process_actions_sync(resp)
         assert "<!--ACTION" not in result
         assert "Done!" in result
         assert "All set." in result
@@ -412,14 +412,14 @@ class TestPhase3ClaimWithoutAction:
     def test_claim_logged_no_action(self):
         """'I've logged your meal' with no actions triggers system note."""
         resp = "I've logged your meal and tracked the nutrition data with calories, protein, and carbs."
-        result = actions.process_actions(resp)
+        result = actions.process_actions_sync(resp)
         assert "System note" in result or "system note" in result.lower()
         assert "ACTION blocks" in result or "action" in result.lower()
 
     def test_no_claim_no_note(self):
         """Normal text without claims does not trigger system note."""
         resp = "The weather looks nice today. Here are some joke ideas for you."
-        result = actions.process_actions(resp)
+        result = actions.process_actions_sync(resp)
         assert "System note" not in result
 
 
@@ -435,7 +435,7 @@ class TestPhase3ProcessActionsLogFn:
 
         # Intentionally bad action — complete a nonexistent reminder
         resp = '<!--ACTION::{"action":"complete_reminder","id":"nonexistent"}-->'
-        actions.process_actions(resp, log_fn=capture_log)
+        actions.process_actions_sync(resp, log_fn=capture_log)
 
         assert len(log_calls) >= 1
         assert any(c["status"] == "error" for c in log_calls)
@@ -448,7 +448,7 @@ class TestPhase3ProcessActionsLogFn:
             log_calls.append({"text": text, "status": status, **kwargs})
 
         resp = "I've saved your meal data. It has 500 calories, 30g protein, 20g fat, and 40g carbs."
-        actions.process_actions(resp, log_fn=capture_log)
+        actions.process_actions_sync(resp, log_fn=capture_log)
 
         assert any(c["text"] == "CLAIM_WITHOUT_ACTION" for c in log_calls)
 
@@ -460,7 +460,7 @@ class TestPhase3ProcessActionsLogFn:
             log_calls.append({"text": text, "status": status, **kwargs})
 
         resp = '<!--ACTION::{"action":"add_reminder","text":"test"}-->'
-        actions.process_actions(resp, log_fn=capture_log)
+        actions.process_actions_sync(resp, log_fn=capture_log)
 
         # No errors, no claim-without-action — log_fn should not be called
         assert len(log_calls) == 0

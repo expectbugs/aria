@@ -55,7 +55,7 @@ class TestAddEvent:
             {"action": "add_event", "title": "Dentist", "date": "2026-04-15",
              "time": "14:30", "notes": "Dr. Smith"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "Done!" in cleaned
         assert "ACTION" not in cleaned
 
@@ -72,7 +72,7 @@ class TestAddEvent:
             {"action": "add_event", "title": "Birthday Party \U0001f382\u2728",
              "date": "2026-05-01"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         events = calendar_store.get_events(start="2026-05-01", end="2026-05-01")
         assert len(events) == 1
@@ -90,7 +90,7 @@ class TestModifyEvent:
             {"action": "modify_event", "id": eid, "title": "New Title",
              "time": "10:00"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         events = calendar_store.get_events(start="2026-04-20", end="2026-04-20")
         assert len(events) == 1
@@ -107,7 +107,7 @@ class TestDeleteEvent:
             "Deleted!",
             {"action": "delete_event", "id": eid},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" not in cleaned.lower()
 
         events = calendar_store.get_events(start="2026-04-22", end="2026-04-22")
@@ -118,7 +118,7 @@ class TestDeleteEvent:
             "Deleted!",
             {"action": "delete_event", "id": "nonexistent99"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "no event found" in cleaned.lower()
 
 
@@ -132,7 +132,7 @@ class TestAddReminder:
             "Reminder set!",
             {"action": "add_reminder", "text": "Buy milk", "due": "2026-04-10"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         reminders = calendar_store.get_reminders()
         assert any(r["text"] == "Buy milk" for r in reminders)
@@ -143,7 +143,7 @@ class TestAddReminder:
             {"action": "add_reminder", "text": "Pick up package",
              "location": "Post Office", "location_trigger": "depart"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         reminders = calendar_store.get_reminders()
         r = next(r for r in reminders if r["text"] == "Pick up package")
@@ -156,7 +156,7 @@ class TestAddReminder:
             {"action": "add_reminder", "text": "Take medication",
              "recurring": "daily"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         reminders = calendar_store.get_reminders()
         r = next(r for r in reminders if r["text"] == "Take medication")
@@ -172,7 +172,7 @@ class TestCompleteReminder:
             "Marked done!",
             {"action": "complete_reminder", "id": rid},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" not in cleaned.lower()
 
         # Should not appear in active reminders
@@ -194,7 +194,7 @@ class TestDeleteReminder:
             "Deleted!",
             {"action": "delete_reminder", "id": rid},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" not in cleaned.lower()
 
         all_rem = calendar_store.get_reminders(include_done=True)
@@ -210,7 +210,7 @@ class TestMultipleCalendarActions:
             {"action": "add_reminder", "text": "Prepare slides",
              "due": "2026-04-24"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" not in cleaned.lower()
 
         events = calendar_store.get_events(start="2026-04-25", end="2026-04-25")
@@ -233,7 +233,7 @@ class TestLogHealth:
              "category": "pain", "description": "Lower back pain, left side",
              "severity": 6},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         entries = health_store.get_entries(category="pain")
         assert len(entries) == 1
@@ -247,7 +247,7 @@ class TestLogHealth:
              "category": "meal", "description": "Grilled chicken and rice",
              "meal_type": "dinner"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         entries = health_store.get_entries(category="meal")
         assert len(entries) == 1
@@ -260,10 +260,10 @@ class TestLogHealth:
             "category": "pain", "description": "Headache",
         }
         resp1 = _response_with("First!", action_dict)
-        actions.process_actions(resp1)
+        actions.process_actions_sync(resp1)
 
         resp2 = _response_with("Second!", action_dict)
-        actions.process_actions(resp2)
+        actions.process_actions_sync(resp2)
 
         entries = health_store.get_entries(category="pain")
         assert len(entries) == 1
@@ -275,7 +275,7 @@ class TestLogHealth:
              "category": "sleep", "description": "Slept okay, woke once",
              "sleep_hours": 6.5},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         entries = health_store.get_entries(category="sleep")
         assert len(entries) == 1
@@ -292,7 +292,7 @@ class TestDeleteHealthEntry:
             "Deleted!",
             {"action": "delete_health_entry", "id": eid},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" not in cleaned.lower()
 
         entries = health_store.get_entries(category="pain")
@@ -303,7 +303,7 @@ class TestDeleteHealthEntry:
             "Deleted!",
             {"action": "delete_health_entry", "id": "ghost999"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "no entry found" in cleaned.lower()
 
 
@@ -320,7 +320,7 @@ class TestLogVehicle:
              "description": "Full synthetic 5W-30",
              "mileage": 148500, "cost": 52.99},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         entries = vehicle_store.get_entries()
         assert len(entries) == 1
@@ -335,7 +335,7 @@ class TestLogVehicle:
              "event_type": "inspection",
              "description": "Annual state inspection passed"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         entries = vehicle_store.get_entries()
         assert len(entries) == 1
@@ -353,7 +353,7 @@ class TestDeleteVehicleEntry:
             "Deleted!",
             {"action": "delete_vehicle_entry", "id": eid},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" not in cleaned.lower()
 
         entries = vehicle_store.get_entries()
@@ -364,7 +364,7 @@ class TestDeleteVehicleEntry:
             "Deleted!",
             {"action": "delete_vehicle_entry", "id": "ghost999"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "no entry found" in cleaned.lower()
 
 
@@ -381,7 +381,7 @@ class TestLogLegal:
              "description": "Hearing scheduled for workers comp",
              "contacts": ["Attorney Smith", "Judge Brown"]},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         entries = legal_store.get_entries()
         assert len(entries) == 1
@@ -396,7 +396,7 @@ class TestLogLegal:
              "entry_type": "note",
              "description": "Reviewed case documents"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         entries = legal_store.get_entries()
         assert len(entries) == 1
@@ -412,7 +412,7 @@ class TestDeleteLegalEntry:
             "Deleted!",
             {"action": "delete_legal_entry", "id": eid},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" not in cleaned.lower()
 
         entries = legal_store.get_entries()
@@ -423,7 +423,7 @@ class TestDeleteLegalEntry:
             "Deleted!",
             {"action": "delete_legal_entry", "id": "ghost999"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "no entry found" in cleaned.lower()
 
 
@@ -446,7 +446,7 @@ class TestLogNutrition:
                  "sodium_mg": 85, "total_carb_g": 0,
              }},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         items = nutrition_store.get_items(day="2026-03-27")
         assert len(items) == 1
@@ -463,7 +463,7 @@ class TestLogNutrition:
              "date": "2026-03-27", "meal_type": "snack",
              "nutrients": {"calories": 200, "protein_g": 20}},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         items = nutrition_store.get_items(day="2026-03-27")
         assert len(items) == 1
@@ -479,7 +479,7 @@ class TestLogNutrition:
              "servings": 2.0,
              "nutrients": {"calories": 200, "protein_g": 4}},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         # Daily totals should multiply by servings
         totals = nutrition_store.get_daily_totals("2026-03-27")
@@ -494,10 +494,10 @@ class TestLogNutrition:
             "nutrients": {"calories": 95},
         }
         resp1 = _response_with("First!", action_dict)
-        actions.process_actions(resp1)
+        actions.process_actions_sync(resp1)
 
         resp2 = _response_with("Second!", action_dict)
-        actions.process_actions(resp2)
+        actions.process_actions_sync(resp2)
 
         items = nutrition_store.get_items(day="2026-03-27")
         assert len(items) == 1
@@ -510,7 +510,7 @@ class TestLogNutrition:
              "meal_type": "snack",
              "nutrients": {"calories": 105}},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         items = nutrition_store.get_items(day="2026-03-27")
         assert len(items) == 1
@@ -524,7 +524,7 @@ class TestLogNutrition:
              "date": "2026-04-01", "meal_type": "lunch",
              "nutrients": {"calories": 300}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" in cleaned.lower() or "future" in cleaned.lower()
 
         items = nutrition_store.get_items(day="2026-04-01")
@@ -538,7 +538,7 @@ class TestLogNutrition:
              "date": "2026-03-15", "meal_type": "lunch",
              "nutrients": {"calories": 300}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" in cleaned.lower() or "7 days" in cleaned.lower()
 
         items = nutrition_store.get_items(day="2026-03-15")
@@ -553,7 +553,7 @@ class TestLogNutrition:
              "servings": 0,
              "nutrients": {"calories": 300}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" in cleaned.lower()
 
     @freeze_time("2026-03-27 12:00:00")
@@ -564,7 +564,7 @@ class TestLogNutrition:
              "date": "2026-03-27", "meal_type": "lunch",
              "nutrients": {"calories": 6000}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" in cleaned.lower() or "sanity" in cleaned.lower()
 
         items = nutrition_store.get_items(day="2026-03-27")
@@ -581,7 +581,7 @@ class TestDeleteNutritionEntry:
             "Deleted!",
             {"action": "delete_nutrition_entry", "id": eid},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" not in cleaned.lower()
 
         items = nutrition_store.get_items(day="2026-03-27")
@@ -598,7 +598,7 @@ class TestNutritionIntraResponseDuplicate:
             "nutrients": {"calories": 95},
         }
         resp = f"Logged! {_action(action_dict)} {_action(action_dict)}"
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         items = nutrition_store.get_items(day="2026-03-27")
         assert len(items) == 1
@@ -617,7 +617,7 @@ class TestNutritionDateCrossCheck:
              "date": "2026-03-26", "meal_type": "lunch",
              "nutrients": {"calories": 500}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "DATA QUALITY ERROR" in cleaned
         assert "Date mismatch" in cleaned
 
@@ -640,7 +640,7 @@ class TestSetTimer:
             {"action": "set_timer", "label": "Laundry",
              "minutes": 30, "message": "Laundry is done!"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         timers = timer_store.get_active()
         assert len(timers) == 1
@@ -656,7 +656,7 @@ class TestSetTimer:
             {"action": "set_timer", "label": "Meeting reminder",
              "time": "16:00", "message": "Meeting in 15 min"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         timers = timer_store.get_active()
         assert len(timers) == 1
@@ -672,7 +672,7 @@ class TestSetTimer:
             {"action": "set_timer", "label": "Morning alarm",
              "time": "07:00", "message": "Wake up!"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         timers = timer_store.get_active()
         assert len(timers) == 1
@@ -688,7 +688,7 @@ class TestSetTimer:
              "minutes": 5, "delivery": "voice", "priority": "urgent",
              "message": "CHECK THE OVEN!"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         timers = timer_store.get_active()
         assert len(timers) == 1
@@ -708,7 +708,7 @@ class TestCancelTimer:
             "Cancelled!",
             {"action": "cancel_timer", "id": tid},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "failed" not in cleaned.lower()
 
         t = timer_store.get_timer(tid)
@@ -719,7 +719,7 @@ class TestCancelTimer:
             "Cancelled!",
             {"action": "cancel_timer", "id": "ghost999"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "no active timer found" in cleaned.lower()
 
 
@@ -734,7 +734,7 @@ class TestStartExercise:
             "Exercise started!",
             {"action": "start_exercise", "exercise_type": "walking"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         state = fitbit_store.get_exercise_state()
         assert state is not None
@@ -754,7 +754,7 @@ class TestStartExercise:
             "New exercise!",
             {"action": "start_exercise", "exercise_type": "stationary_bike"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         state2 = fitbit_store.get_exercise_state()
         assert state2 is not None
@@ -777,7 +777,7 @@ class TestEndExercise:
             "Exercise ended!",
             {"action": "end_exercise"},
         )
-        actions.process_actions(resp)
+        actions.process_actions_sync(resp)
 
         state = fitbit_store.get_exercise_state()
         assert state is None
@@ -794,7 +794,7 @@ class TestSetDelivery:
             "Switching to voice.",
             {"action": "set_delivery", "method": "voice"},
         )
-        actions.process_actions(resp, metadata=metadata)
+        actions.process_actions_sync(resp, metadata=metadata)
         assert metadata["delivery"] == "voice"
 
 
@@ -808,7 +808,7 @@ class TestDispatchAction:
              "command": "echo hello", "task": "test task"},
         )
         with patch("actions.redis_client.push_task", return_value=None):
-            cleaned = actions.process_actions(resp, metadata=metadata)
+            cleaned = actions.process_actions_sync(resp, metadata=metadata)
         assert "Redis unavailable" in cleaned
 
 
@@ -818,7 +818,7 @@ class TestUnknownAction:
             "Done!",
             {"action": "totally_made_up", "data": "whatever"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         # Should not crash, just log warning
         assert "Done!" in cleaned
         assert "ACTION" not in cleaned
@@ -827,7 +827,7 @@ class TestUnknownAction:
 class TestMalformedJson:
     def test_invalid_json(self):
         resp = 'Here you go! <!--ACTION::{not valid json}-->'
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "Invalid ACTION JSON" in cleaned or "failed" in cleaned.lower()
 
 
@@ -840,7 +840,7 @@ class TestMultipleFailures:
             {"action": "add_event", "title": "Real Event", "date": "2026-04-30"},
             {"action": "delete_reminder", "id": "ghost2"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
 
         # Both failures reported
         assert "no event found" in cleaned.lower()
@@ -862,7 +862,7 @@ class TestResponseCleaning:
             "I added your event.",
             {"action": "add_event", "title": "Test", "date": "2026-05-01"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "<!--ACTION::" not in cleaned
         assert "I added your event." in cleaned
 
@@ -872,7 +872,7 @@ class TestResponseCleaning:
             "date": "2026-05-01", "notes": "Line1\nLine2\nLine3",
         })
         resp = f"Done! <!--ACTION::{payload}-->"
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "<!--ACTION::" not in cleaned
         assert "Done!" in cleaned
 
@@ -882,7 +882,7 @@ class TestResponseCleaning:
             "I deleted the event for you.",
             {"action": "delete_event", "id": "nonexistent"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         # Original text preserved
         assert "I deleted the event for you." in cleaned
         # Failure note appended
@@ -890,7 +890,7 @@ class TestResponseCleaning:
 
     def test_expect_actions_missing_triggers_warning(self):
         resp = "I logged your nutrition data with 300 calories."
-        cleaned = actions.process_actions(resp, expect_actions=["log_nutrition"])
+        cleaned = actions.process_actions_sync(resp, expect_actions=["log_nutrition"])
         assert "WARNING" in cleaned
         assert "NOT actually saved" in cleaned
         assert "log_nutrition" in cleaned
@@ -900,28 +900,28 @@ class TestResponseCleaning:
             "Logged!",
             {"action": "add_event", "title": "Test", "date": "2026-05-01"},
         )
-        cleaned = actions.process_actions(resp, expect_actions=["add_event"])
+        cleaned = actions.process_actions_sync(resp, expect_actions=["add_event"])
         assert "WARNING" not in cleaned
         assert "NOT actually saved" not in cleaned
 
     def test_claim_without_action_detected(self):
         """Response says 'I've logged your meal' but no ACTION blocks."""
         resp = "I've logged your meal for dinner. Enjoy!"
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "System note" in cleaned
         assert "ACTION blocks" in cleaned
 
     def test_claim_no_false_positive_descriptive_text(self):
         """Descriptive text like 'meals logged 3 of 7 days' should NOT trigger."""
         resp = "Your meals logged 3 of 7 days this week. Keep it up!"
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "System note" not in cleaned
 
     def test_nutrition_claim_detected(self):
         """Claim + 3+ nutrient terms + no actions triggers nutrition warning."""
         resp = ("I've tracked your lunch. It has 500 calories, 30g protein, "
                 "15g fat, and 200mg sodium.")
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "System note" in cleaned
 
     def test_mixed_success_failure(self):
@@ -934,7 +934,7 @@ class TestResponseCleaning:
             {"action": "delete_event", "id": "nonexistent"},
             {"action": "add_reminder", "text": "New reminder"},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
 
         # Event deleted
         events = calendar_store.get_events(start="2026-06-01", end="2026-06-01")
@@ -948,7 +948,7 @@ class TestResponseCleaning:
         assert "no event found" in cleaned.lower()
 
     def test_empty_response_no_crash(self):
-        cleaned = actions.process_actions("")
+        cleaned = actions.process_actions_sync("")
         assert cleaned == ""
 
 
@@ -965,7 +965,7 @@ class TestNutritionValidationWarnings:
              "date": "2026-03-27", "meal_type": "lunch",
              "nutrients": {"calories": 200, "protein_g": 25}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "Omega-3 missing" in cleaned
 
     @freeze_time("2026-03-27 12:00:00")
@@ -977,7 +977,7 @@ class TestNutritionValidationWarnings:
              "nutrients": {"calories": 200, "protein_g": 25,
                            "omega3_mg": 920}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "Omega-3 missing" not in cleaned
 
     @freeze_time("2026-03-27 12:00:00")
@@ -989,7 +989,7 @@ class TestNutritionValidationWarnings:
              "nutrients": {"calories": 200, "protein_g": 14,
                            "cholesterol_mg": 50, "choline_mg": 300}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "Cholesterol only 50mg" in cleaned
 
     @freeze_time("2026-03-27 12:00:00")
@@ -1001,7 +1001,7 @@ class TestNutritionValidationWarnings:
              "nutrients": {"calories": 200, "protein_g": 14,
                            "cholesterol_mg": 372}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "Choline missing" in cleaned
 
     @freeze_time("2026-03-27 12:00:00")
@@ -1014,7 +1014,7 @@ class TestNutritionValidationWarnings:
              "nutrients": {"calories": 200, "protein_g": 20,
                            "total_fat_g": 8}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "core nutrients" in cleaned.lower() or "3/8" in cleaned
 
     @freeze_time("2026-03-27 12:00:00")
@@ -1028,5 +1028,5 @@ class TestNutritionValidationWarnings:
              "date": "2026-03-27", "meal_type": "dinner",
              "nutrients": {"calories": 700, "protein_g": 50}},
         )
-        cleaned = actions.process_actions(resp)
+        cleaned = actions.process_actions_sync(resp)
         assert "Meal type mismatch" in cleaned

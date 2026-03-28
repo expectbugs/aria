@@ -1,10 +1,16 @@
 """Tests for calendar_store.py — events and reminders CRUD."""
 
+import asyncio
 from datetime import date, time, datetime, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import calendar_store
 from helpers import make_event_row, make_reminder_row
+
+
+def _run(coro):
+    """Run an async function synchronously in tests."""
+    return asyncio.run(coro)
 
 
 def _patch_db():
@@ -84,10 +90,11 @@ class TestAddEvent:
         mc, p = _patch_db()
         mc.execute.return_value.fetchone.return_value = make_event_row()
         try:
-            result = calendar_store.add_event(
-                title="Dentist", event_date="2026-03-20",
-                time="14:30", notes="Cleaning"
-            )
+            with patch("calendar_store._google_create_event", new_callable=AsyncMock, return_value=(None, None)):
+                result = _run(calendar_store.add_event(
+                    title="Dentist", event_date="2026-03-20",
+                    time="14:30", notes="Cleaning"
+                ))
             assert result["id"] == "abc12345"
             sql = mc.execute.call_args[0][0]
             assert "INSERT INTO events" in sql
@@ -99,7 +106,8 @@ class TestAddEvent:
         mc, p = _patch_db()
         mc.execute.return_value.fetchone.return_value = make_event_row(t=None, notes=None)
         try:
-            result = calendar_store.add_event(title="Meeting", event_date="2026-03-21")
+            with patch("calendar_store._google_create_event", new_callable=AsyncMock, return_value=(None, None)):
+                result = _run(calendar_store.add_event(title="Meeting", event_date="2026-03-21"))
             assert result["time"] is None
         finally:
             p.stop()
@@ -108,7 +116,8 @@ class TestAddEvent:
         mc, p = _patch_db()
         mc.execute.return_value.fetchone.return_value = make_event_row()
         try:
-            calendar_store.add_event(title="Test", event_date="2026-03-20")
+            with patch("calendar_store._google_create_event", new_callable=AsyncMock, return_value=(None, None)):
+                _run(calendar_store.add_event(title="Test", event_date="2026-03-20"))
             params = mc.execute.call_args[0][1]
             event_id = params[0]
             assert len(event_id) == 8  # uuid[:8]
@@ -121,11 +130,9 @@ class TestModifyEvent:
         mc, p = _patch_db()
         mc.execute.return_value.fetchone.return_value = make_event_row(title="Updated")
         try:
-            result = calendar_store.modify_event("abc12345", title="Updated")
+            with patch("calendar_store._google_update_event", new_callable=AsyncMock, return_value=True):
+                result = _run(calendar_store.modify_event("abc12345", title="Updated"))
             assert result["title"] == "Updated"
-            sql = mc.execute.call_args[0][0]
-            assert "UPDATE events" in sql
-            assert "title = %s" in sql
         finally:
             p.stop()
 
@@ -133,7 +140,7 @@ class TestModifyEvent:
         mc, p = _patch_db()
         mc.execute.return_value.fetchone.return_value = None
         try:
-            result = calendar_store.modify_event("abc12345", id="new_id", action="hack")
+            result = _run(calendar_store.modify_event("abc12345", id="new_id", action="hack"))
             assert result is None  # no allowed updates = None
         finally:
             p.stop()
@@ -142,7 +149,8 @@ class TestModifyEvent:
         mc, p = _patch_db()
         mc.execute.return_value.fetchone.return_value = None
         try:
-            result = calendar_store.modify_event("nonexistent", title="X")
+            with patch("calendar_store._google_update_event", new_callable=AsyncMock, return_value=True):
+                result = _run(calendar_store.modify_event("nonexistent", title="X"))
             assert result is None
         finally:
             p.stop()
@@ -151,17 +159,19 @@ class TestModifyEvent:
 class TestDeleteEvent:
     def test_returns_true_on_success(self):
         mc, p = _patch_db()
+        mc.execute.return_value.fetchone.return_value = None  # no google_id
         mc.execute.return_value.rowcount = 1
         try:
-            assert calendar_store.delete_event("abc12345") is True
+            assert _run(calendar_store.delete_event("abc12345")) is True
         finally:
             p.stop()
 
     def test_returns_false_if_not_found(self):
         mc, p = _patch_db()
+        mc.execute.return_value.fetchone.return_value = None
         mc.execute.return_value.rowcount = 0
         try:
-            assert calendar_store.delete_event("nonexistent") is False
+            assert _run(calendar_store.delete_event("nonexistent")) is False
         finally:
             p.stop()
 

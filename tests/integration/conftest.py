@@ -47,7 +47,7 @@ ALL_TABLES = [
     "tool_traces", "entity_mentions", "interaction_quality",
     "monitor_findings", "verification_log",
     "delivery_log", "device_state", "deferred_deliveries",
-    "google_calendar_events", "google_gmail_messages",
+    "email_cache", "email_classifications", "calendar_sync_state",
 ]
 
 
@@ -280,12 +280,19 @@ def seed_reminder(text: str = "Test reminder", due: str | None = None,
 
 def seed_event(title: str = "Test Event", event_date: str | None = None,
                time: str | None = None, notes: str | None = None):
-    """Insert a calendar event via the real store function."""
+    """Insert a calendar event directly into the DB (bypasses async Google API)."""
+    import uuid
     if event_date is None:
         event_date = date.today().isoformat()
-    return calendar_store.add_event(
-        title=title, event_date=event_date, time=time, notes=notes,
-    )
+    event_id = str(uuid.uuid4())[:8]
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """INSERT INTO events (id, title, date, time, notes)
+               VALUES (%s, %s, %s, %s, %s)
+               RETURNING *""",
+            (event_id, title, event_date, time, notes),
+        ).fetchone()
+    return db.serialize_row(row)
 
 
 def seed_legal(entry_date: str | None = None, entry_type: str = "note",

@@ -60,7 +60,10 @@ class TestCalendarStore:
 
     def test_modify_nonexistent_returns_none(self):
         """Modifying a nonexistent event should return None."""
-        result = calendar_store.modify_event("nonexistent_id_12345", title="New Title")
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        with patch("calendar_store._google_update_event", new_callable=AsyncMock, return_value=True):
+            result = asyncio.run(calendar_store.modify_event("nonexistent_id_12345", title="New Title"))
         assert result is None
 
 

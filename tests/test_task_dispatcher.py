@@ -151,7 +151,7 @@ class TestDispatchActionBlock:
 
         response = 'Running that for you! <!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "uptime"}-->'
         metadata = {}
-        result = actions.process_actions(response, metadata=metadata)
+        result = actions.process_actions_sync(response, metadata=metadata)
 
         mock_rc.push_task.assert_called_once()
         task_arg = mock_rc.push_task.call_args[0][0]
@@ -166,7 +166,7 @@ class TestDispatchActionBlock:
 
         response = 'On it! <!--ACTION::{"action": "dispatch_action", "mode": "agentic", "task": "Generate an image of a sunset", "context": "warm tones", "notify": true}-->'
         metadata = {}
-        actions.process_actions(response, metadata=metadata)
+        actions.process_actions_sync(response, metadata=metadata)
 
         task_arg = mock_rc.push_task.call_args[0][0]
         assert task_arg["mode"] == "agentic"
@@ -179,7 +179,7 @@ class TestDispatchActionBlock:
         mock_rc.push_task.return_value = None  # Redis down
 
         response = 'Let me check <!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "uptime"}-->'
-        result = actions.process_actions(response)
+        result = actions.process_actions_sync(response)
         assert "Failed to dispatch" in result
 
     @patch("actions.redis_client")
@@ -187,7 +187,7 @@ class TestDispatchActionBlock:
         mock_rc.push_task.return_value = "abc"
 
         response = '<!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "ls"}-->'
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
 
         task_arg = mock_rc.push_task.call_args[0][0]
         assert "task_id" in task_arg
@@ -199,7 +199,7 @@ class TestDispatchActionBlock:
 
         response = '<!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "uptime"}-->'
         metadata = {"channel": "sms"}
-        actions.process_actions(response, metadata=metadata)
+        actions.process_actions_sync(response, metadata=metadata)
 
         task_arg = mock_rc.push_task.call_args[0][0]
         assert task_arg["channel"] == "sms"
@@ -210,7 +210,7 @@ class TestDispatchActionBlock:
 
         response = '<!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "uptime"}-->'
         metadata = {}  # no channel key
-        actions.process_actions(response, metadata=metadata)
+        actions.process_actions_sync(response, metadata=metadata)
 
         task_arg = mock_rc.push_task.call_args[0][0]
         assert task_arg["channel"] == "voice"
@@ -220,7 +220,7 @@ class TestDispatchActionBlock:
         mock_rc.push_task.return_value = "t1"
 
         response = '<!--ACTION::{"action": "dispatch_action", "mode": "shell", "command": "ls"}-->'
-        actions.process_actions(response)  # no metadata arg
+        actions.process_actions_sync(response)  # no metadata arg
 
         task_arg = mock_rc.push_task.call_args[0][0]
         assert task_arg["channel"] == "voice"

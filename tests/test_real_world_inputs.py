@@ -31,7 +31,7 @@ class TestTimerTomorrowLogic:
             mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
 
             response = 'Timer! <!--ACTION::{"action": "set_timer", "label": "Test", "time": "14:00", "delivery": "sms", "message": "test"}-->'
-            actions.process_actions(response)
+            actions.process_actions_sync(response)
 
             call_args = mock_ts.add_timer.call_args
             fire_at = call_args[1]["fire_at"]
@@ -49,7 +49,7 @@ class TestTimerTomorrowLogic:
             mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
 
             response = 'Timer! <!--ACTION::{"action": "set_timer", "label": "Test", "time": "14:00", "delivery": "sms", "message": "test"}-->'
-            actions.process_actions(response)
+            actions.process_actions_sync(response)
 
             fire_at = mock_ts.add_timer.call_args[1]["fire_at"]
             assert "2026-03-20" in fire_at
@@ -71,7 +71,7 @@ class TestLongInputs:
     def test_very_long_action_response(self):
         """process_actions with a very long response."""
         long_text = "word " * 5000
-        result = actions.process_actions(long_text)
+        result = actions.process_actions_sync(long_text)
         assert result == long_text.strip()
 
 
@@ -79,7 +79,7 @@ class TestUnicodeAndEmoji:
     @patch("actions.calendar_store")
     def test_unicode_event_title(self, mock_cal):
         response = '<!--ACTION::{"action": "add_event", "title": "Café meeting ☕ — très important", "date": "2026-03-20"}-->'
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         title = mock_cal.add_event.call_args[1]["title"]
         assert "Café" in title
         assert "☕" in title
@@ -87,25 +87,25 @@ class TestUnicodeAndEmoji:
     @patch("actions.health_store")
     def test_emoji_in_health_description(self, mock_hs):
         response = '<!--ACTION::{"action": "log_health", "date": "2026-03-20", "category": "meal", "description": "🥗 big salad with 🐟", "meal_type": "lunch"}-->'
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         desc = mock_hs.add_entry.call_args[1]["description"]
         assert "🥗" in desc
 
     @patch("actions.nutrition_store")
     def test_unicode_food_name(self, mock_ns):
         response = '<!--ACTION::{"action": "log_nutrition", "food_name": "Açaí bowl — extra granola", "nutrients": {"calories": 350}}-->'
-        actions.process_actions(response)
+        actions.process_actions_sync(response)
         name = mock_ns.add_item.call_args[1]["food_name"]
         assert "Açaí" in name
 
 
 class TestEmptyAndWhitespace:
     def test_empty_response(self):
-        result = actions.process_actions("")
+        result = actions.process_actions_sync("")
         assert result == ""
 
     def test_whitespace_only_response(self):
-        result = actions.process_actions("   \n\t  ")
+        result = actions.process_actions_sync("   \n\t  ")
         assert result.strip() == ""
 
     @pytest.mark.asyncio
@@ -190,7 +190,7 @@ class TestActionInjectionAttempts:
         )
         with patch("actions.calendar_store") as mock_cal:
             mock_cal.delete_event = MagicMock()
-            actions.process_actions(response)
+            actions.process_actions_sync(response)
             # The delete should NOT have been called
             mock_cal.delete_event.assert_not_called()
 
@@ -205,7 +205,7 @@ class TestActionInjectionAttempts:
         }
         response = f'Noted. <!--ACTION::{json.dumps(action)}-->'
         with patch("actions.health_store") as mock_hs:
-            actions.process_actions(response)
+            actions.process_actions_sync(response)
             mock_hs.add_entry.assert_called_once()
             desc = mock_hs.add_entry.call_args[1]["description"]
             assert "{great}" in desc
@@ -257,7 +257,7 @@ class TestClaimDetectionEdgeCases:
             "calories tracked this week look good",
         ]
         for text in briefing_responses:
-            result = actions.process_actions(text)
+            result = actions.process_actions_sync(text)
             assert "System note" not in result, f"False positive on: {text!r}"
 
     def test_first_person_claim_triggers(self):
@@ -271,12 +271,12 @@ class TestClaimDetectionEdgeCases:
             "I've added your event.",
         ]
         for text in claim_responses:
-            result = actions.process_actions(text)
+            result = actions.process_actions_sync(text)
             assert "System note" in result, f"Missed claim on: {text!r}"
 
     def test_pure_nutrition_discussion_without_claim(self):
         """Discussing nutrition data without a claim phrase should not trigger."""
-        result = actions.process_actions(
+        result = actions.process_actions_sync(
             "That meal had 450 calories, 38g protein, 18g fat, "
             "32g carbs, 680mg sodium, 6g fiber."
         )
@@ -284,7 +284,7 @@ class TestClaimDetectionEdgeCases:
 
     def test_claim_with_nutrient_context(self):
         """First-person claim + multiple nutrients → should flag."""
-        result = actions.process_actions(
+        result = actions.process_actions_sync(
             "I've stored your meal data: 450 calories, 38g protein, "
             "18g fat, 32g carbs, 680mg sodium, 6g fiber."
         )

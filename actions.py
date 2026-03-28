@@ -626,3 +626,15 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
         claims_without_actions=claims_without,
         expect_actions_missing=expect_missing,
     )
+
+
+def process_actions_sync(response_text: str, expect_actions: list[str] | None = None,
+                         metadata: dict | None = None,
+                         log_fn=None) -> ActionResult:
+    """Sync wrapper for process_actions — for use in tests and sync contexts.
+
+    Runs the async process_actions in a new event loop. Calendar and email
+    handlers that call Google APIs will work but are slower than the async path.
+    """
+    import asyncio
+    return asyncio.run(process_actions(response_text, expect_actions, metadata, log_fn))
