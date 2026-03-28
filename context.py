@@ -11,6 +11,19 @@ from datetime import datetime, date, timedelta
 log = logging.getLogger("aria")
 
 
+def _get_diet_day() -> int | None:
+    """Get current diet day number, or None if diet tracking not configured."""
+    diet_start_str = getattr(config, "DIET_START_DATE", "")
+    if not diet_start_str:
+        return None
+    try:
+        diet_start = date.fromisoformat(diet_start_str)
+        day = (datetime.now().date() - diet_start).days + 1
+        return day if day > 0 else None
+    except ValueError:
+        return None
+
+
 # --- Keyword matching infrastructure ---
 
 def _match_keywords(text: str, substrings: list[str],
@@ -416,9 +429,8 @@ def gather_health_context() -> str:
         parts.append("Health patterns (7d): " + "; ".join(patterns))
 
     # Diet day counter
-    diet_start = date.fromisoformat(config.DIET_START_DATE)
-    diet_day = (datetime.now().date() - diet_start).days + 1
-    if diet_day > 0:
+    diet_day = _get_diet_day()
+    if diet_day:
         parts.append(f"Diet day {diet_day}")
 
     # Exercise mode
@@ -510,9 +522,8 @@ async def gather_debrief_context() -> str:
             parts.append("\nNo meals logged today.")
 
     # Diet day counter
-    diet_start = date.fromisoformat(config.DIET_START_DATE)
-    diet_day = (now.date() - diet_start).days + 1
-    if diet_day > 0:
+    diet_day = _get_diet_day()
+    if diet_day:
         parts.append(f"\nDiet day {diet_day}")
 
     # Fitbit — today's activity and health data
@@ -634,11 +645,10 @@ async def gather_briefing_context() -> str:
     if weekly_nutrition:
         parts.append(f"\n{weekly_nutrition}")
 
-    # Diet — day count since diet start (March 17, 2026)
-    diet_start = date.fromisoformat(config.DIET_START_DATE)
-    diet_day = (now.date() - diet_start).days + 1
-    if diet_day > 0:
-        parts.append(f"\nDiet day {diet_day} (started March 17, 2026)")
+    # Diet — day count since diet start
+    diet_day = _get_diet_day()
+    if diet_day:
+        parts.append(f"\nDiet day {diet_day}")
 
     # Fitbit health data
     fitbit_ctx = fitbit_store.get_briefing_context(today)

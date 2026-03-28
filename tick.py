@@ -353,9 +353,9 @@ def evaluate_nudges() -> list[tuple[str, str]]:
     if 20 <= now.hour <= 21:
         today_items = nutrition_store.get_items(day=today)
         if len(today_items) < 2:
-            diet_start = date.fromisoformat(config.DIET_START_DATE)
-            diet_day = (now.date() - diet_start).days + 1
-            if diet_day > 0:
+            from context import _get_diet_day
+            diet_day = _get_diet_day()
+            if diet_day:
                 triggers.append(("diet_check",
                                  f"Diet day {diet_day}: only {len(today_items)} meal(s) "
                                  f"logged today (current time: {time_ctx})"))
@@ -427,7 +427,7 @@ def evaluate_nudges() -> list[tuple[str, str]]:
                              f"a short walk would help (current time: {time_ctx})"))
 
     # --- Nutrition: added sugar approaching limit ---
-    totals = nutrition_store.get_daily_totals()
+    totals = nutrition_store.get_daily_totals(today)
     if totals["item_count"] > 0:
         if totals.get("added_sugars_g", 0) >= 25:
             triggers.append(("nutrition_sugar_warn",
@@ -439,7 +439,7 @@ def evaluate_nudges() -> list[tuple[str, str]]:
                              f"approaching the 1,800mg daily max"))
         # Calorie surplus check (evening)
         if now.hour >= 19:
-            net = nutrition_store.get_net_calories()
+            net = nutrition_store.get_net_calories(today)
             if net["burned"] > 0 and net["net"] > 0:
                 triggers.append(("nutrition_calorie_surplus",
                                  f"Calorie surplus today: {net['consumed']} consumed - "

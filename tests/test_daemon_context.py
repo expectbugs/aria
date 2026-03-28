@@ -933,3 +933,31 @@ class TestLegacyAlias:
 
     def test_alias_matches_primary(self):
         assert system_prompt.build_system_prompt() == system_prompt.build_primary_prompt()
+
+
+class TestGetDietDay:
+    """Tests for _get_diet_day() helper — DIET_START_DATE crash guard."""
+
+    def test_valid_date(self):
+        with patch.object(context.config, "DIET_START_DATE", "2026-03-17"):
+            result = context._get_diet_day()
+            assert result is not None
+            assert isinstance(result, int)
+            assert result > 0
+
+    def test_empty_string(self):
+        with patch.object(context.config, "DIET_START_DATE", ""):
+            assert context._get_diet_day() is None
+
+    def test_missing_attribute(self):
+        with patch.object(context, "config", MagicMock(spec=[])):
+            assert context._get_diet_day() is None
+
+    def test_invalid_date_string(self):
+        with patch.object(context.config, "DIET_START_DATE", "not-a-date"):
+            assert context._get_diet_day() is None
+
+    def test_future_date(self):
+        future = (date.today() + timedelta(days=30)).isoformat()
+        with patch.object(context.config, "DIET_START_DATE", future):
+            assert context._get_diet_day() is None

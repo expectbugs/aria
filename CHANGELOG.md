@@ -6,6 +6,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.44] — 2026-03-27
+
+### Added
+
+- **`_get_diet_day()` helper** in `context.py` — safely computes diet day number, returns `None` if `DIET_START_DATE` is empty, missing, or invalid. Replaces 4 crash-prone inline `date.fromisoformat()` calls (3 in context.py, 1 in tick.py).
+- **5 new tests** for `_get_diet_day`: valid date, empty string, missing attribute, invalid string, future date.
+
+### Fixed
+
+- **DIET_START_DATE crash** — empty/missing config value caused `ValueError` in `gather_health_context()`, `gather_debrief_context()`, `gather_briefing_context()`, and `evaluate_nudges()`. The tick.py crash was the worst: it silently killed ALL nudges (meal reminders, calendar warnings, battery alerts, etc.).
+- **Midnight race in tick.py** — `get_daily_totals()` and `get_net_calories()` now receive explicit `today` parameter instead of defaulting to `date.today()` internally, preventing microsecond divergence at midnight.
+
+### Changed
+
+- **Version** bumped to 0.4.44
+
+---
+
 ## [0.4.43] — 2026-03-27
 
 ### Fixed
