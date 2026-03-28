@@ -431,6 +431,22 @@ class TestExerciseMode:
         mock_state.return_value = None
         assert fitbit_store.get_exercise_coaching_context() == ""
 
+    @patch("fitbit_store.get_exercise_state")
+    def test_coaching_context_with_preloaded_state(self, mock_state):
+        """Passing state= should skip the internal get_exercise_state() call."""
+        preloaded = {
+            "exercise_type": "walking",
+            "started_at": (datetime.now() - timedelta(minutes=10)).isoformat(),
+            "resting_hr": 65, "max_hr": 178,
+            "target_zones": {"fat_burn": {"min": 121, "max": 144}},
+            "hr_readings": [],
+        }
+        ctx = fitbit_store.get_exercise_coaching_context(state=preloaded)
+        assert "EXERCISE MODE ACTIVE" in ctx
+        assert "walking" in ctx
+        # The internal get_exercise_state() should NOT have been called
+        mock_state.assert_not_called()
+
 
 class TestSafeCasting:
     """Verify Fitbit API string values are cast to int/float at extraction boundary."""

@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.43] — 2026-03-27
+
+### Fixed
+
+- **Double exercise state DB queries** — `get_exercise_coaching_context()` now accepts optional `state` parameter. All 3 callers (`gather_always_context`, `gather_health_context`, `process_exercise_tick`) pass their already-fetched state, eliminating a redundant DB query per request during exercise mode.
+
+### Changed
+
+- **Version** bumped to 0.4.43
+
+---
+
 ## [0.4.42] — 2026-03-27
 
 ### Added

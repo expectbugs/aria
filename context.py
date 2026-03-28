@@ -111,7 +111,7 @@ def gather_always_context() -> str:
     # Exercise mode
     exercise = fitbit_store.get_exercise_state()
     if exercise:
-        coaching = fitbit_store.get_exercise_coaching_context()
+        coaching = fitbit_store.get_exercise_coaching_context(state=exercise)
         if coaching:
             parts.append(coaching)
 
@@ -424,7 +424,7 @@ def gather_health_context() -> str:
     # Exercise mode
     exercise = fitbit_store.get_exercise_state()
     if exercise:
-        parts.append(fitbit_store.get_exercise_coaching_context())
+        parts.append(fitbit_store.get_exercise_coaching_context(state=exercise))
 
     if not parts:
         return ""

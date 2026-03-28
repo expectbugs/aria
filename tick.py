@@ -684,7 +684,7 @@ def process_exercise_tick():
 
     # Determine coaching triggers
     triggers = []
-    coaching_ctx = fitbit_store.get_exercise_coaching_context()
+    coaching_ctx = fitbit_store.get_exercise_coaching_context(state=exercise)
 
     # Nudge every 5 minutes with a status update
     if elapsed_min > 0 and elapsed_min % 5 == 0:

@@ -452,9 +452,10 @@ def record_exercise_hr(hr_data: list[dict]):
         )
 
 
-def get_exercise_coaching_context() -> str:
+def get_exercise_coaching_context(state: dict | None = None) -> str:
     """Build coaching context string for exercise-mode nudges."""
-    state = get_exercise_state()
+    if state is None:
+        state = get_exercise_state()
     if not state:
         return ""
 
