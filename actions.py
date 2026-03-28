@@ -376,8 +376,9 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             if log_fn:
                 log_fn("ACTION", "error", error=str(e))
 
-    # Strip action blocks from spoken response
-    clean_response = re.sub(r'<!--ACTION::.*?-->', '', response_text, flags=re.DOTALL).strip()
+    # Strip action blocks from spoken response (complete blocks + partial/truncated markers)
+    clean_response = re.sub(r'<!--ACTION::.*?-->', '', response_text, flags=re.DOTALL)
+    clean_response = re.sub(r'<!--ACTION::.*', '', clean_response, flags=re.DOTALL).strip()
 
     if failures:
         if log_fn:

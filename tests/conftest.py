@@ -68,6 +68,26 @@ def _block_real_sms():
 
 
 @pytest.fixture(autouse=True)
+def _block_real_phone_push(request):
+    """Prevent any real image/audio pushes to the phone during tests.
+
+    Blocks push_image.push_image and push_audio.push_audio globally.
+    This catches data quality alerts, timer voice delivery, task completion
+    delivery, and any other code path that pushes to the phone.
+
+    Excluded for test_push_audio.py and test_push_image.py which test
+    those modules directly (they mock httpx.post internally).
+    """
+    filename = str(request.fspath)
+    if "test_push_audio" in filename or "test_push_image" in filename:
+        yield
+        return
+    with patch("push_image.push_image", return_value=True) as m_img, \
+         patch("push_audio.push_audio", return_value=True) as m_aud:
+        yield m_img, m_aud
+
+
+@pytest.fixture(autouse=True)
 def _disable_sms_redirect():
     """Ensure SMS redirect is off during tests — test actual SMS code paths.
 

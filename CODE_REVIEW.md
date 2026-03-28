@@ -229,10 +229,16 @@ M17 (nutrition false positive), S12 (leave location trigger), m15 (briefing once
 
 D2 evolved (CLI session pool replaces API, deep+fast concurrent sessions), M16 fully resolved (session pool has explicit stop() in lifespan shutdown)
 
-### Remaining
+### Resolved in v0.5.1
 
-None — all tracked issues resolved.
+Partial ACTION marker leak (found by Hypothesis fuzz testing, fixed in actions.py)
+
+### Remaining (found by pipeline testing suite, v0.5.2)
+
+1. **S14. ACTION blocks inside code fences are executed** — regex `<!--ACTION::(\{.*?\})-->` matches ACTION blocks inside triple-backtick code blocks. If Claude demonstrates an ACTION block in a code example, it would be executed. Fix: skip content inside ``` fences before regex extraction. **File:** `actions.py:186` **Priority:** Low (Claude rarely demonstrates ACTION syntax) **Found by:** `test_pipeline_adversarial.py::TestACTIONInjection::test_action_inside_code_block_still_extracted`
+
+2. **S15. Nested `-->` in ACTION JSON truncates outer block** — The non-greedy `.*?` in `<!--ACTION::(\{.*?\})-->` stops at the FIRST `-->` encountered, even if it's inside a JSON string value. When a description or timer message contains `-->`, the outer JSON is truncated and fails to parse. The action is silently dropped. Fix: use balanced-brace parsing or escape `-->` in JSON values before regex extraction. **File:** `actions.py:186` **Priority:** Medium (timer messages containing ACTION-like text would be silently lost) **Found by:** `test_pipeline_adversarial.py::TestACTIONInjection::test_nested_action_not_double_executed`, `TestDataIntegrityStress::test_timer_message_containing_action_markup`
 
 ---
 
-*Original review covered 23 Python source files. Codebase has grown significantly since (v0.5.0: session_pool.py, query.py, training_store.py, and others added).*
+*Original review covered 23 Python source files. Codebase has grown significantly since (v0.5.0: session_pool.py, query.py, training_store.py, and others added). v0.5.2 pipeline testing suite (1550 tests) found 2 new issues + 1 fixed edge case.*

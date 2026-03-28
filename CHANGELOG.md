@@ -6,6 +6,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.5.2] — 2026-03-28
+
+### Added
+
+- **Adversarial testing** (`test_pipeline_adversarial.py`) — 81 tests simulating real-world failure conditions: STT mishearing/mangling (15 tests), ACTION block injection attempts (10), temporal edge cases spanning midnight/DST/year boundaries (10), data integrity under stress (9), config edge cases (5), malformed Claude responses (11), SMS adversarial inputs (5), cross-cutting edge cases (16).
+
+### Discovered (unfixed — documented in tests)
+
+- **BUG: ACTION blocks inside code fences are executed** — If Claude demonstrates an ACTION block inside triple backticks, the regex still extracts and executes it. Documented in `test_pipeline_adversarial.py::TestACTIONInjection::test_action_inside_code_block_still_extracted`.
+- **BUG: Nested `-->` truncates outer ACTION block** — When a JSON value inside an ACTION block contains `-->`, the non-greedy `.*?` regex stops at the inner `-->`, truncating the outer JSON. The action silently fails to parse. Documented in `test_pipeline_adversarial.py::TestACTIONInjection::test_nested_action_not_double_executed` and `TestDataIntegrityStress::test_timer_message_containing_action_markup`.
+
+### Changed
+
+- **Version** bumped to 0.5.2
+
+---
+
+## [0.5.1] — 2026-03-28
+
+### Added
+
+- **Pipeline testing suite** — 16 new integration test files (`test_pipeline_*.py`) with **~466 tests** exercising real code paths against a real PostgreSQL test database. Covers:
+  - **Regression tests** for all 18 historical production bugs (Bug #1–#18)
+  - **Boundary value tests** for every `>`, `>=`, `<`, `<=` comparison at exact boundary values
+  - **Null propagation tests** verifying every Optional return through its callers
+  - **ACTION pipeline tests** for all 21 action types against real DB
+  - **Temporal tests** with `freezegun` for midnight races, timer computation, quiet hours, date validation
+  - **Invariant tests** (properties that must always hold: markers stripped, types correct, etc.)
+  - **Hypothesis fuzz tests** across process_actions, nutrition validation, entity extraction, Fitbit data shapes
+  - **Contract tests** verifying cross-module return shapes and API agreements
+  - **Type safety tests** for every unsafe int()/float() cast with string/None/garbage inputs
+  - **Encoding tests** (unicode, emoji, multi-byte through every data path)
+  - **Capacity tests** (100 timers, 50 reminders, 1000 nutrition entries, 50KB response regex safety)
+  - **Concurrency tests** (advisory locks, content_hash dedup, webhook idempotency)
+  - **Schema consistency tests** (schema.sql vs Python code agreement)
+- **`_block_real_phone_push` safety guard** in tests/conftest.py — prevents `push_image` and `push_audio` from reaching the phone during tests
+- **`freezegun` dependency** for deterministic time control in temporal tests
+
+### Fixed
+
+- **Partial ACTION marker leak** — `process_actions()` now strips incomplete `<!--ACTION::` markers (without closing `-->`) from response text. Previously, truncated markers would leak into spoken responses. Found by Hypothesis fuzz testing.
+- **psycopg ConnectionPool deprecation warning** — added explicit `open=True` parameter (v0.5.0 fix for db.py, now also in integration conftest)
+- **Nutrition test date time bomb** — hardcoded `2026-03-20` dates replaced with dynamic `date.today()` in test_nutrition_store.py
+
+### Changed
+
+- **Version** bumped to 0.5.1
+
+---
+
 ## [0.5.0] — 2026-03-27
 
 ### Added
