@@ -68,6 +68,10 @@ _LEGAL_SUBSTRINGS = ["legal", "court", "lawyer", "attorney", "walworth",
                      "court date", "lawsuit"]
 _LEGAL_REGEX = re.compile(r'\b(filing)\b', re.IGNORECASE)
 
+_EMAIL_SUBSTRINGS = ["email", "inbox", "mail", "gmail", "message from",
+                     "reply to", "respond to", "unread email"]
+_EMAIL_REGEX = re.compile(r'\b(email|inbox|mail|gmail)\b', re.IGNORECASE)
+
 import config
 import db
 import calendar_store
@@ -83,6 +87,7 @@ import fitbit_store
 import nutrition_store
 import redis_client
 import monitors
+import gmail_store
 
 
 def gather_always_context() -> str:
@@ -317,6 +322,15 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
             ctx_parts.append("Upcoming legal dates: " + "; ".join(
                 f"{u['date']}: {u['description']}" for u in upcoming
             ))
+
+    # --- Email ---
+    if _match_keywords(text_lower, _EMAIL_SUBSTRINGS, _EMAIL_REGEX):
+        try:
+            email_ctx = gmail_store.get_email_context(today)
+            if email_ctx:
+                ctx_parts.append(email_ctx)
+        except Exception as e:
+            log.warning("Email context unavailable: %s", e)
 
     return "\n".join(ctx_parts) if ctx_parts else ""
 
@@ -560,6 +574,14 @@ async def gather_debrief_context() -> str:
     except Exception:
         pass
 
+    # Email activity today
+    try:
+        email_ctx = gmail_store.get_email_context(today)
+        if email_ctx:
+            parts.append(f"\n{email_ctx}")
+    except Exception:
+        pass
+
     # Monitor findings from today
     try:
         today_findings = [f for f in monitors.get_recent(hours=24)
@@ -686,6 +708,14 @@ async def gather_briefing_context() -> str:
         parts.append("\nUpcoming legal dates:")
         for l in legal_upcoming:
             parts.append(f"  - [id={l['id']}] {l['date']}: {l['description']}")
+
+    # Email summary
+    try:
+        email_brief = gmail_store.get_briefing_context()
+        if email_brief:
+            parts.append(f"\n{email_brief}")
+    except Exception:
+        pass
 
     # Monitor findings from last 24h
     try:
