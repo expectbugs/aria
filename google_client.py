@@ -431,6 +431,12 @@ class GoogleClient:
             json_body=send_body,
         )
 
+    async def gmail_trash_message(self, message_id: str) -> dict:
+        """Move a message to trash. Returns the updated message."""
+        return await self._post(
+            f"{GMAIL_BASE}/users/me/messages/{message_id}/trash"
+        )
+
     async def gmail_get_attachment(self, message_id: str,
                                     attachment_id: str) -> bytes:
         """Download a Gmail attachment. Returns raw bytes."""

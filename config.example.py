@@ -136,8 +136,7 @@ GOOGLE_REDIRECT_URI = "http://127.0.0.1:8080/callback"
 GOOGLE_TOKEN_FILE = DATA_DIR / "google_tokens.json"
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",    # read-write events
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",          # send emails
+    "https://www.googleapis.com/auth/gmail.modify",          # read, send, trash, labels
 ]
 
 # --- Gmail Intelligence ---
