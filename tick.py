@@ -535,94 +535,171 @@ def _get_nudge_counts() -> tuple[int, int]:
         return (0, 0)
 
 
-def run_nudge_evaluation():
-    """Evaluate nudge conditions and send consolidated SMS if needed.
+def run_unified_delivery():
+    """Unified notification pipeline: evaluates nudges + findings, groups, delivers.
 
-    C4: Global nudge frequency cap (MAX_NUDGES_PER_DAY, MAX_NUDGES_PER_HOUR).
-    C5: Only update cooldowns on successful delivery. Log all attempts to nudge_log.
+    Category behavior:
+        A (briefing-only): Suppressed from independent delivery. Injected into
+            briefing/debrief context only. 11:50pm safety net catches missed days.
+        B (repeat-low): First occurrence delivers immediately. Subsequent same-day
+            occurrences only deliver when grouped with a C item.
+        C (repeat-high): Always delivers when triggered and cooldown allows.
+
+    Grouping: All actionable items compose into ONE message and count as ONE
+    delivery against the unified cap.
+
+    C4: Global frequency cap (MAX_NUDGES_PER_DAY, MAX_NUDGES_PER_HOUR).
+    C5: Only update cooldowns on successful delivery.
     """
+    from monitors import classify_category, get_undelivered, mark_delivered
+
     if is_quiet_hours():
         return
 
+    # --- Collect nudge triggers ---
     cooldowns = load_cooldowns()
     triggers = evaluate_nudges()
 
-    # Filter by cooldowns
-    actionable = []
+    cooled_nudges = []
     for nudge_type, description in triggers:
         cooldown_hours = NUDGE_COOLDOWNS.get(nudge_type, 4)
         if is_cooled_down(cooldowns, nudge_type, cooldown_hours):
-            actionable.append((nudge_type, description))
+            category = classify_category(nudge_type, source="nudge")
+            cooled_nudges.append((nudge_type, description, category))
 
-    if not actionable:
+    # --- Collect undelivered findings ---
+    findings = get_undelivered(min_urgency="low")
+    categorized_findings = []
+    for f in findings[:10]:
+        category = classify_category(f.get("check_key", ""), source="finding")
+        categorized_findings.append((f, category))
+
+    # --- Category filtering ---
+    # Category A: suppress from delivery (briefing-only)
+    cat_a_count = (sum(1 for _, _, c in cooled_nudges if c == "A") +
+                   sum(1 for _, c in categorized_findings if c == "A"))
+
+    # Category B + C: eligible for delivery
+    deliverable_nudges = [(t, d, c) for t, d, c in cooled_nudges if c != "A"]
+    deliverable_findings = [(f, c) for f, c in categorized_findings if c != "A"]
+
+    # Check if any Category C items are present (allows B grouping)
+    has_cat_c = (any(c == "C" for _, _, c in deliverable_nudges) or
+                 any(c == "C" for _, c in deliverable_findings))
+
+    # Apply B grouping logic
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    final_nudges = []
+    has_first_fire_b = False
+    for nudge_type, desc, cat in deliverable_nudges:
+        if cat == "C":
+            final_nudges.append((nudge_type, desc))
+        elif cat == "B":
+            last = cooldowns.get(nudge_type)
+            first_today = not last or not last.startswith(today_str)
+            if first_today:
+                final_nudges.append((nudge_type, desc))
+                has_first_fire_b = True
+            elif has_cat_c:
+                final_nudges.append((nudge_type, desc))
+
+    final_findings = []
+    for finding, cat in deliverable_findings:
+        if cat == "C":
+            final_findings.append(finding)
+        elif cat == "B":
+            if has_cat_c or has_first_fire_b:
+                final_findings.append(finding)
+
+    if not final_nudges and not final_findings:
+        if cat_a_count:
+            log.info("Category A items suppressed (briefing-only): %d", cat_a_count)
         return
 
-    # C4: Global nudge frequency cap
-    max_per_day = getattr(config, "MAX_NUDGES_PER_DAY", 6)
+    # --- Unified frequency caps ---
+    max_per_day = getattr(config, "MAX_NUDGES_PER_DAY", 15)
     max_per_hour = getattr(config, "MAX_NUDGES_PER_HOUR", 2)
     count_24h, count_1h = _get_nudge_counts()
 
+    all_descriptions = ([d for _, d in final_nudges] +
+                        [f"[{f['urgency']}] {f['summary']}" for f in final_findings])
+
     if count_24h >= max_per_day:
-        log.info("Nudge suppressed (daily cap %d/%d reached): %s",
-                 count_24h, max_per_day,
-                 [desc for _, desc in actionable])
-        _log_nudge([t for t, _ in actionable],
-                   [d for _, d in actionable], "", "suppressed_daily_cap")
+        log.info("Delivery suppressed (daily cap %d/%d): %s",
+                 count_24h, max_per_day, all_descriptions[:3])
+        _log_nudge([t for t, _ in final_nudges],
+                   all_descriptions, "", "suppressed_daily_cap")
         return
 
     if count_1h >= max_per_hour:
-        log.info("Nudge suppressed (hourly cap %d/%d reached): %s",
-                 count_1h, max_per_hour,
-                 [desc for _, desc in actionable])
-        _log_nudge([t for t, _ in actionable],
-                   [d for _, d in actionable], "", "suppressed_hourly_cap")
+        log.info("Delivery suppressed (hourly cap %d/%d): %s",
+                 count_1h, max_per_hour, all_descriptions[:3])
+        _log_nudge([t for t, _ in final_nudges],
+                   all_descriptions, "", "suppressed_hourly_cap")
         return
 
-    # C5: Three-step compose -> deliver -> confirm
-    nudge_types = [t for t, _ in actionable]
-    descriptions = [desc for _, desc in actionable]
+    # --- Minimum interval ---
+    state = load_state()
+    min_interval = getattr(config, "MONITOR_DELIVERY_MIN_INTERVAL_MIN", 30)
+    last_delivery = state.get("last_unified_delivery", "")
+    cutoff = (datetime.now() - timedelta(minutes=min_interval)).isoformat()
+    if last_delivery and last_delivery >= cutoff:
+        return
 
-    # Step 1: Compose message via daemon
+    # --- Compose grouped message ---
     try:
         import httpx
         resp = httpx.post(
             f"{DAEMON_URL}/nudge",
-            json={"triggers": descriptions},
+            json={"triggers": all_descriptions},
             headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
             timeout=300,
         )
     except Exception as e:
-        log.error("Nudge compose failed (network): %s", e)
-        _log_nudge(nudge_types, descriptions, "", "compose_failed")
-        return  # Do NOT update cooldowns — allow retry next cycle
+        log.error("Unified compose failed (network): %s", e)
+        _log_nudge([t for t, _ in final_nudges],
+                   all_descriptions, "", "compose_failed")
+        return
 
     if resp.status_code != 200:
-        log.error("Nudge compose failed (HTTP %s)", resp.status_code)
-        _log_nudge(nudge_types, descriptions, "", "compose_failed")
-        return  # Do NOT update cooldowns
+        log.error("Unified compose failed (HTTP %s)", resp.status_code)
+        _log_nudge([t for t, _ in final_nudges],
+                   all_descriptions, "", "compose_failed")
+        return
 
     message = resp.json().get("message", "")
     if not message:
-        log.warning("Nudge compose returned empty message")
-        _log_nudge(nudge_types, descriptions, "", "compose_failed")
-        return  # Do NOT update cooldowns
+        log.warning("Unified compose returned empty message")
+        _log_nudge([t for t, _ in final_nudges],
+                   all_descriptions, "", "compose_failed")
+        return
 
-    # Step 2: Deliver via SMS
+    # --- Deliver ---
     try:
         sms.send_long_to_owner(message)
     except Exception as e:
-        log.error("Nudge delivery failed: %s", e)
-        _log_nudge(nudge_types, descriptions, message, "delivery_failed")
-        return  # Do NOT update cooldowns
+        log.error("Unified delivery failed: %s", e)
+        _log_nudge([t for t, _ in final_nudges],
+                   all_descriptions, message, "delivery_failed")
+        return
 
-    # Step 3: Success — update cooldowns AND log
-    log.info("Nudge sent: %s", descriptions)
-    _log_nudge(nudge_types, descriptions, message, "sent")
+    # --- Success: update cooldowns, mark findings, log ---
+    log.info("Unified delivery: %d nudges + %d findings: %s",
+             len(final_nudges), len(final_findings), all_descriptions)
+    _log_nudge([t for t, _ in final_nudges],
+               all_descriptions, message, "sent")
 
     now_str = datetime.now().isoformat()
-    for nudge_type, _ in actionable:
+    for nudge_type, _ in final_nudges:
         cooldowns[nudge_type] = now_str
     save_cooldowns(cooldowns)
+
+    if final_findings:
+        finding_ids = [f["id"] for f in final_findings]
+        mark_delivered(finding_ids, "sms")
+
+    state["last_unified_delivery"] = now_str
+    save_state(state)
 
 
 # --- Fitbit Polling ---
@@ -823,9 +900,9 @@ def process_google_poll():
 
     state = load_state()
 
-    # Calendar: every 5 minutes
+    # Calendar: every 15 minutes (incremental sync via syncToken)
     last_cal = state.get("last_google_calendar_sync", "")
-    cal_cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+    cal_cutoff = (datetime.now() - timedelta(minutes=15)).isoformat()
     if not last_cal or last_cal < cal_cutoff:
         fetch_google_calendar()
         state["last_google_calendar_sync"] = datetime.now().isoformat()
@@ -857,13 +934,14 @@ def process_monitors():
     from monitors.vehicle import VehicleMonitor
     from monitors.legal import LegalMonitor
     from monitors.system import SystemMonitor
+    from monitors.gmail import GmailMonitor
 
     state = load_state()
     now = datetime.now()
 
     monitor_classes = [
         HealthMonitor, FitnessMonitor, VehicleMonitor,
-        LegalMonitor, SystemMonitor,
+        LegalMonitor, SystemMonitor, GmailMonitor,
     ]
 
     for cls in monitor_classes:
@@ -891,81 +969,115 @@ def process_monitors():
     save_state(state)
 
 
-def deliver_findings():
-    """Deliver undelivered monitor findings with urgency >= normal.
-
-    Uses the same Haiku composition as nudges but with independent frequency caps.
-    """
-    if not getattr(config, "MONITORS_ENABLED", True):
-        return
-
-    from monitors import get_undelivered, mark_delivered
-
-    # During quiet hours, only deliver urgent findings
-    min_urgency = "urgent" if is_quiet_hours() else "normal"
-    findings = get_undelivered(min_urgency=min_urgency)
-    if not findings:
-        return
-
-    # Frequency cap: min interval between deliveries
-    state = load_state()
-    min_interval = getattr(config, "MONITOR_DELIVERY_MIN_INTERVAL_MIN", 30)
-    last_delivery = state.get("last_finding_delivery", "")
-    cutoff = (datetime.now() - timedelta(minutes=min_interval)).isoformat()
-    if last_delivery and last_delivery >= cutoff:
-        return  # too soon
-
-    # Daily cap
-    max_per_day = getattr(config, "MONITOR_DELIVERY_MAX_PER_DAY", 4)
+def _any_briefing_or_debrief_today() -> bool:
+    """Check if any briefing or debrief was delivered today."""
+    today = datetime.now().strftime("%Y-%m-%d")
     try:
         with db.get_conn() as conn:
             row = conn.execute(
-                """SELECT COUNT(*) AS cnt FROM monitor_findings
-                   WHERE delivered = TRUE
-                   AND delivered_at > NOW() - INTERVAL '24 hours'"""
+                """SELECT 1 FROM request_log
+                   WHERE timestamp >= %s AND status = 'ok'
+                   AND (input ILIKE 'good morning%%'
+                        OR input ILIKE 'morning brief%%'
+                        OR input ILIKE 'briefing%%'
+                        OR input ILIKE 'start my day%%'
+                        OR input ILIKE 'good night%%'
+                        OR input ILIKE 'end my day%%'
+                        OR input ILIKE 'nightly debrief%%'
+                        OR input ILIKE 'evening debrief%%'
+                        OR input ILIKE 'wrap up my day%%')
+                   LIMIT 1""",
+                (today,),
             ).fetchone()
-        if row and row["cnt"] >= max_per_day:
-            log.info("[MONITOR] Finding delivery suppressed (daily cap %d reached)",
-                     max_per_day)
-            return
-    except Exception:
-        pass
+        return row is not None
+    except Exception as e:
+        log.error("Safety net briefing check failed: %s", e)
+        return True  # fail safe: assume briefing happened
 
-    # Compose message via daemon /nudge endpoint
-    descriptions = [f"[{f['urgency']}] {f['summary']}" for f in findings[:5]]
+
+def process_safety_net():
+    """11:50pm safety net: deliver suppressed Category A items if no briefings today.
+
+    If neither a morning briefing nor evening debrief was delivered today,
+    composes a consolidated daily summary of all Category A items.
+    """
+    from monitors import classify_category, get_undelivered
+
+    now = datetime.now()
+    if now.hour != 23 or now.minute < 50 or now.minute > 55:
+        return
+
+    state = load_state()
+    today = now.strftime("%Y-%m-%d")
+    if state.get("last_safety_net", "").startswith(today):
+        return  # already ran today
+
+    if _any_briefing_or_debrief_today():
+        state["last_safety_net"] = now.isoformat()
+        save_state(state)
+        return
+
+    # Collect Category A items
+    cat_a_descriptions = []
+
+    # Category A nudges that would trigger now
+    triggers = evaluate_nudges()
+    for nudge_type, description in triggers:
+        if classify_category(nudge_type, source="nudge") == "A":
+            cat_a_descriptions.append(description)
+
+    # Category A undelivered findings
+    findings = get_undelivered(min_urgency="info")
+    cat_a_finding_ids = []
+    for f in findings:
+        if classify_category(f.get("check_key", ""), source="finding") == "A":
+            cat_a_descriptions.append(f"[{f['urgency']}] {f['summary']}")
+            cat_a_finding_ids.append(f["id"])
+
+    if not cat_a_descriptions:
+        state["last_safety_net"] = now.isoformat()
+        save_state(state)
+        return
+
+    # Compose and deliver
     try:
         import httpx
         resp = httpx.post(
             f"{DAEMON_URL}/nudge",
-            json={"triggers": descriptions},
+            json={"triggers": cat_a_descriptions,
+                   "context": "This is the 11:50pm daily summary. "
+                              "The user did not request a briefing or debrief today. "
+                              "Frame this as a quick end-of-day summary."},
             headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
             timeout=300,
         )
         if resp.status_code != 200:
-            log.error("[MONITOR] Finding compose failed: HTTP %s", resp.status_code)
+            log.error("Safety net compose failed: HTTP %s", resp.status_code)
+            state["last_safety_net"] = now.isoformat()
+            save_state(state)
             return
 
         message = resp.json().get("message", "")
         if not message:
-            log.warning("[MONITOR] Finding compose returned empty message")
+            state["last_safety_net"] = now.isoformat()
+            save_state(state)
             return
-    except Exception as e:
-        log.error("[MONITOR] Finding compose failed: %s", e)
-        return
 
-    # Deliver
-    try:
         sms.send_long_to_owner(message)
-    except Exception as e:
-        log.error("[MONITOR] Finding delivery failed: %s", e)
-        return
 
-    # Mark delivered
-    finding_ids = [f["id"] for f in findings[:5]]
-    mark_delivered(finding_ids, "sms")
-    state["last_finding_delivery"] = datetime.now().isoformat()
+        _log_nudge(["safety_net"], cat_a_descriptions, message, "sent")
+
+        if cat_a_finding_ids:
+            from monitors import mark_delivered
+            mark_delivered(cat_a_finding_ids, "sms_safety_net")
+
+        log.info("Safety net delivered: %d items", len(cat_a_descriptions))
+
+    except Exception as e:
+        log.error("Safety net delivery failed: %s", e)
+
+    state["last_safety_net"] = now.isoformat()
     save_state(state)
-    log.info("[MONITOR] Delivered %d findings", len(finding_ids))
 
 
 # --- Deferred Delivery Processing ---
@@ -1024,6 +1136,19 @@ def main():
 
     Each job is isolated so one failure doesn't block the rest.
     """
+    # Write heartbeat FIRST — proves tick.py is running regardless of
+    # whether any jobs fire or nudges evaluate.
+    try:
+        with db.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO tick_state (key, value, updated_at)
+                   VALUES ('last_tick_run', %s, NOW())
+                   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()""",
+                (datetime.now().isoformat(),),
+            )
+    except Exception:
+        log.exception("Failed to write tick heartbeat")
+
     for job_name, job_fn in [
         ("timers", process_timers),
         ("location_reminders", check_location_reminders),
@@ -1031,7 +1156,7 @@ def main():
         ("fitbit_poll", process_fitbit_poll),
         ("google_poll", process_google_poll),
         ("monitors", process_monitors),
-        ("finding_delivery", deliver_findings),
+        ("safety_net", process_safety_net),
         ("deferred_deliveries", process_deferred_deliveries),
         ("webhook_cleanup", cleanup_processed_webhooks),
     ]:
@@ -1069,8 +1194,8 @@ def main():
                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()""",
                 (datetime.now().isoformat(),),
             )
-        # Lock released on transaction commit — now run the evaluation
-        run_nudge_evaluation()
+        # Lock released on transaction commit — now run unified delivery
+        run_unified_delivery()
     except Exception:
         log.exception("Tick job 'nudge_evaluation' failed")
 

@@ -21,7 +21,8 @@ import db
 import fitbit
 import fitbit_store
 import google_client
-import google_store
+import gmail_store
+import calendar_store as _calendar_store
 import location_store
 import redis_client
 import sms
@@ -396,24 +397,37 @@ async def fitbit_webhook(request: Request):
 
 @app.post("/google/calendar/sync")
 async def google_calendar_sync(request: Request):
-    """Manually trigger a Google Calendar sync. Fetches next 7 days of events."""
+    """Incremental Google Calendar sync using syncToken."""
     verify_auth(request)
     client = google_client.get_client()
-    now = datetime.now().astimezone().isoformat()
-    future = (datetime.now() + timedelta(days=7)).astimezone().isoformat()
-    events = await client.calendar_list_events(time_min=now, time_max=future)
-    google_store.save_calendar_events(events)
-    return {"status": "ok", "events_synced": len(events)}
+    sync_token = _calendar_store.get_sync_token()
+    events, new_token = await client.calendar_list_events_incremental(sync_token)
+    if events is not None:
+        _calendar_store.sync_from_google(events, new_token)
+    return {"status": "ok", "events_synced": len(events),
+            "incremental": sync_token is not None}
 
 
 @app.post("/google/gmail/sync")
 async def google_gmail_sync(request: Request):
-    """Manually trigger a Gmail sync. Fetches last 24 hours of messages."""
+    """Gmail sync — fetches recent messages with full bodies."""
     verify_auth(request)
     client = google_client.get_client()
-    messages = await client.gmail_fetch_recent(hours=24)
-    google_store.save_gmail_messages(messages)
+    messages = await client.gmail_fetch_recent(hours=24, full_body=True)
+    gmail_store.save_emails(messages)
     return {"status": "ok", "messages_synced": len(messages)}
+
+
+@app.post("/email/search")
+async def email_search(request: Request):
+    """Search emails by keyword."""
+    verify_auth(request)
+    body = await request.json()
+    query = body.get("query", "")
+    if not query:
+        raise HTTPException(status_code=400, detail="Missing query")
+    results = gmail_store.search_emails(query, limit=20)
+    return {"results": results, "count": len(results)}
 
 
 @app.post("/ask", response_model=AskResponse)

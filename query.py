@@ -29,6 +29,7 @@ import health_store
 import legal_store
 import nutrition_store
 import vehicle_store
+import gmail_store
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +202,29 @@ def cmd_conversations(args):
     return format_conversations(rows, days, search)
 
 
+def format_email(results: list[dict]) -> str:
+    if not results:
+        return "No emails found matching the criteria."
+    lines = [f"Email search ({len(results)} results):"]
+    for r in results:
+        sender = r.get("from_name") or r.get("from_address", "?")
+        subject = r.get("subject", "(no subject)")
+        ts = r.get("timestamp", "")
+        date_str = ts[:10] if len(ts) >= 10 else ""
+        lines.append(f"  [{date_str}] {sender}: {subject}")
+    return "\n".join(lines)
+
+
+def cmd_email(args):
+    if args.search:
+        results = gmail_store.search_emails(args.search, limit=args.limit)
+    elif args.sender:
+        results = gmail_store.search_emails(args.sender, limit=args.limit)
+    else:
+        results = gmail_store.get_recent(hours=args.days * 24, limit=args.limit)
+    return format_email(results)
+
+
 # ---------------------------------------------------------------------------
 # Self-reporting for tool traces
 # ---------------------------------------------------------------------------
@@ -259,6 +283,13 @@ def main(argv=None):
     p_conv.add_argument("--days", type=int, default=7)
     p_conv.add_argument("--search", type=str, default=None)
 
+    # email
+    p_email = subparsers.add_parser("email", help="Search emails")
+    p_email.add_argument("--search", type=str, default=None)
+    p_email.add_argument("--from", dest="sender", type=str, default=None)
+    p_email.add_argument("--days", type=int, default=7)
+    p_email.add_argument("--limit", type=int, default=20)
+
     args = parser.parse_args(argv)
 
     handlers = {
@@ -268,6 +299,7 @@ def main(argv=None):
         "legal": cmd_legal,
         "calendar": cmd_calendar,
         "conversations": cmd_conversations,
+        "email": cmd_email,
     }
 
     try:
