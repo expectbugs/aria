@@ -118,6 +118,89 @@ def _log_nudge(nudge_types: list[str], descriptions: list[str],
         log.error("Failed to write nudge_log: %s", e)
 
 
+# --- Sync Delivery Dispatch ---
+
+def _sync_deliver(text: str, method: str,
+                  sms_target: str | None = None) -> tuple[bool, str]:
+    """Synchronous delivery dispatch for cron-invoked code.
+
+    Handles voice (via daemon /ask/audio + push_audio), SMS, and image.
+    Voice falls back to SMS on push failure or TTS failure.
+    Callers handle evaluate/log/defer — this only dispatches the action.
+
+    Returns (success: bool, actual_method: str).
+    actual_method may differ from method if voice fell back to SMS.
+    """
+    import uuid as _uuid
+
+    if method == "voice":
+        try:
+            import httpx
+            resp = httpx.post(
+                f"{DAEMON_URL}/ask/audio",
+                json={"text": text},
+                headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+                timeout=60,
+            )
+            if resp.status_code == 200:
+                wav_path = config.DATA_DIR / f"voice_{_uuid.uuid4().hex[:8]}.wav"
+                wav_path.write_bytes(resp.content)
+                import push_audio
+                try:
+                    if push_audio.push_audio(str(wav_path)):
+                        return True, "voice"
+                    # Voice push failed — fall back to SMS
+                    log.warning("Voice push failed, falling back to SMS")
+                finally:
+                    try:
+                        wav_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            else:
+                log.error("TTS via daemon failed (HTTP %s), falling back to SMS",
+                          resp.status_code)
+        except Exception as e:
+            log.error("Voice delivery failed: %s — falling back to SMS", e)
+        # Voice failed at some point — fall back to SMS
+        try:
+            if sms_target:
+                sms.send_long_sms(sms_target, text)
+            else:
+                sms.send_to_owner(text)
+            return True, "sms"
+        except Exception as e:
+            log.error("SMS fallback also failed: %s", e)
+            return False, "sms"
+
+    elif method == "sms":
+        try:
+            if sms_target:
+                sms.send_long_sms(sms_target, text)
+            else:
+                sms.send_to_owner(text)
+            return True, "sms"
+        except Exception as e:
+            log.error("SMS delivery failed: %s", e)
+            return False, "sms"
+
+    elif method == "image":
+        try:
+            from sms import _render_sms_image
+            import push_image
+            import os
+            img_path = _render_sms_image(text, header="ARIA")
+            push_image.push_image(img_path, caption="ARIA")
+            os.unlink(img_path)
+            return True, "image"
+        except Exception as e:
+            log.error("Image delivery failed: %s", e)
+            return False, "image"
+
+    else:
+        log.warning("Unknown delivery method for sync dispatch: %s", method)
+        return False, method
+
+
 # --- Timer Execution ---
 
 def fire_timer(timer: dict):
@@ -125,13 +208,15 @@ def fire_timer(timer: dict):
 
     Marks timer complete BEFORE delivery attempt. If delivery fails,
     logs loudly but does not retry (prevents infinite retry loops).
+    Handles all delivery methods via _sync_deliver().
     """
     import delivery_engine as _de
     hint = timer.get("delivery", "sms")
     message = timer.get("message", timer.get("label", "Timer fired"))
     priority = timer.get("priority", "gentle")
-    decision = _de.evaluate("timer", priority, "timer", hint)
-    _de.log_decision(decision, "timer", "timer", hint)
+    state = _de.get_user_state()
+    decision = _de.evaluate("timer", priority, "timer", hint, _state=state)
+    _de.log_decision(decision, "timer", "timer", hint, _state=state)
     delivery = decision.method
 
     # Skip quiet hours unless urgent
@@ -143,39 +228,12 @@ def fire_timer(timer: dict):
     timer_store.complete_timer(timer["id"])
     log.info("Timer fired [%s] %s: %s", delivery, timer["id"], timer["label"])
 
-    if delivery == "voice":
-        # Generate TTS via daemon and push audio to phone
-        try:
-            import httpx
-            resp = httpx.post(
-                f"{DAEMON_URL}/ask/audio",
-                json={"text": message},
-                headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
-                timeout=60,
-            )
-            if resp.status_code == 200:
-                # Save WAV and push to phone
-                wav_path = config.DATA_DIR / "timer_audio.wav"
-                wav_path.write_bytes(resp.content)
-                import push_audio
-                if not push_audio.push_audio(str(wav_path)):
-                    # Voice push failed, fall back to SMS
-                    log.warning("Voice push failed for timer %s, falling back to SMS",
-                                timer["id"])
-                    sms.send_to_owner(message)
-            else:
-                log.error("TTS failed for timer %s: %s", timer["id"], resp.status_code)
-                sms.send_to_owner(message)
-        except Exception as e:
-            log.error("DELIVERY FAILED for timer %s: %s (timer already marked complete)",
-                      timer["id"], e)
+    if delivery == "defer":
+        _de.queue_deferred(message, "timer", priority, "timer", decision.reason)
     else:
-        # SMS delivery
-        try:
-            sms.send_to_owner(message)
-        except Exception as e:
-            log.error("DELIVERY FAILED for timer %s: %s (timer already marked complete)",
-                      timer["id"], e)
+        success, actual = _sync_deliver(message, delivery)
+        if not success:
+            log.error("DELIVERY FAILED for timer %s (already marked complete)", timer["id"])
 
     return True
 
@@ -611,7 +669,6 @@ def send_exercise_nudge(triggers: list[str], context: str):
     """Send an exercise coaching nudge via VOICE (not SMS)."""
     try:
         import httpx
-        # Get Claude to compose the coaching message
         resp = httpx.post(
             f"{DAEMON_URL}/nudge",
             json={"triggers": triggers, "context": context},
@@ -621,26 +678,8 @@ def send_exercise_nudge(triggers: list[str], context: str):
         if resp.status_code == 200:
             message = resp.json().get("message", "")
             if message:
-                # Generate TTS and push voice to phone
-                tts_resp = httpx.post(
-                    f"{DAEMON_URL}/ask/audio",
-                    json={"text": message},
-                    headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
-                    timeout=60,
-                )
-                if tts_resp.status_code == 200:
-                    wav_path = config.DATA_DIR / "exercise_audio.wav"
-                    wav_path.write_bytes(tts_resp.content)
-                    import push_audio
-                    if push_audio.push_audio(str(wav_path)):
-                        log.info("Exercise coaching (voice): %s", triggers)
-                    else:
-                        # Fall back to SMS if voice push fails
-                        sms.send_long_to_owner(message)
-                        log.info("Exercise coaching (SMS fallback): %s", triggers)
-                else:
-                    sms.send_long_to_owner(message)
-                    log.info("Exercise coaching (SMS, TTS failed): %s", triggers)
+                success, method = _sync_deliver(message, "voice")
+                log.info("Exercise coaching (%s): %s", method, triggers)
     except Exception as e:
         log.error("Exercise nudge failed: %s", e)
 
@@ -873,7 +912,7 @@ def process_deferred_deliveries():
     """Attempt to deliver queued deferred items when user state allows.
 
     Re-evaluates user state for each item. If the engine no longer returns
-    "defer", delivers using the new method. Expired items are cleaned up.
+    "defer", delivers via _sync_deliver(). Expired items are cleaned up.
     """
     import delivery_engine as _de
 
@@ -891,51 +930,29 @@ def process_deferred_deliveries():
         if decision.method == "defer":
             continue  # still not a good time
 
-        content = item["content"]
-        delivered = False
-
-        if decision.method == "voice":
-            try:
-                import httpx
-                resp = httpx.post(
-                    f"{DAEMON_URL}/ask/audio",
-                    json={"text": content},
-                    headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
-                    timeout=60,
-                )
-                if resp.status_code == 200:
-                    wav_path = config.DATA_DIR / "deferred_audio.wav"
-                    wav_path.write_bytes(resp.content)
-                    import push_audio
-                    delivered = push_audio.push_audio(str(wav_path))
-            except Exception as e:
-                log.error("[DELIVERY] Deferred voice delivery failed: %s", e)
-
-        elif decision.method == "sms":
-            try:
-                sms.send_long_to_owner(content)
-                delivered = True
-            except Exception as e:
-                log.error("[DELIVERY] Deferred SMS delivery failed: %s", e)
-
-        elif decision.method == "image":
-            try:
-                from sms import _render_sms_image
-                import push_image
-                import os
-                img_path = _render_sms_image(content, header="ARIA")
-                delivered = push_image.push_image(img_path, caption="ARIA (deferred)")
-                os.unlink(img_path)
-            except Exception as e:
-                log.error("[DELIVERY] Deferred image delivery failed: %s", e)
-
+        delivered, actual = _sync_deliver(item["content"], decision.method)
         if delivered:
-            _de.mark_deferred_delivered(item["id"], decision.method)
+            _de.mark_deferred_delivered(item["id"], actual)
             log.info("[DELIVERY] Deferred item %d delivered via %s",
-                     item["id"], decision.method)
+                     item["id"], actual)
 
     # Clean up expired items
     _de.cleanup_expired_deferred()
+
+
+# --- Cleanup Jobs ---
+
+def cleanup_processed_webhooks():
+    """Delete webhook idempotency records older than 7 days."""
+    try:
+        with db.get_conn() as conn:
+            result = conn.execute(
+                "DELETE FROM processed_webhooks WHERE processed_at < NOW() - INTERVAL '7 days'"
+            )
+            if result.rowcount:
+                log.info("Cleaned up %d old webhook records", result.rowcount)
+    except Exception as e:
+        log.error("Webhook cleanup failed: %s", e)
 
 
 # --- Main ---
@@ -953,6 +970,7 @@ def main():
         ("monitors", process_monitors),
         ("finding_delivery", deliver_findings),
         ("deferred_deliveries", process_deferred_deliveries),
+        ("webhook_cleanup", cleanup_processed_webhooks),
     ]:
         try:
             job_fn()

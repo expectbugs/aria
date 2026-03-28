@@ -123,7 +123,7 @@ def get_tool_traces(days: int | None = None,
             conditions = []
             params = []
             if days is not None:
-                conditions.append("timestamp >= NOW() - INTERVAL '%s days'")
+                conditions.append("timestamp >= NOW() - %s * INTERVAL '1 day'")
                 params.append(days)
             if tool_name is not None:
                 conditions.append("tool_name = %s")

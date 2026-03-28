@@ -305,8 +305,9 @@ def main():
         log.info("Alert suppressed (quiet hours) for: %s", ", ".join(failed_check_names))
         return
 
-    # Check cooldown
-    failure_key = "|".join(sorted(failures))
+    # Check cooldown — key on check names (not error text) so slight message
+    # variations don't bypass the cooldown period
+    failure_key = "|".join(sorted(failed_check_names))
     if should_alert(state, failure_key):
         delivered = push_alert(config.HOST_NAME, failures)
         if delivered:

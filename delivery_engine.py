@@ -13,8 +13,6 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-import psycopg.types.json
-
 import config
 import db
 import location_store
@@ -174,7 +172,8 @@ def get_user_state() -> UserState:
 def evaluate(content_type: str = "response",
              priority: str = "normal",
              source: str = "voice",
-             hint: str | None = None) -> DeliveryDecision:
+             hint: str | None = None,
+             _state: UserState | None = None) -> DeliveryDecision:
     """Decide how to deliver content based on user state.
 
     Pure function — no side effects. Callers handle actual delivery.
@@ -184,6 +183,8 @@ def evaluate(content_type: str = "response",
         priority: urgent, normal, gentle
         source: voice, sms, file, timer, nudge, monitor_finding, watch
         hint: ARIA's set_delivery preference (may be overridden for safety)
+        _state: pre-fetched UserState (avoids redundant DB queries when caller
+                also needs the state for logging)
     """
     if not getattr(config, "DELIVERY_ENGINE_ENABLED", True):
         # Engine disabled — return source-default or hint
@@ -192,7 +193,7 @@ def evaluate(content_type: str = "response",
             reason="delivery engine disabled — using default",
         )
 
-    state = get_user_state()
+    state = _state if _state is not None else get_user_state()
 
     # --- Sleeping ---
     if state.activity == "sleeping":
@@ -253,12 +254,13 @@ def evaluate(content_type: str = "response",
 
 
 def log_decision(decision: DeliveryDecision, content_type: str,
-                 source: str, hint: str | None):
+                 source: str, hint: str | None,
+                 _state: UserState | None = None):
     """Log a delivery decision to the delivery_log table."""
     if not getattr(config, "DELIVERY_LOG_ENABLED", True):
         return
     try:
-        state = get_user_state()
+        state = _state if _state is not None else get_user_state()
         with db.get_conn() as conn:
             conn.execute(
                 """INSERT INTO delivery_log
@@ -352,3 +354,97 @@ def update_device_state(device: str, connected: bool,
             )
     except Exception as e:
         log.error("[DELIVERY] Failed to update device state for %s: %s", device, e)
+
+
+# --- Delivery Execution ---
+
+async def execute_delivery(
+    response_text: str,
+    content_type: str = "response",
+    priority: str = "normal",
+    source: str = "voice",
+    hint: str | None = None,
+    sms_target: str | None = None,
+    push_voice: bool = True,
+) -> dict:
+    """Evaluate delivery, execute it, log decision. Single get_user_state() call.
+
+    Encapsulates the full delivery cycle: decide → execute → log. Uses lazy
+    imports for TTS/push modules to keep the module lightweight at import time.
+
+    Args:
+        response_text: the text to deliver
+        content_type: response, nudge, timer, monitor_finding, task_completion
+        priority: urgent, normal, gentle
+        source: voice, sms, file, timer, nudge, monitor_finding, watch
+        hint: ARIA's set_delivery preference (may be overridden for safety)
+        sms_target: phone number for SMS delivery (None → owner phone)
+        push_voice: True = push audio to phone (proactive/SMS flows)
+                    False = return audio bytes only (task flows where phone polls)
+
+    Returns: {"method": str, "audio": bytes, "reason": str}
+    """
+    import os
+    import uuid
+
+    # Decide — single get_user_state() call shared with log
+    state = get_user_state()
+    decision = evaluate(content_type, priority, source, hint, _state=state)
+    log_decision(decision, content_type, source, hint, _state=state)
+
+    method = decision.method
+    audio = b""
+
+    if method == "defer":
+        queue_deferred(response_text, content_type, priority, source, decision.reason)
+
+    elif method == "sms":
+        try:
+            import sms as _sms
+            target = sms_target or config.OWNER_PHONE_NUMBER
+            _sms.send_long_sms(target, response_text)
+        except Exception as e:
+            log.error("[DELIVERY] SMS delivery failed: %s", e)
+
+    elif method == "image":
+        try:
+            from sms import _render_sms_image
+            import push_image as _pi
+            img_path = _render_sms_image(response_text, header="ARIA")
+            _pi.push_image(img_path, caption="ARIA")
+            os.unlink(img_path)
+        except Exception as e:
+            log.error("[DELIVERY] Image delivery failed: %s", e)
+
+    elif method in ("voice", "glasses"):
+        try:
+            from tts import _generate_tts
+            audio = await _generate_tts(response_text)
+
+            if push_voice:
+                # Save to UUID temp file and push to phone
+                wav_path = config.DATA_DIR / f"voice_{uuid.uuid4().hex[:8]}.wav"
+                wav_path.write_bytes(audio)
+                try:
+                    import push_audio as _pa
+                    if not _pa.push_audio(str(wav_path)):
+                        # Voice push failed — fall back to SMS
+                        log.warning("[DELIVERY] Voice push failed, falling back to SMS")
+                        try:
+                            import sms as _sms
+                            target = sms_target or config.OWNER_PHONE_NUMBER
+                            _sms.send_long_sms(target, response_text)
+                            method = "sms"
+                        except Exception as se:
+                            log.error("[DELIVERY] SMS fallback also failed: %s", se)
+                finally:
+                    try:
+                        os.unlink(str(wav_path))
+                    except OSError:
+                        pass
+            # When push_voice=False, audio bytes are returned for the caller
+            # to store in the _tasks dict (phone polls /ask/result for them)
+        except Exception as e:
+            log.error("[DELIVERY] Voice delivery failed: %s", e)
+
+    return {"method": method, "audio": audio, "reason": decision.reason}

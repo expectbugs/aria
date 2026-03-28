@@ -79,7 +79,10 @@ def get_recent_turns(n: int | None = None) -> list[dict]:
         # Prepend timestamp so ARIA can see time gaps between messages
         ts = row.get("timestamp")
         if ts:
-            ts = db.serialize_row({"t": ts})["t"]  # convert to naive local string
+            if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+                ts = ts.astimezone().replace(tzinfo=None)
+            if hasattr(ts, 'isoformat'):
+                ts = ts.isoformat()
             user_text = f"[{ts}] {user_text}"
 
         messages.append({"role": "user", "content": user_text})

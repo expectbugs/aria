@@ -47,11 +47,12 @@ def _mock_delivery_engine():
     Tick tests focus on timer/nudge logic, not delivery routing."""
     from delivery_engine import DeliveryDecision
     def _passthrough(content_type="response", priority="normal",
-                     source="voice", hint=None):
+                     source="voice", hint=None, _state=None):
         method = hint or ("sms" if source == "sms" else "voice")
         return DeliveryDecision(method=method, reason="test passthrough")
     with patch("delivery_engine.evaluate", side_effect=_passthrough), \
-         patch("delivery_engine.log_decision"):
+         patch("delivery_engine.log_decision"), \
+         patch("delivery_engine.get_user_state", return_value=MagicMock()):
         yield
 
 

@@ -248,31 +248,41 @@ class TestVo2maxSummary:
 
 
 class TestBriefingContext:
-    @patch("fitbit_store.get_vo2max_summary")
-    @patch("fitbit_store.get_temperature_summary")
-    @patch("fitbit_store.get_breathing_rate_summary")
-    @patch("fitbit_store.get_activity_summary")
-    @patch("fitbit_store.get_spo2_summary")
-    @patch("fitbit_store.get_hrv_summary")
-    @patch("fitbit_store.get_heart_summary")
-    @patch("fitbit_store.get_sleep_summary")
-    def test_builds_full_context(self, mock_sleep, mock_hr, mock_hrv,
-                                  mock_spo2, mock_act, mock_br, mock_temp,
-                                  mock_vo2):
-        mock_sleep.return_value = {
-            "duration_hours": 7.0, "deep_minutes": 60, "rem_minutes": 120,
-            "light_minutes": 200, "wake_minutes": 40, "efficiency": 88,
+    @patch("fitbit_store.get_snapshot")
+    def test_builds_full_context(self, mock_snap):
+        mock_snap.return_value = {
+            "sleep": {
+                "sleep": [{
+                    "isMainSleep": True,
+                    "minutesAsleep": 420,
+                    "efficiency": 88,
+                    "startTime": "2026-03-19T23:00:00",
+                    "endTime": "2026-03-20T06:00:00",
+                    "levels": {"summary": {
+                        "deep": {"minutes": 60},
+                        "rem": {"minutes": 120},
+                        "light": {"minutes": 200},
+                        "wake": {"minutes": 40},
+                    }},
+                }],
+            },
+            "heart_rate": {"value": {"restingHeartRate": 65, "heartRateZones": []}},
+            "hrv": {"value": {"dailyRmssd": 35.5, "deepRmssd": 42.0}},
+            "spo2": {"value": {"avg": 96.5, "min": 94, "max": 99}},
+            "activity": {
+                "steps": 8500,
+                "distances": [{"activity": "total", "distance": 5.2}],
+                "caloriesOut": 2400,
+                "activityCalories": 500,
+                "fairlyActiveMinutes": 15,
+                "veryActiveMinutes": 20,
+                "sedentaryMinutes": 600,
+                "floors": 10,
+            },
+            "breathing_rate": {"value": {"breathingRate": 16.0}},
+            "temperature": {"value": {"nightlyRelative": -0.3}},
+            "vo2max": {"value": {"vo2Max": 38.5}},
         }
-        mock_hr.return_value = {"resting_hr": 65, "zones": []}
-        mock_hrv.return_value = {"rmssd": 35.5, "deep_rmssd": 42.0}
-        mock_spo2.return_value = {"avg": 96.5, "min": 94, "max": 99}
-        mock_act.return_value = {
-            "steps": 8500, "distance_miles": 5.2,
-            "calories_total": 2400, "active_minutes": 35,
-        }
-        mock_br.return_value = {"rate": 16.0}
-        mock_temp.return_value = {"nightly_relative": -0.3}
-        mock_vo2.return_value = {"vo2max": 38.5}
 
         ctx = fitbit_store.get_briefing_context("2026-03-20")
         assert "Sleep: 7.0h" in ctx
@@ -284,25 +294,9 @@ class TestBriefingContext:
         assert "Skin temp variation: -0.3" in ctx
         assert "VO2 Max: 38.5" in ctx
 
-    @patch("fitbit_store.get_vo2max_summary")
-    @patch("fitbit_store.get_temperature_summary")
-    @patch("fitbit_store.get_breathing_rate_summary")
-    @patch("fitbit_store.get_activity_summary")
-    @patch("fitbit_store.get_spo2_summary")
-    @patch("fitbit_store.get_hrv_summary")
-    @patch("fitbit_store.get_heart_summary")
-    @patch("fitbit_store.get_sleep_summary")
-    def test_empty_data(self, mock_sleep, mock_hr, mock_hrv,
-                        mock_spo2, mock_act, mock_br, mock_temp,
-                        mock_vo2):
-        mock_sleep.return_value = None
-        mock_hr.return_value = None
-        mock_hrv.return_value = None
-        mock_spo2.return_value = None
-        mock_act.return_value = None
-        mock_br.return_value = None
-        mock_temp.return_value = None
-        mock_vo2.return_value = None
+    @patch("fitbit_store.get_snapshot")
+    def test_empty_data(self, mock_snap):
+        mock_snap.return_value = None
         assert fitbit_store.get_briefing_context("2026-03-20") == ""
 
 

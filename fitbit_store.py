@@ -236,11 +236,144 @@ def get_vo2max_summary(day: str = "today") -> dict | None:
     }
 
 
+def _sleep_from_snap(snap: dict) -> dict | None:
+    """Extract sleep summary from an in-memory snapshot (no DB query)."""
+    if not snap or not snap.get("sleep"):
+        return None
+    sleep_data = snap["sleep"]
+    sleeps = sleep_data.get("sleep", [])
+    if not sleeps:
+        return None
+    main = next((s for s in sleeps if s.get("isMainSleep")), sleeps[0])
+    summary = main.get("levels", {}).get("summary", {})
+    total_min = _safe_int(main.get("minutesAsleep"))
+    return {
+        "total_minutes": total_min,
+        "deep_minutes": _safe_int(summary.get("deep", {}).get("minutes")),
+        "light_minutes": _safe_int(summary.get("light", {}).get("minutes")),
+        "rem_minutes": _safe_int(summary.get("rem", {}).get("minutes")),
+        "wake_minutes": _safe_int(summary.get("wake", {}).get("minutes")),
+        "efficiency": _safe_int(main.get("efficiency")),
+        "start_time": main.get("startTime", ""),
+        "end_time": main.get("endTime", ""),
+        "duration_hours": round(total_min / 60, 1),
+    }
+
+
+def _heart_from_snap(snap: dict) -> dict | None:
+    """Extract heart rate summary from an in-memory snapshot."""
+    if not snap or not snap.get("heart_rate"):
+        return None
+    hr = snap["heart_rate"]
+    value = hr.get("value", {})
+    rhr = value.get("restingHeartRate")
+    return {
+        "resting_hr": _safe_int(rhr) if rhr is not None else None,
+        "zones": [
+            {"name": z.get("name", ""),
+             "minutes": _safe_int(z.get("minutes")),
+             "calories_out": _safe_float(z.get("caloriesOut"))}
+            for z in value.get("heartRateZones", [])
+        ],
+    }
+
+
+def _hrv_from_snap(snap: dict) -> dict | None:
+    """Extract HRV summary from an in-memory snapshot."""
+    if not snap or not snap.get("hrv"):
+        return None
+    value = snap["hrv"].get("value", {})
+    if not value:
+        return None
+    rmssd = value.get("dailyRmssd")
+    deep = value.get("deepRmssd")
+    return {
+        "rmssd": _safe_float(rmssd) if rmssd is not None else None,
+        "deep_rmssd": _safe_float(deep) if deep is not None else None,
+    }
+
+
+def _spo2_from_snap(snap: dict) -> dict | None:
+    """Extract SpO2 from an in-memory snapshot."""
+    if not snap or not snap.get("spo2"):
+        return None
+    value = snap["spo2"].get("value", {})
+    if not value:
+        return None
+    return {
+        "avg": _safe_float(value.get("avg")) if value.get("avg") is not None else None,
+        "min": _safe_float(value.get("min")) if value.get("min") is not None else None,
+        "max": _safe_float(value.get("max")) if value.get("max") is not None else None,
+    }
+
+
+def _activity_from_snap(snap: dict) -> dict | None:
+    """Extract activity summary from an in-memory snapshot."""
+    if not snap or not snap.get("activity"):
+        return None
+    act = snap["activity"]
+    return {
+        "steps": _safe_int(act.get("steps")),
+        "distance_miles": round(
+            sum(_safe_float(d.get("distance")) for d in act.get("distances", [])
+                if d.get("activity") == "total"), 2
+        ),
+        "calories_total": _safe_int(act.get("caloriesOut")),
+        "calories_active": _safe_int(act.get("activityCalories")),
+        "active_minutes": (
+            _safe_int(act.get("fairlyActiveMinutes")) +
+            _safe_int(act.get("veryActiveMinutes"))
+        ),
+        "sedentary_minutes": _safe_int(act.get("sedentaryMinutes")),
+        "floors": _safe_int(act.get("floors")),
+    }
+
+
+def _breathing_from_snap(snap: dict) -> dict | None:
+    """Extract breathing rate from an in-memory snapshot."""
+    if not snap or not snap.get("breathing_rate"):
+        return None
+    value = snap["breathing_rate"].get("value", {})
+    if not value:
+        return None
+    rate = value.get("breathingRate")
+    return {"rate": _safe_float(rate) if rate is not None else None}
+
+
+def _temperature_from_snap(snap: dict) -> dict | None:
+    """Extract skin temperature from an in-memory snapshot."""
+    if not snap or not snap.get("temperature"):
+        return None
+    value = snap["temperature"].get("value", {})
+    if not value:
+        return None
+    relative = value.get("nightlyRelative")
+    return {"nightly_relative": _safe_float(relative) if relative is not None else None}
+
+
+def _vo2max_from_snap(snap: dict) -> dict | None:
+    """Extract VO2 Max from an in-memory snapshot."""
+    if not snap or not snap.get("vo2max"):
+        return None
+    value = snap["vo2max"].get("value", {})
+    if not value:
+        return None
+    score = value.get("vo2Max")
+    return {"vo2max": _safe_float(score) if score is not None else None}
+
+
 def get_briefing_context(day: str = "today") -> str:
-    """Build a human-readable Fitbit summary for ARIA context injection."""
+    """Build a human-readable Fitbit summary for ARIA context injection.
+
+    Single DB query — fetches the snapshot once, extracts all fields in Python.
+    """
+    snap = get_snapshot(day)
+    if not snap:
+        return ""
+
     parts = []
 
-    sleep = get_sleep_summary(day)
+    sleep = _sleep_from_snap(snap)
     if sleep:
         parts.append(
             f"Sleep: {sleep['duration_hours']}h total "
@@ -249,21 +382,21 @@ def get_briefing_context(day: str = "today") -> str:
             f"— efficiency {sleep['efficiency']}%"
         )
 
-    hr = get_heart_summary(day)
+    hr = _heart_from_snap(snap)
     if hr and hr.get("resting_hr"):
         parts.append(f"Resting heart rate: {hr['resting_hr']} bpm")
 
-    hrv = get_hrv_summary(day)
+    hrv = _hrv_from_snap(snap)
     if hrv and hrv.get("rmssd"):
         parts.append(f"HRV (RMSSD): {hrv['rmssd']:.1f}ms")
         if hrv.get("deep_rmssd"):
             parts.append(f"HRV during deep sleep: {hrv['deep_rmssd']:.1f}ms")
 
-    spo2 = get_spo2_summary(day)
+    spo2 = _spo2_from_snap(snap)
     if spo2 and spo2.get("avg"):
         parts.append(f"SpO2: avg {spo2['avg']}%, min {spo2['min']}%, max {spo2['max']}%")
 
-    activity = get_activity_summary(day)
+    activity = _activity_from_snap(snap)
     if activity:
         parts.append(
             f"Activity: {activity['steps']:,} steps, "
@@ -272,15 +405,15 @@ def get_briefing_context(day: str = "today") -> str:
             f"{activity['active_minutes']} active min"
         )
 
-    br = get_breathing_rate_summary(day)
+    br = _breathing_from_snap(snap)
     if br and br.get("rate") is not None:
         parts.append(f"Breathing rate: {br['rate']:.1f} breaths/min")
 
-    temp = get_temperature_summary(day)
+    temp = _temperature_from_snap(snap)
     if temp and temp.get("nightly_relative") is not None:
         parts.append(f"Skin temp variation: {temp['nightly_relative']:.1f}°F from baseline")
 
-    vo2 = get_vo2max_summary(day)
+    vo2 = _vo2max_from_snap(snap)
     if vo2 and vo2.get("vo2max") is not None:
         parts.append(f"VO2 Max: {vo2['vo2max']:.1f} mL/kg/min")
 

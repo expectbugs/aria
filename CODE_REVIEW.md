@@ -41,6 +41,17 @@ Second full audit, covering all changes since v0.3.8 including the PostgreSQL mi
 | D5 | No request log rotation | v0.4.0 |
 | D6 | Dead config `PHONE_IMAGE_DIR` | v0.3.9 |
 | D7 | No graceful shutdown | v0.4.0 |
+| C1(v2) | `_process_task` ignores delivery hint from set_delivery ACTION | v0.6.1 |
+| C2(v2) | ACTION block stripping regex vulnerable to `-->` in JSON values | v0.6.1 |
+| C3(v2) | `log_decision()` re-calls `get_user_state()` after `evaluate()` | v0.6.1 |
+| C4(v2) | Race condition on hardcoded WAV file paths | v0.6.1 |
+| M1(v2) | Delivery routing duplicated across 5 handlers | v0.6.1 |
+| M2(v2) | `processed_webhooks` table grows unbounded | v0.6.1 |
+| M3(v2) | Redis task hashes persist forever | v0.6.1 |
+| M4(v2) | `training_store.py` SQL interval parameterization broken | v0.6.1 |
+| M5(v2) | Fitbit briefing context queries DB 8 times for same day | v0.6.1 |
+| M6(v2) | `monitor.py` cooldown keyed on error text, not check names | v0.6.1 |
+| M7(v2) | `fire_timer()` only handles voice and SMS (ignores image/defer) | v0.6.1 |
 
 ---
 

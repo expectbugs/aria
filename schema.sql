@@ -201,6 +201,7 @@ CREATE TABLE IF NOT EXISTS processed_webhooks (
     message_sid TEXT PRIMARY KEY,
     processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_processed_webhooks_at ON processed_webhooks(processed_at);
 
 -- Monitor state (replaces monitor_state.json — all stores must use PostgreSQL)
 CREATE TABLE IF NOT EXISTS monitor_state (

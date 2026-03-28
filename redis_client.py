@@ -184,6 +184,7 @@ def complete_task(task_id: str, result: str | None = None, error: str | None = N
 
         client.hset(f"{prefix}task:{task_id}", mapping=updates)
         client.srem(f"{prefix}active_tasks", task_id)
+        client.expire(f"{prefix}task:{task_id}", 86400)  # 24h TTL
 
         # Publish completion notification
         import json

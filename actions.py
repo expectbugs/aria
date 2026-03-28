@@ -87,8 +87,13 @@ class ActionResult:
 _CODE_FENCE = re.compile(r'```.*?```', re.DOTALL)
 
 
-def _extract_action_jsons(text: str) -> list[str]:
-    """Extract ACTION block JSON strings using balanced-brace matching.
+def _extract_action_blocks(text: str) -> list[tuple[str, int, int]]:
+    """Extract ACTION blocks with span positions using balanced-brace matching.
+
+    Returns list of (json_str, span_start, span_end) tuples where span_start
+    and span_end are positions in the code-fence-stripped text. These spans
+    are used for both JSON extraction AND stripping — guaranteeing the same
+    boundaries are applied to both operations.
 
     Fixes two bugs:
     - S14: Strips fenced code blocks first so ACTION blocks inside
@@ -123,7 +128,8 @@ def _extract_action_jsons(text: str) -> list[str]:
                     # Verify the --> closing marker follows
                     rest = stripped[i + 1:i + 4]
                     if rest == '-->':
-                        results.append(json_str)
+                        # span covers the full <!--ACTION::...-->
+                        results.append((json_str, start, i + 4))
                     break
             elif ch == '"':
                 # Skip string contents (handle escaped quotes)
@@ -135,6 +141,30 @@ def _extract_action_jsons(text: str) -> list[str]:
             i += 1
         pos = i + 1 if i < len(stripped) else len(stripped)
     return results
+
+
+def _strip_action_blocks(text: str, spans: list[tuple[int, int]]) -> str:
+    """Remove ACTION blocks from text using pre-computed span positions.
+
+    Spans are (start, end) pairs in the code-fence-stripped text.
+    Uses the same boundaries as extraction — no regex, no possible mismatch.
+    Also strips any trailing partial/truncated ACTION markers.
+    """
+    if not spans:
+        # Still need to strip partial markers (truncated ACTION blocks)
+        return re.sub(r'<!--ACTION::.*', '', text, flags=re.DOTALL).strip()
+
+    # Build result by copying text between spans
+    parts = []
+    prev_end = 0
+    for start, end in sorted(spans):
+        parts.append(text[prev_end:start])
+        prev_end = end
+    parts.append(text[prev_end:])
+    result = ''.join(parts)
+    # Strip any trailing partial markers (incomplete ACTION blocks)
+    result = re.sub(r'<!--ACTION::.*', '', result, flags=re.DOTALL)
+    return result.strip()
 
 
 _FISH_KEYWORDS = re.compile(
@@ -301,11 +331,12 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             audit logging to the request_log table. If None, audit logging
             is skipped (useful in tests).
     """
-    action_jsons = _extract_action_jsons(response_text)
+    action_blocks = _extract_action_blocks(response_text)
+    action_jsons = [json_str for json_str, _, _ in action_blocks]
+    action_spans = [(start, end) for _, start, end in action_blocks]
 
     # Detect ACTION markers that the balanced-brace parser couldn't extract
     # (malformed JSON, unterminated strings, etc.) — report as parse failures
-    _marker_count = response_text.count('<!--ACTION::')
     _code_stripped = _CODE_FENCE.sub('', response_text)
     _marker_count = _code_stripped.count('<!--ACTION::')
 
@@ -513,14 +544,12 @@ def process_actions(response_text: str, expect_actions: list[str] | None = None,
             if log_fn:
                 log_fn("ACTION", "error", error=str(e))
 
-    # Strip action blocks from spoken response:
-    # 1. Complete blocks with balanced braces (handles nested --> in JSON)
-    # 2. Partial/truncated markers (incomplete ACTION blocks)
-    # 3. ACTION blocks inside code fences are already ignored by extraction,
-    #    but strip them from speech output too
+    # Strip action blocks from spoken response using the same balanced-brace
+    # spans as extraction — no regex mismatch possible (C2 fix).
+    # Code fences are already stripped by _extract_action_blocks, and the spans
+    # are relative to the code-stripped text.
     clean_response = _CODE_FENCE.sub('', response_text)
-    clean_response = re.sub(r'<!--ACTION::\{.*?\}-->', '', clean_response, flags=re.DOTALL)
-    clean_response = re.sub(r'<!--ACTION::.*', '', clean_response, flags=re.DOTALL).strip()
+    clean_response = _strip_action_blocks(clean_response, action_spans)
 
     # Log failures
     if failures:

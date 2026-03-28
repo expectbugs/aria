@@ -17,22 +17,16 @@ import sms
 
 # Lazy imports to avoid loading TTS/API at module import time (causes test hangs)
 ask_haiku = None
-_generate_tts = None
-push_audio = None
 process_actions = None
 
 
 def _ensure_imports():
     """Lazy-load heavy modules on first use."""
-    global ask_haiku, _generate_tts, push_audio, process_actions
+    global ask_haiku, process_actions
     if ask_haiku is None:
         from aria_api import ask_haiku as _ask_haiku
-        from tts import _generate_tts as _tts
         from actions import process_actions as _pa_fn
-        import push_audio as _pa
         ask_haiku = _ask_haiku
-        _generate_tts = _tts
-        push_audio = _pa
         process_actions = _pa_fn
 
 log = logging.getLogger("aria.completion")
@@ -88,43 +82,13 @@ async def _on_completion(task_id: str, status: str, result_text: str):
         result = process_actions(response)
         response = result.to_response()
 
-        # Delivery engine decides channel
+        # Delivery routing via shared execute_delivery (push voice — no task to poll)
         import delivery_engine as _de
-        decision = _de.evaluate(
-            content_type="task_completion", priority="normal",
+        dr = await _de.execute_delivery(
+            response, content_type="task_completion",
             source=task_data.get("channel", "voice"),
-        )
-        _de.log_decision(decision, "task_completion",
-                         task_data.get("channel", "voice"), None)
-        channel = decision.method
-
-        if channel == "defer":
-            _de.queue_deferred(response, "task_completion", "normal",
-                               task_data.get("channel", "voice"), decision.reason)
-            log.info("Task %s result deferred: %s", task_id, decision.reason)
-        elif channel == "sms":
-            try:
-                sms.send_long_to_owner(response)
-                log.info("Task %s result delivered via SMS", task_id)
-            except Exception as e:
-                log.error("SMS delivery failed for task %s: %s", task_id, e)
-        else:
-            # Voice delivery (default)
-            try:
-                audio = await _generate_tts(response)
-                wav_path = config.DATA_DIR / "task_response.wav"
-                wav_path.write_bytes(audio)
-                if push_audio.push_audio(str(wav_path)):
-                    log.info("Task %s result delivered via voice", task_id)
-                else:
-                    sms.send_long_to_owner(response)
-                    log.info("Task %s result delivered via SMS (voice fallback)", task_id)
-            except Exception as e:
-                log.error("Voice delivery failed for task %s, trying SMS: %s", task_id, e)
-                try:
-                    sms.send_long_to_owner(response)
-                except Exception as se:
-                    log.error("SMS delivery also failed for task %s: %s", task_id, se)
+            push_voice=True)
+        log.info("Task %s result delivered via %s", task_id, dr["method"])
 
     except Exception as e:
         log.error("Failed to compose response for task %s: %s", task_id, e)

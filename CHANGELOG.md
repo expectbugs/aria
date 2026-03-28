@@ -6,6 +6,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.6.1] — 2026-03-28
+
+### Fixed — Code Review Audit
+
+- **C1: Delivery hint now flows through `_process_task`** — refactored to run pipeline directly instead of calling `ask()`, exposing `delivery_meta` with `set_delivery` hint. Also eliminates double auth check (L6)
+- **C2: ACTION block stripping uses balanced-brace spans** — `_extract_action_blocks()` returns span positions used for both extraction and stripping, eliminating regex mismatch where JSON values containing `-->` would break the non-greedy cleaner
+- **C3: Single `get_user_state()` per delivery decision** — `evaluate()` and `log_decision()` accept optional `_state` parameter; `execute_delivery()` calls `get_user_state()` once and reuses it
+- **C4: UUID temp WAV files prevent race conditions** — all voice delivery paths (daemon, tick, deferred) use unique filenames with cleanup
+- **M1: Shared `execute_delivery()` in delivery_engine.py** — replaces ~120 lines of duplicated delivery routing across 5 handlers with single function handling voice/sms/image/defer
+- **M2: `processed_webhooks` table auto-cleanup** — new `cleanup_processed_webhooks()` job in tick.py, 7-day retention, index on `processed_at`
+- **M3: Redis task hashes expire after 24h** — TTL set on completion in `complete_task()`
+- **M4: Fixed SQL interval parameterization in training_store.py** — `INTERVAL '%s days'` → `%s * INTERVAL '1 day'`
+- **M5: Fitbit briefing context reduced from 8 to 1 DB query** — single `get_snapshot()` call, internal `_*_from_snap()` helpers extract all fields from the in-memory JSONB blob
+- **M6: Monitor cooldown keyed on check names, not error text** — prevents slightly different error messages from bypassing cooldown
+- **M7: `fire_timer()` handles all delivery methods** — added explicit image and defer branches (previously silently treated as SMS)
+- **L1: Dead `_marker_count` line removed** from actions.py
+- **L2: Unused `psycopg.types.json` import removed** from delivery_engine.py
+- **L4: Timestamp conversion simplified** in conversation_history.py — direct formatting instead of roundabout `serialize_row` trick
+- **L5: File task context builder documented** — comment explains intentional use of `build_request_context` (not briefing path)
+- **L9: Index added on `processed_webhooks(processed_at)`**
+- **Shared `_sync_deliver()` in tick.py** — replaces 3 separate sync delivery dispatch blocks (fire_timer, process_deferred_deliveries, send_exercise_nudge) with one function. Fixes missed C4 bug in `send_exercise_nudge` (hardcoded `exercise_audio.wav`)
+- **15 tests for `execute_delivery()`** — voice push/no-push, SMS fallback, image render, defer queue, TTS failure, state reuse verification
+- **8 tests for `_sync_deliver()`** — voice/SMS/image paths, fallback behavior, unknown methods
+
 ## [0.6.0] — 2026-03-28
 
 ### Added — Phase 1: Agent System Foundation

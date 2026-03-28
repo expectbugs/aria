@@ -24,9 +24,6 @@ def _reset():
 def _mock_lazy_imports():
     """Pre-set the lazy import globals so _ensure_imports doesn't load real modules."""
     completion_listener.ask_haiku = AsyncMock(return_value="Default response")
-    completion_listener._generate_tts = AsyncMock(return_value=b"audio")
-    completion_listener.push_audio = MagicMock()
-    completion_listener.push_audio.push_audio = MagicMock(return_value=True)
     from actions import ActionResult
     def _mock_process_actions(r, **kw):
         return ActionResult(
@@ -36,9 +33,20 @@ def _mock_lazy_imports():
     completion_listener.process_actions = MagicMock(side_effect=_mock_process_actions)
     yield
     completion_listener.ask_haiku = None
-    completion_listener._generate_tts = None
-    completion_listener.push_audio = None
     completion_listener.process_actions = None
+
+
+@pytest.fixture(autouse=True)
+def _mock_execute_delivery():
+    """Mock execute_delivery for all completion listener tests."""
+    async def _route(response_text, content_type="response", priority="normal",
+                     source="voice", hint=None, sms_target=None, push_voice=True):
+        method = "sms" if source == "sms" else "voice"
+        audio = b"audio" if method == "voice" else b""
+        return {"method": method, "audio": audio, "reason": "test"}
+    with patch("delivery_engine.execute_delivery", new_callable=AsyncMock,
+               side_effect=_route) as mock_ed:
+        yield mock_ed
 
 
 class TestOnCompletion:
@@ -97,7 +105,9 @@ class TestOnCompletion:
     @pytest.mark.asyncio
     @patch("completion_listener.sms")
     @patch("completion_listener.redis_client")
-    async def test_falls_back_to_sms_on_voice_failure(self, mock_rc, mock_sms):
+    async def test_falls_back_to_sms_on_voice_failure(self, mock_rc, mock_sms,
+                                                       _mock_execute_delivery):
+        """execute_delivery handles voice failure + SMS fallback internally."""
         mock_client = MagicMock()
         mock_rc.get_client.return_value = mock_client
         mock_client.hgetall.return_value = {
@@ -106,11 +116,13 @@ class TestOnCompletion:
             "channel": "voice",
         }
         completion_listener.ask_haiku = AsyncMock(return_value="Task done!")
-        completion_listener._generate_tts = AsyncMock(side_effect=Exception("TTS failed"))
+        # Simulate execute_delivery falling back to SMS
+        async def _sms_fallback(**kw):
+            return {"method": "sms", "audio": b"", "reason": "voice failed, SMS fallback"}
+        _mock_execute_delivery.side_effect = _sms_fallback
 
         await completion_listener._on_completion("t1", "completed", "done")
-
-        mock_sms.send_long_to_owner.assert_called_once_with("Task done!")
+        _mock_execute_delivery.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("completion_listener.redis_client")
@@ -124,7 +136,8 @@ class TestChannelAwareDelivery:
     @pytest.mark.asyncio
     @patch("completion_listener.sms")
     @patch("completion_listener.redis_client")
-    async def test_sms_channel_delivers_via_sms(self, mock_rc, mock_sms):
+    async def test_sms_channel_delivers_via_sms(self, mock_rc, mock_sms,
+                                                  _mock_execute_delivery):
         mock_client = MagicMock()
         mock_rc.get_client.return_value = mock_client
         mock_client.hgetall.return_value = {
@@ -136,14 +149,14 @@ class TestChannelAwareDelivery:
 
         await completion_listener._on_completion("t1", "completed", "done")
 
-        mock_sms.send_long_to_owner.assert_called_once_with("Result ready!")
-        # TTS should NOT be called for SMS channel
-        completion_listener._generate_tts.assert_not_called()
+        _mock_execute_delivery.assert_called_once()
+        assert _mock_execute_delivery.call_args[1]["source"] == "sms"
 
     @pytest.mark.asyncio
     @patch("completion_listener.sms")
     @patch("completion_listener.redis_client")
-    async def test_voice_channel_delivers_via_voice(self, mock_rc, mock_sms):
+    async def test_voice_channel_delivers_via_voice(self, mock_rc, mock_sms,
+                                                      _mock_execute_delivery):
         mock_client = MagicMock()
         mock_rc.get_client.return_value = mock_client
         mock_client.hgetall.return_value = {
@@ -155,15 +168,14 @@ class TestChannelAwareDelivery:
 
         await completion_listener._on_completion("t1", "completed", "done")
 
-        completion_listener._generate_tts.assert_called_once()
-        completion_listener.push_audio.push_audio.assert_called_once()
-        # SMS should NOT be called when voice succeeds
-        mock_sms.send_long_to_owner.assert_not_called()
+        _mock_execute_delivery.assert_called_once()
+        assert _mock_execute_delivery.call_args[1]["source"] == "voice"
 
     @pytest.mark.asyncio
     @patch("completion_listener.sms")
     @patch("completion_listener.redis_client")
-    async def test_default_channel_is_voice(self, mock_rc, mock_sms):
+    async def test_default_channel_is_voice(self, mock_rc, mock_sms,
+                                              _mock_execute_delivery):
         """Tasks without a channel field (backward compat) default to voice."""
         mock_client = MagicMock()
         mock_rc.get_client.return_value = mock_client
@@ -176,8 +188,8 @@ class TestChannelAwareDelivery:
 
         await completion_listener._on_completion("t1", "completed", "done")
 
-        completion_listener._generate_tts.assert_called_once()
-        completion_listener.push_audio.push_audio.assert_called_once()
+        _mock_execute_delivery.assert_called_once()
+        assert _mock_execute_delivery.call_args[1]["source"] == "voice"
 
 
 class TestListenerLifecycle:
@@ -221,7 +233,8 @@ class TestActionBlockProcessing:
     @pytest.mark.asyncio
     @patch("completion_listener.sms")
     @patch("completion_listener.redis_client")
-    async def test_tts_receives_cleaned_response(self, mock_rc, mock_sms):
+    async def test_tts_receives_cleaned_response(self, mock_rc, mock_sms,
+                                                   _mock_execute_delivery):
         mock_client = MagicMock()
         mock_rc.get_client.return_value = mock_client
         mock_client.hgetall.return_value = {
@@ -230,7 +243,6 @@ class TestActionBlockProcessing:
         }
         raw = 'Timer set!<!--ACTION::{"action":"set_timer"}-->'
         completion_listener.ask_haiku = AsyncMock(return_value=raw)
-        # process_actions strips the block — returns ActionResult
         from actions import ActionResult
         mock_result = ActionResult(
             clean_response="Timer set!", actions_found=[], action_types=[], failures=[],
@@ -240,17 +252,18 @@ class TestActionBlockProcessing:
 
         await completion_listener._on_completion("t1", "completed", "result")
 
-        # TTS should receive the cleaned text, not the raw response
-        tts_arg = completion_listener._generate_tts.call_args[0][0]
-        assert "ACTION" not in tts_arg
-        assert "Timer set!" in tts_arg
+        # execute_delivery should receive the cleaned text, not the raw response
+        delivered_text = _mock_execute_delivery.call_args[0][0]
+        assert "ACTION" not in delivered_text
+        assert "Timer set!" in delivered_text
 
 
 class TestFullPipeline:
 
     @pytest.mark.asyncio
     @patch("completion_listener.redis_client")
-    async def test_dispatch_to_notification_flow(self, mock_rc):
+    async def test_dispatch_to_notification_flow(self, mock_rc,
+                                                   _mock_execute_delivery):
         mock_client = MagicMock()
         mock_rc.get_client.return_value = mock_client
         mock_client.hgetall.return_value = {
@@ -265,4 +278,4 @@ class TestFullPipeline:
         )
 
         assert mock_aria.called
-        assert completion_listener.push_audio.push_audio.called
+        _mock_execute_delivery.assert_called_once()
