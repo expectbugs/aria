@@ -397,13 +397,8 @@ def evaluate_nudges() -> list[tuple[str, str]]:
     # --- Fitbit: resting HR anomaly ---
     hr = fitbit_store.get_heart_summary()
     if hr and hr.get("resting_hr"):
-        # Check against 7-day trend for anomaly
-        resting_hrs = []
-        for i in range(1, 8):
-            day = (now.date() - timedelta(days=i)).isoformat()
-            prev_hr = fitbit_store.get_heart_summary(day)
-            if prev_hr and prev_hr.get("resting_hr"):
-                resting_hrs.append(prev_hr["resting_hr"])
+        # Single query for 7-day history (replaces 7 sequential get_heart_summary calls)
+        resting_hrs = fitbit_store.get_resting_hr_history(days=7)
         if resting_hrs:
             avg = sum(resting_hrs) / len(resting_hrs)
             current = hr["resting_hr"]

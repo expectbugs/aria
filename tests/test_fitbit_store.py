@@ -234,6 +234,54 @@ class TestBriefingContext:
         assert fitbit_store.get_briefing_context("2026-03-20") == ""
 
 
+class TestRestingHrHistory:
+    def test_returns_int_values(self):
+        mc, p = _patch_db()
+        mc.execute.return_value.fetchall.return_value = [
+            {"data": {"heart_rate": {"value": {"restingHeartRate": 65}}}},
+            {"data": {"heart_rate": {"value": {"restingHeartRate": 68}}}},
+        ]
+        try:
+            hrs = fitbit_store.get_resting_hr_history(days=7)
+            assert hrs == [65, 68]
+            assert all(isinstance(h, int) for h in hrs)
+        finally:
+            p.stop()
+
+    def test_casts_string_values(self):
+        mc, p = _patch_db()
+        mc.execute.return_value.fetchall.return_value = [
+            {"data": {"heart_rate": {"value": {"restingHeartRate": "65"}}}},
+        ]
+        try:
+            hrs = fitbit_store.get_resting_hr_history(days=7)
+            assert hrs == [65]
+            assert isinstance(hrs[0], int)
+        finally:
+            p.stop()
+
+    def test_skips_missing_hr_data(self):
+        mc, p = _patch_db()
+        mc.execute.return_value.fetchall.return_value = [
+            {"data": {"heart_rate": {"value": {"restingHeartRate": 65}}}},
+            {"data": {"heart_rate": {}}},  # no value
+            {"data": {}},  # no heart_rate at all
+        ]
+        try:
+            hrs = fitbit_store.get_resting_hr_history(days=7)
+            assert hrs == [65]
+        finally:
+            p.stop()
+
+    def test_empty_snapshots(self):
+        mc, p = _patch_db()
+        mc.execute.return_value.fetchall.return_value = []
+        try:
+            assert fitbit_store.get_resting_hr_history(days=7) == []
+        finally:
+            p.stop()
+
+
 class TestGetTrend:
     def test_builds_trend_string(self):
         mc, p = _patch_db()

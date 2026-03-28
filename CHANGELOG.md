@@ -6,6 +6,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.4.42] — 2026-03-27
+
+### Added
+
+- **`get_resting_hr_history()`** — single-query function in `fitbit_store.py` replaces 7 sequential `get_heart_summary()` calls in `tick.py`'s HR anomaly detection. Casts values via `_safe_int` per CLAUDE.md external API rule.
+- **4 new tests** for `get_resting_hr_history`: int values, string casting, missing data, empty snapshots.
+
+### Changed
+
+- **tick.py HR anomaly check** — uses `get_resting_hr_history(days=7)` instead of per-day loop (7 DB queries → 1).
+- **Version** bumped to 0.4.42
+
+---
+
 ## [0.4.41] — 2026-03-27
 
 ### Fixed

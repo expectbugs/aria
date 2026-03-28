@@ -244,6 +244,28 @@ def get_briefing_context(day: str = "today") -> str:
     return "Fitbit health data:\n" + "\n".join(f"  - {p}" for p in parts)
 
 
+def get_resting_hr_history(days: int = 7) -> list[int]:
+    """Get resting HR values for the last N days (excluding today).
+
+    Single query replacement for the per-day loop in tick.py.
+    Returns list of int values (cast per CLAUDE.md external API rule).
+    """
+    start = (date.today() - timedelta(days=days)).isoformat()
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT data FROM fitbit_snapshots WHERE date >= %s AND date < %s ORDER BY date",
+            (start, date.today().isoformat()),
+        ).fetchall()
+    hrs = []
+    for row in rows:
+        snap = row["data"]
+        hr_data = snap.get("heart_rate", {})
+        rhr = hr_data.get("value", {}).get("restingHeartRate") if hr_data else None
+        if rhr is not None:
+            hrs.append(_safe_int(rhr))
+    return hrs
+
+
 def get_trend(days: int = 7) -> str:
     """Build a multi-day trend summary for briefings."""
     start = (date.today() - timedelta(days=days - 1)).isoformat()
