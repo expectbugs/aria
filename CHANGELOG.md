@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.8.2] — 2026-03-29
+
+### Changed — Personality Overhaul
+
+- **ARIA personality rewrite** — Snarky, dry, sarcastic banter is now the default mode instead of "one in four responses." ARIA teases like a close friend, takes joke setups, and rarely gives an entirely straight answer. Context gates ensure serious mode for legal, health, emotional, and emergency situations.
+- **Image-gen humor** — ARIA occasionally generates reaction images, visual jokes, or illustrations of her facial expressions via dispatch_action (~1 in 10-15 interactions, when the humor lands naturally).
+- **CLI channel formatting** — Markdown explicitly allowed when responding to CLI channel.
+- **18 new tests** in `tests/test_system_prompt.py` — personality content verification, structural rule checks, all prompt builder types.
+- **Total test count:** 1984 tests across 88 files, all passing
+
+---
+
 ## [0.8.1] — 2026-03-28
 
 ### Added — CLI Channel
