@@ -274,6 +274,51 @@ class TestDeliveryEngineCli:
 
 
 # ---------------------------------------------------------------------------
+# /ask/status returns trace entries
+# ---------------------------------------------------------------------------
+
+class TestAskStatusTrace:
+    @patch("daemon._generate_tts", new_callable=AsyncMock)
+    @patch("daemon._verify_and_maybe_retry", new_callable=AsyncMock)
+    @patch("daemon.process_actions")
+    @patch("daemon._route_query", new_callable=AsyncMock)
+    @patch("daemon._get_context_for_text", new_callable=AsyncMock)
+    @patch("daemon.log_request")
+    def test_status_includes_trace(self, mock_log, mock_ctx, mock_claude,
+                                    mock_actions, mock_verify, mock_tts,
+                                    client):
+        mock_ctx.return_value = "some context"
+        mock_claude.return_value = "Hello!"
+        result = make_action_result(clean_response="Hello!")
+        mock_actions.return_value = result
+        mock_verify.return_value = result
+        mock_tts.return_value = b"wav"
+
+        resp = client.post("/ask/start",
+                           json={"text": "hi", "channel": "cli"},
+                           headers=AUTH)
+        task_id = resp.json()["task_id"]
+
+        # Wait for completion
+        for _ in range(30):
+            time.sleep(0.1)
+            status_resp = client.get(f"/ask/status/{task_id}", headers=AUTH)
+            data = status_resp.json()
+            if data.get("status") != "processing":
+                break
+
+        assert data["status"] == "done"
+        trace = data.get("trace", [])
+        assert len(trace) >= 5  # start, context, route, raw_response, ...
+        events = [e["event"] for e in trace]
+        assert "start" in events
+        assert "context" in events
+        assert "route" in events
+        assert "raw_response" in events
+        assert "done" in events
+
+
+# ---------------------------------------------------------------------------
 # AskResponse model includes audio field
 # ---------------------------------------------------------------------------
 

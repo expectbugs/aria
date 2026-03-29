@@ -16,6 +16,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **System prompt CLI awareness** — ARIA knows about CLI channel, uses full detail and markdown when responding to CLI requests.
 - **14 new tests** in `tests/test_cli_channel.py` covering model fields, channel propagation, audio inclusion, delivery engine routing, and async task flow.
 
+- **CLI debug trace** — `aria_cli.py --debug` shows full pipeline trace: context injected, raw Claude response, ACTION blocks parsed/executed, verification results, delivery decision. Default mode shows phase names with timing. Toggle at runtime with `/debug`.
+- **Delivery engine: user-initiated requests never deferred** — voice, file, SMS, CLI requests skip sleeping/court/driving activity overrides. User is actively waiting — deferral only applies to proactive content (timers, nudges, monitor findings). Fixes Tasker Music_Play error when sending photos during quiet hours.
+
 ### Fixed
 
 - **3 time-dependent test failures** — `test_delivery_engine::test_home_available`, `test_tick::test_sms_delivery`, `test_tick::test_complete_before_delivery` all failed during quiet hours (midnight-7am) because they didn't mock `datetime.now()` or the delivery engine's time-based routing. Added proper time/delivery mocks.

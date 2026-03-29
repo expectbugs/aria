@@ -83,59 +83,121 @@ class TestGetUserState:
 
 
 class TestEvaluate:
+    # --- Proactive sources: respect activity overrides ---
+
     @patch("delivery_engine.get_user_state")
-    def test_sleeping_defers(self, mock_state):
+    def test_sleeping_defers_proactive(self, mock_state):
         mock_state.return_value = UserState(
             location="home", activity="sleeping",
             channels=["sms"], battery=85, location_fresh=True,
         )
-        d = evaluate("response", "normal", "voice")
+        d = evaluate("timer", "normal", "timer")
         assert d.method == "defer"
 
     @patch("delivery_engine.get_user_state")
-    def test_sleeping_urgent_image(self, mock_state):
+    def test_sleeping_urgent_image_proactive(self, mock_state):
         mock_state.return_value = UserState(
             location="home", activity="sleeping",
             channels=["sms", "image"], battery=85, location_fresh=True,
         )
-        d = evaluate("response", "urgent", "voice")
+        d = evaluate("timer", "urgent", "timer")
         assert d.method == "image"
 
     @patch("delivery_engine.get_user_state")
-    def test_working_blocks_voice(self, mock_state):
+    def test_working_blocks_voice_proactive(self, mock_state):
         mock_state.return_value = UserState(
             location="work", activity="working",
             channels=["sms", "image"], battery=85, location_fresh=True,
         )
-        d = evaluate("response", "normal", "voice", hint="voice")
-        assert d.method == "image"  # voice blocked at work
+        d = evaluate("nudge", "normal", "nudge", hint="voice")
+        assert d.method == "image"  # voice blocked at work for proactive
 
     @patch("delivery_engine.get_user_state")
-    def test_working_uses_glasses_when_available(self, mock_state):
+    def test_working_uses_glasses_proactive(self, mock_state):
         mock_state.return_value = UserState(
             location="work", activity="working",
             channels=["sms", "image", "glasses"], battery=85, location_fresh=True,
         )
-        d = evaluate("response", "normal", "voice")
+        d = evaluate("nudge", "normal", "nudge")
         assert d.method == "glasses"
 
     @patch("delivery_engine.get_user_state")
-    def test_driving_forces_voice(self, mock_state):
+    def test_driving_forces_voice_proactive(self, mock_state):
         mock_state.return_value = UserState(
             location="driving", activity="driving",
             channels=["voice", "sms", "image"], battery=85, location_fresh=True,
         )
-        d = evaluate("response", "normal", "voice")
+        d = evaluate("timer", "normal", "timer")
         assert d.method == "voice"
 
     @patch("delivery_engine.get_user_state")
-    def test_exercising_voice(self, mock_state):
+    def test_exercising_voice_proactive(self, mock_state):
         mock_state.return_value = UserState(
             location="home", activity="exercising",
             channels=["voice", "sms", "image"], battery=85, location_fresh=True,
         )
+        d = evaluate("nudge", "normal", "nudge")
+        assert d.method == "voice"
+
+    @patch("delivery_engine.get_user_state")
+    def test_court_defers_proactive(self, mock_state):
+        mock_state.return_value = UserState(
+            location="court", activity="available",
+            channels=["image"], battery=85, location_fresh=True,
+        )
+        d = evaluate("nudge", "normal", "nudge")
+        assert d.method == "defer"
+
+    @patch("delivery_engine.get_user_state")
+    def test_court_urgent_image_proactive(self, mock_state):
+        mock_state.return_value = UserState(
+            location="court", activity="available",
+            channels=["image"], battery=85, location_fresh=True,
+        )
+        d = evaluate("timer", "urgent", "timer")
+        assert d.method == "image"
+
+    # --- User-initiated sources: never defer ---
+
+    @patch("delivery_engine.get_user_state")
+    def test_sleeping_voice_request_not_deferred(self, mock_state):
+        """User sends voice request during quiet hours — respond, don't defer."""
+        mock_state.return_value = UserState(
+            location="home", activity="sleeping",
+            channels=["voice", "sms"], battery=85, location_fresh=True,
+        )
         d = evaluate("response", "normal", "voice")
         assert d.method == "voice"
+
+    @patch("delivery_engine.get_user_state")
+    def test_sleeping_file_request_not_deferred(self, mock_state):
+        """User sends photo during quiet hours — respond, don't defer."""
+        mock_state.return_value = UserState(
+            location="home", activity="sleeping",
+            channels=["voice", "sms"], battery=85, location_fresh=True,
+        )
+        d = evaluate("response", "normal", "file")
+        assert d.method == "voice"
+
+    @patch("delivery_engine.get_user_state")
+    def test_sleeping_sms_request_not_deferred(self, mock_state):
+        mock_state.return_value = UserState(
+            location="home", activity="sleeping",
+            channels=["sms"], battery=85, location_fresh=True,
+        )
+        d = evaluate("response", "normal", "sms")
+        assert d.method == "sms"
+
+    @patch("delivery_engine.get_user_state")
+    def test_court_voice_request_not_deferred(self, mock_state):
+        mock_state.return_value = UserState(
+            location="court", activity="available",
+            channels=["voice", "image"], battery=85, location_fresh=True,
+        )
+        d = evaluate("response", "normal", "voice")
+        assert d.method == "voice"
+
+    # --- General routing (activity=available) ---
 
     @patch("delivery_engine.get_user_state")
     def test_available_respects_sms_hint(self, mock_state):
@@ -145,24 +207,6 @@ class TestEvaluate:
         )
         d = evaluate("response", "normal", "voice", hint="sms")
         assert d.method == "sms"
-
-    @patch("delivery_engine.get_user_state")
-    def test_court_defers_non_urgent(self, mock_state):
-        mock_state.return_value = UserState(
-            location="court", activity="available",
-            channels=["image"], battery=85, location_fresh=True,
-        )
-        d = evaluate("response", "normal", "voice")
-        assert d.method == "defer"
-
-    @patch("delivery_engine.get_user_state")
-    def test_court_urgent_image(self, mock_state):
-        mock_state.return_value = UserState(
-            location="court", activity="available",
-            channels=["image"], battery=85, location_fresh=True,
-        )
-        d = evaluate("response", "urgent", "voice")
-        assert d.method == "image"
 
     @patch("delivery_engine.get_user_state")
     def test_engine_disabled_returns_default(self, mock_state):

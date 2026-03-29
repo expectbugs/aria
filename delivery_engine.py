@@ -195,37 +195,39 @@ def evaluate(content_type: str = "response",
 
     state = _state if _state is not None else get_user_state()
 
-    # --- Sleeping ---
-    if state.activity == "sleeping":
-        if priority == "urgent":
-            return DeliveryDecision("image", "urgent during sleep — image only")
-        return DeliveryDecision("defer", "sleeping — queued for morning")
+    # User-initiated requests: user is actively waiting — never defer.
+    # Activity overrides (sleeping, court, driving) only apply to proactive
+    # content (timers, nudges, monitor findings, task completions).
+    _user_initiated = {"voice", "file", "sms", "cli"}
 
-    # --- Court ---
-    if state.location == "court":
-        if priority == "urgent":
+    if source not in _user_initiated:
+        # --- Proactive content: activity-based routing ---
+        if state.activity == "sleeping":
+            if priority == "urgent":
+                return DeliveryDecision("image", "urgent during sleep — image only")
+            return DeliveryDecision("defer", "sleeping — queued for morning")
+
+        if state.location == "court":
+            if priority == "urgent":
+                if "glasses" in state.channels:
+                    return DeliveryDecision("glasses", "in court — urgent stealth via glasses")
+                return DeliveryDecision("image", "in court — urgent image only")
+            return DeliveryDecision("defer", "in court — deferred")
+
+        if state.activity == "working":
             if "glasses" in state.channels:
-                return DeliveryDecision("glasses", "in court — urgent stealth via glasses")
-            return DeliveryDecision("image", "in court — urgent image only")
-        return DeliveryDecision("defer", "in court — deferred")
+                return DeliveryDecision("glasses", "at work — stealth via glasses")
+            return DeliveryDecision("image", "at work — voice blocked, using image")
 
-    # --- Working ---
-    if state.activity == "working":
-        if "glasses" in state.channels:
-            return DeliveryDecision("glasses", "at work — stealth via glasses")
-        return DeliveryDecision("image", "at work — voice blocked, using image")
+        if state.activity == "driving":
+            if "voice" in state.channels:
+                return DeliveryDecision("voice", "driving — voice for safety")
+            return DeliveryDecision("defer", "driving, no voice channel — deferred")
 
-    # --- Driving ---
-    if state.activity == "driving":
-        if "voice" in state.channels:
-            return DeliveryDecision("voice", "driving — voice for safety")
-        return DeliveryDecision("defer", "driving, no voice channel — deferred")
+        if state.activity == "exercising":
+            return DeliveryDecision("voice", "exercising — voice coaching")
 
-    # --- Exercising ---
-    if state.activity == "exercising":
-        return DeliveryDecision("voice", "exercising — voice coaching")
-
-    # --- Available (home or unknown location) ---
+    # --- Source-based routing (all sources, including user-initiated) ---
 
     # Respect ARIA's hint if the channel is available and safe
     if hint and hint in state.channels:

@@ -516,12 +516,37 @@ async def _process_task(task_id: str, text: str, channel: str = "voice"):
     """Background worker for async ask processing."""
     try:
         start = time.time()
+        trace = []
+        def _t(event, detail):
+            trace.append({"t": round(time.time() - start, 2),
+                          "event": event, "detail": detail})
+            _tasks[task_id]["trace"] = trace
+
+        _t("start", text)
+
         extra_context = await _get_context_for_text(text)
+        _t("context", extra_context)
+
+        is_simple = _is_simple_query(text)
+        _t("route", f"{'fast' if is_simple else 'deep'} session")
+
         response = await _route_query(text, extra_context)
+        _t("raw_response", response)
+
         delivery_meta = {"channel": channel}
         result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        _t("actions", json.dumps({
+            "types": result.action_types,
+            "found": result.actions_found,
+            "failures": result.failures,
+            "warnings": result.warnings,
+        }, default=str))
+
         result = await _verify_and_maybe_retry(text, extra_context, result, log_fn=log_request)
+        _t("verification", "ok" if not result.warnings else "; ".join(result.warnings))
+
         response_text = result.to_response()
+        _t("clean_response", response_text)
 
         duration = time.time() - start
         log_request(text, "ok", response=response_text, duration=duration)
@@ -531,8 +556,11 @@ async def _process_task(task_id: str, text: str, channel: str = "voice"):
             audio = b""
             try:
                 audio = await _generate_tts(response_text)
+                _t("tts", f"generated {len(audio)} bytes")
             except Exception as e:
                 log.warning("TTS generation failed for cli task: %s", e)
+                _t("tts", f"failed: {e}")
+            _t("done", f"total: {duration:.1f}s")
             _tasks[task_id].update({
                 "status": "done",
                 "audio": audio,
@@ -542,6 +570,8 @@ async def _process_task(task_id: str, text: str, channel: str = "voice"):
             hint = delivery_meta.get("delivery")
             dr = await delivery_engine.execute_delivery(
                 response_text, source=channel, hint=hint, push_voice=False)
+            _t("delivery", f"{dr['method']} — {dr['reason']}")
+            _t("done", f"total: {duration:.1f}s")
             _tasks[task_id].update({
                 "status": "done",
                 "audio": dr["audio"],
@@ -575,12 +605,19 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
     """Background worker for async file processing."""
     try:
         start = time.time()
+        trace = []
+        def _t(event, detail):
+            trace.append({"t": round(time.time() - start, 2),
+                          "event": event, "detail": detail})
+            _tasks[task_id]["trace"] = trace
 
         # Build file content blocks
         file_blocks = build_file_content(file_bytes, filename, mime_type)
         user_text = caption if caption else f"The user sent a file: {filename}"
         if saved_path:
             user_text += f"\n(File saved to {saved_path} for future reference)"
+
+        _t("start", f"[file:{filename}] {caption or '(no caption)'}")
 
         # Note: audio is generated automatically by this pipeline — tell Claude
         # not to push audio separately, which would cause a double response
@@ -592,12 +629,26 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         extra_context = await build_request_context(
             caption or filename, is_image=is_image
         )
+        _t("context", extra_context)
+        _t("route", "deep session (file)")
 
         response = await _route_query(user_text, extra_context, file_blocks)
+        _t("raw_response", response)
+
         delivery_meta = {"channel": channel}
         result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        _t("actions", json.dumps({
+            "types": result.action_types,
+            "found": result.actions_found,
+            "failures": result.failures,
+            "warnings": result.warnings,
+        }, default=str))
+
         result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
+        _t("verification", "ok" if not result.warnings else "; ".join(result.warnings))
+
         response = result.to_response()
+        _t("clean_response", response)
 
         duration = time.time() - start
         log_request(f"[file:{filename}] {user_text}", "ok",
@@ -607,8 +658,11 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
             audio = b""
             try:
                 audio = await _generate_tts(response)
+                _t("tts", f"generated {len(audio)} bytes")
             except Exception as e:
                 log.warning("TTS generation failed for cli file task: %s", e)
+                _t("tts", f"failed: {e}")
+            _t("done", f"total: {duration:.1f}s")
             _tasks[task_id].update({
                 "status": "done",
                 "audio": audio,
@@ -618,6 +672,8 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
             hint = delivery_meta.get("delivery")
             dr = await delivery_engine.execute_delivery(
                 response, source="file", hint=hint, push_voice=False)
+            _t("delivery", f"{dr['method']} — {dr['reason']}")
+            _t("done", f"total: {duration:.1f}s")
             _tasks[task_id].update({
                 "status": "done",
                 "audio": dr["audio"],
@@ -725,6 +781,8 @@ async def ask_status(task_id: str, request: Request):
         content = {"status": "processing"}
         if task.get("transcript"):
             content["transcript"] = task["transcript"]
+        if task.get("trace"):
+            content["trace"] = task["trace"]
         return JSONResponse(status_code=202, content=content)
     elif task["status"] == "error":
         return JSONResponse(status_code=500, content={"status": "error", "error": task.get("error", "Unknown")})
@@ -734,6 +792,8 @@ async def ask_status(task_id: str, request: Request):
             content["delivery"] = task["delivery"]
         if task.get("response_text"):
             content["response"] = task["response_text"]
+        if task.get("trace"):
+            content["trace"] = task["trace"]
         return JSONResponse(status_code=200, content=content)
 
 
