@@ -969,6 +969,48 @@ def process_monitors():
     save_state(state)
 
 
+def process_email_cleanup():
+    """Trash emails matching auto_cleanup rules that have expired.
+
+    Also expires stale email watches.
+    Uses gmail_strategy.get_auto_cleanup_candidates() to find expired emails,
+    then trashes them via the daemon's Gmail sync endpoint.
+    """
+    from gmail_strategy import get_auto_cleanup_candidates
+
+    # Expire stale watches
+    try:
+        import gmail_store
+        gmail_store.expire_watches()
+    except Exception:
+        log.exception("[EMAIL_CLEANUP] Watch expiry failed")
+
+    candidates = get_auto_cleanup_candidates()
+    if not candidates:
+        return
+
+    log.info("[EMAIL_CLEANUP] %d candidates for auto-cleanup", len(candidates))
+
+    for c in candidates:
+        try:
+            action = c.get("action", "trash")
+            if action == "trash":
+                resp = httpx.post(
+                    f"{DAEMON_URL}/google/gmail/trash",
+                    json={"message_id": c["email_id"]},
+                    headers=_auth_headers(),
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    log.info("[EMAIL_CLEANUP] Trashed %s (%s: %s)",
+                             c["email_id"], c["from"], c.get("subject", "")[:50])
+                else:
+                    log.warning("[EMAIL_CLEANUP] Trash failed for %s: %s",
+                                c["email_id"], resp.status_code)
+        except Exception:
+            log.exception("[EMAIL_CLEANUP] Failed to process %s", c["email_id"])
+
+
 def _any_briefing_or_debrief_today() -> bool:
     """Check if any briefing or debrief was delivered today."""
     today = datetime.now().strftime("%Y-%m-%d")
@@ -1156,6 +1198,7 @@ def main():
         ("fitbit_poll", process_fitbit_poll),
         ("google_poll", process_google_poll),
         ("monitors", process_monitors),
+        ("email_cleanup", process_email_cleanup),
         ("safety_net", process_safety_net),
         ("deferred_deliveries", process_deferred_deliveries),
         ("webhook_cleanup", cleanup_processed_webhooks),

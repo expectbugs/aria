@@ -159,7 +159,13 @@ def _redirect_to_image(to: str, body: str, media_url: str | None = None) -> str:
                     log.error("SMS redirect: push_image failed for message to %s", to)
                     push_failed = True
             finally:
+                # Archive rendered SMS image before removing temp file
                 try:
+                    from datetime import datetime as _dt
+                    archive_dir = config.DATA_DIR / "outbox_archive"
+                    archive_dir.mkdir(parents=True, exist_ok=True)
+                    ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+                    shutil.copy2(img_path, archive_dir / f"sms_img_{ts}_{uid}.png")
                     os.unlink(img_path)
                 except OSError:
                     pass

@@ -33,6 +33,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **Minimum delivery interval** — unified deliveries respect `MONITOR_DELIVERY_MIN_INTERVAL_MIN` between sends
 - **`deliver_findings()` removed** — findings now flow through the unified delivery pipeline
 
+### Changed — Data Retention (never lose data)
+
+- **Design Principle #8 added to Project Plan:** No text, image, communication, or file the system becomes aware of is ever deleted. Audio is a verification buffer; text transcripts are permanent.
+- **MMS outbox archiving** — Outbound images staged for Twilio now archived to `data/outbox_archive/` before the 60-second staging cleanup. Previously these were deleted after Twilio fetched them.
+- **SMS redirect image archiving** — Rendered SMS-as-image PNGs now archived to `data/outbox_archive/` before temp file deletion.
+- **Phase 6 (DJI Mic 3) plan rewritten** — Removed `AMBIENT_RETENTION_HOURS` (text transcripts permanent), removed `AMBIENT_PRIVACY_ZONES` recording pause (mic records everywhere — work and court are the most important). Voice output restrictions handled by delivery engine, independent from recording.
+
 ### Changed — Other
 
 - **`process_actions()` is now async** — calendar and email handlers await Google API calls. All 7 call sites updated (daemon.py, verification.py, completion_listener.py)

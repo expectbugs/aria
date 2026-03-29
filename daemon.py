@@ -418,6 +418,36 @@ async def google_gmail_sync(request: Request):
     return {"status": "ok", "messages_synced": len(messages)}
 
 
+@app.post("/google/gmail/trash")
+async def google_gmail_trash(request: Request):
+    """Trash a Gmail message by ID. Updates local cache labels."""
+    verify_auth(request)
+    body = await request.json()
+    message_id = body.get("message_id", "")
+    if not message_id:
+        raise HTTPException(status_code=400, detail="Missing message_id")
+
+    client = google_client.get_client()
+    await client.gmail_trash_message(message_id)
+
+    # Update local cache labels
+    try:
+        import db as _db
+        with _db.get_conn() as conn:
+            conn.execute(
+                """UPDATE email_cache
+                   SET labels = array_append(
+                       array_remove(labels, 'INBOX'), 'TRASH')
+                   WHERE id = %s""",
+                (message_id,),
+            )
+    except Exception as e:
+        log.warning("Failed to update local labels for trashed email %s: %s",
+                    message_id, e)
+
+    return {"status": "ok", "trashed": message_id}
+
+
 @app.post("/email/search")
 async def email_search(request: Request):
     """Search emails by keyword."""
@@ -1089,14 +1119,20 @@ async def serve_mms_media(filename: str):
     mime_type, _ = mimetypes.guess_type(str(path))
     content = path.read_bytes()
 
-    # Clean up after Twilio fetches it (delay slightly in case of retries)
-    async def _cleanup():
+    # Archive to outbox_archive before cleaning staging copy
+    async def _archive_and_cleanup():
         await asyncio.sleep(60)
         try:
+            archive_dir = config.DATA_DIR / "outbox_archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = archive_dir / safe_name
+            if not archive_path.exists():
+                import shutil
+                shutil.copy2(path, archive_path)
             path.unlink(missing_ok=True)
         except Exception:
             pass
-    asyncio.create_task(_cleanup())
+    asyncio.create_task(_archive_and_cleanup())
 
     return Response(content=content, media_type=mime_type or "application/octet-stream")
 
