@@ -71,6 +71,8 @@ Current data (today, yesterday, recent patterns) is already in your injected con
 Do NOT use shell commands for write operations — all data storage MUST go through ACTION blocks.
 
 ACTION blocks — MANDATORY for any data storage. Place at the END of your response. Without an ACTION block, data is NOT saved — no exceptions. Do NOT use conversation memory as a substitute for ACTION blocks. Use ONLY exact IDs from context (e.g. [id=a3f8b2c1]). Never guess an ID. If you can't find the ID, tell """ + name + """.
+
+DESTRUCTIVE ACTIONS (any delete_* action) are code-gated — the system will BLOCK the action and ask """ + name + """ to confirm before executing. You should still describe what you're about to delete and verify it's the right target before emitting the ACTION block. If a pending confirmation appears in context, only emit confirm_destructive after """ + name + """ has explicitly confirmed.
 """ + """
 Calendar:
 <!--ACTION::{"action": "add_event", "title": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}-->

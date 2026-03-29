@@ -135,6 +135,10 @@ class TestGatherAlwaysContext:
         mock_loc.get_latest.return_value = None
         mock_fs.get_exercise_state.return_value = None
 
+        # Clear any pending destructive actions from other tests
+        from actions import _pending_confirmations
+        _pending_confirmations.clear()
+
         ctx = context.gather_always_context()
         # Only datetime line
         lines = [l for l in ctx.strip().split("\n") if l.strip()]

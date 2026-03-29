@@ -3,10 +3,12 @@
 import json
 import logging
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+import db
 import calendar_store
 import vehicle_store
 import health_store
@@ -17,6 +19,205 @@ import fitbit_store
 import redis_client
 
 log = logging.getLogger("aria")
+
+
+# ---------------------------------------------------------------------------
+# Destructive action confirmation gate
+# ---------------------------------------------------------------------------
+
+# Actions that delete persistent data — require code-level confirmation.
+# send_email is NOT included (trusts prompt-level draft/confirm flow).
+# modify_event is NOT included (changes data but doesn't destroy it).
+_DESTRUCTIVE_ACTIONS = frozenset({
+    "delete_event", "delete_reminder", "delete_health_entry",
+    "delete_vehicle_entry", "delete_legal_entry", "delete_nutrition_entry",
+    "trash_email",  # Added in v0.8.7
+})
+
+# Module-level store for pending destructive actions awaiting user confirmation.
+# {confirmation_id: {"action": dict, "created": float, "description": str}}
+_pending_confirmations: dict[str, dict] = {}
+
+_PENDING_EXPIRY_SECONDS = 600  # 10 minutes
+
+
+def _cleanup_expired_pending():
+    """Remove pending actions older than the expiry window."""
+    now = time.time()
+    expired = [k for k, v in _pending_confirmations.items()
+               if now - v["created"] > _PENDING_EXPIRY_SECONDS]
+    for k in expired:
+        del _pending_confirmations[k]
+
+
+def _describe_action(action: dict) -> str:
+    """Build a human-readable description of a destructive action.
+
+    Looks up the target record so the user can verify it's the right one.
+    """
+    act = action.get("action", "?")
+    aid = action.get("id", "?")
+
+    try:
+        if act == "delete_event":
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT title, date, time FROM events WHERE id = %s",
+                    (aid,),
+                ).fetchone()
+            if row:
+                desc = f"Delete calendar event: {row['title']}"
+                if row.get("date"):
+                    desc += f" on {row['date']}"
+                if row.get("time"):
+                    desc += f" at {row['time']}"
+                return desc
+            return f"Delete calendar event (id={aid})"
+
+        elif act == "delete_reminder":
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT text, due FROM reminders WHERE id = %s",
+                    (aid,),
+                ).fetchone()
+            if row:
+                desc = f"Delete reminder: {row['text']}"
+                if row.get("due"):
+                    desc += f" (due {row['due']})"
+                return desc
+            return f"Delete reminder (id={aid})"
+
+        elif act == "delete_health_entry":
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT date, category, description FROM health_entries WHERE id = %s",
+                    (aid,),
+                ).fetchone()
+            if row:
+                return f"Delete health entry: {row['date']} {row['category']} — {row['description'][:60]}"
+            return f"Delete health entry (id={aid})"
+
+        elif act == "delete_vehicle_entry":
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT date, event_type, description FROM vehicle_entries WHERE id = %s",
+                    (aid,),
+                ).fetchone()
+            if row:
+                return f"Delete vehicle entry: {row['date']} {row['event_type']} — {row['description'][:60]}"
+            return f"Delete vehicle entry (id={aid})"
+
+        elif act == "delete_legal_entry":
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT date, entry_type, description FROM legal_entries WHERE id = %s",
+                    (aid,),
+                ).fetchone()
+            if row:
+                return f"Delete legal entry: {row['date']} {row['entry_type']} — {row['description'][:60]}"
+            return f"Delete legal entry (id={aid})"
+
+        elif act == "delete_nutrition_entry":
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT date, food_name, meal_type FROM nutrition_entries WHERE id = %s",
+                    (aid,),
+                ).fetchone()
+            if row:
+                return f"Delete nutrition entry: {row['date']} {row['meal_type']} — {row['food_name']}"
+            return f"Delete nutrition entry (id={aid})"
+
+        elif act == "trash_email":
+            email_id = action.get("email_id", "?")
+            return f"Trash email (id={email_id})"
+
+    except Exception as e:
+        log.warning("Failed to describe action %s: %s", act, e)
+
+    return f"{act} (id={aid})"
+
+
+def get_pending_confirmations() -> list[dict]:
+    """Return active (non-expired) pending confirmations for context injection."""
+    _cleanup_expired_pending()
+    return [
+        {"confirmation_id": k, "description": v["description"],
+         "created": v["created"]}
+        for k, v in _pending_confirmations.items()
+    ]
+
+
+async def execute_pending(confirmation_id: str) -> tuple[bool, str]:
+    """Execute a stored pending destructive action by confirmation ID.
+
+    Returns (success, message). The STORED action is executed — not whatever
+    ARIA might emit later. This prevents ARIA from modifying the action
+    between the block and the confirmation.
+    """
+    _cleanup_expired_pending()
+    pending = _pending_confirmations.pop(confirmation_id, None)
+    if not pending:
+        return False, "No pending action found (may have expired)."
+
+    action = pending["action"]
+    act = action.get("action")
+    aid = action.get("id", "")
+
+    try:
+        if act == "delete_event":
+            ok = await calendar_store.delete_event(aid)
+            return (True, pending["description"]) if ok else (False, "Event not found.")
+
+        elif act == "delete_reminder":
+            ok = calendar_store.delete_reminder(aid)
+            return (True, pending["description"]) if ok else (False, "Reminder not found.")
+
+        elif act == "delete_health_entry":
+            ok = health_store.delete_entry(aid)
+            return (True, pending["description"]) if ok else (False, "Health entry not found.")
+
+        elif act == "delete_vehicle_entry":
+            ok = vehicle_store.delete_entry(aid)
+            return (True, pending["description"]) if ok else (False, "Vehicle entry not found.")
+
+        elif act == "delete_legal_entry":
+            ok = legal_store.delete_entry(aid)
+            return (True, pending["description"]) if ok else (False, "Legal entry not found.")
+
+        elif act == "delete_nutrition_entry":
+            ok = nutrition_store.delete_item(aid)
+            return (True, pending["description"]) if ok else (False, "Nutrition entry not found.")
+
+        elif act == "trash_email":
+            import google_client
+            import gmail_store
+            client = google_client.get_client()
+            email_id = action.get("email_id", "")
+            await client.gmail_trash_message(email_id)
+            # Update local cache
+            try:
+                with db.get_conn() as conn:
+                    conn.execute(
+                        """UPDATE email_cache SET labels = array_append(
+                            array_remove(labels, 'INBOX'), 'TRASH')
+                           WHERE id = %s""",
+                        (email_id,),
+                    )
+            except Exception:
+                pass
+            return True, pending["description"]
+
+        else:
+            return False, f"Unknown destructive action type: {act}"
+
+    except Exception as e:
+        log.error("Failed to execute pending action %s: %s", confirmation_id, e)
+        return False, f"Failed: {e}"
+
+
+def clear_all_pending():
+    """Clear all pending actions (used when user cancels)."""
+    _pending_confirmations.clear()
 
 
 @dataclass
@@ -35,6 +236,7 @@ class ActionResult:
     metadata: dict                # {"delivery": "sms", "dispatched_task_id": "abc123"}
     claims_without_actions: list[str] = field(default_factory=list)
     expect_actions_missing: list[str] = field(default_factory=list)
+    pending_destructive: list[dict] = field(default_factory=list)
 
     def to_response(self) -> str:
         """Compose final response string with failures/warnings appended.
@@ -58,6 +260,9 @@ class ActionResult:
                 "\n\n(System note: ARIA claimed to store data but no ACTION blocks "
                 "were emitted. The data may not have been saved. Please verify or retry.)"
             )
+        if self.pending_destructive:
+            descs = [p["description"] for p in self.pending_destructive]
+            resp += "\n\nConfirmation required: " + "; ".join(descs) + ". Say 'yes' to confirm or 'no' to cancel."
         return resp
 
     # Backward compat: allow ActionResult to behave like a string in tests
@@ -398,11 +603,42 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
     action_types_found = []
     _nutrition_actions = []  # collected for post-execution tracking
     _health_meal_types = []  # collected for tracking
+    pending_destructive = []
 
     for action in parsed_actions:
         try:
             act = action.get("action")
             action_types_found.append(act)
+
+            # --- Destructive action confirmation gate ---
+            if act in _DESTRUCTIVE_ACTIONS:
+                _cleanup_expired_pending()
+                conf_id = str(uuid.uuid4())[:8]
+                desc = _describe_action(action)
+                _pending_confirmations[conf_id] = {
+                    "action": action,
+                    "created": time.time(),
+                    "description": desc,
+                }
+                pending_destructive.append(
+                    {"confirmation_id": conf_id, "description": desc})
+                log.info("[GATE] Destructive action blocked: %s → pending %s",
+                         act, conf_id)
+                if log_fn:
+                    log_fn("DESTRUCTIVE_GATE", "blocked",
+                           error=f"{act} blocked, pending={conf_id}: {desc}")
+                continue  # skip execution — user must confirm
+
+            # --- confirm_destructive: user confirmed via ARIA ---
+            if act == "confirm_destructive":
+                conf_id = action.get("confirmation_id", "")
+                ok, msg = await execute_pending(conf_id)
+                if ok:
+                    log.info("[GATE] Confirmed and executed: %s — %s",
+                             conf_id, msg)
+                else:
+                    failures.append(msg)
+                continue
 
             if act == "add_event":
                 await calendar_store.add_event(
@@ -652,6 +888,7 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
         metadata=metadata or {},
         claims_without_actions=claims_without,
         expect_actions_missing=expect_missing,
+        pending_destructive=pending_destructive,
     )
 
 

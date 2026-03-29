@@ -135,6 +135,7 @@ class TestProcessActions:
         actions.process_actions_sync(response)
         mock_ns.add_item.assert_called_once()
 
+    @patch("actions._DESTRUCTIVE_ACTIONS", frozenset())
     @patch("actions.nutrition_store")
     def test_delete_nutrition(self, mock_ns):
         mock_ns.delete_item.return_value = True

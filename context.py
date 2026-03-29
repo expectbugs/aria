@@ -149,6 +149,21 @@ def gather_always_context() -> str:
     except Exception:
         pass  # monitors table may not exist yet during migration
 
+    # Pending destructive actions awaiting confirmation
+    try:
+        from actions import get_pending_confirmations
+        pending = get_pending_confirmations()
+        if pending:
+            parts.append("PENDING ACTIONS (awaiting your confirmation):")
+            for p in pending:
+                parts.append(f"  - {p['description']}")
+            parts.append(
+                "If the user confirms, emit: "
+                '<!--ACTION::{"action": "confirm_destructive", '
+                '"confirmation_id": "<id>"}-->')
+    except Exception:
+        pass
+
     return "\n".join(parts)
 
 

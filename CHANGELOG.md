@@ -6,6 +6,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.8.4] — 2026-03-29
+
+### Added — Destructive Action Confirmation Gate
+
+- **Code-level confirmation gate** — All delete actions (`delete_event`, `delete_reminder`, `delete_health_entry`, `delete_vehicle_entry`, `delete_legal_entry`, `delete_nutrition_entry`) are physically blocked from executing without user confirmation. When ARIA emits a delete ACTION block, the system stores it as pending and appends a confirmation prompt showing exactly what will be affected.
+- **Daemon confirmation shortcut** — When the user responds with simple "yes"/"confirm"/"go ahead" and there are pending actions, the daemon executes directly without consulting ARIA. Avoids double-confirmation. Cancellation ("no"/"cancel"/"never mind") clears pending actions.
+- **Human-readable action descriptions** — `_describe_action()` looks up the target record (event title, reminder text, health entry details) so the confirmation prompt shows what will actually be deleted, not just an ID.
+- **`confirm_destructive` ACTION type** — ARIA can also confirm pending actions via `<!--ACTION::{"action": "confirm_destructive", "confirmation_id": "..."}-->` when the daemon shortcut doesn't apply.
+- **`execute_pending()`** — Executes the STORED original action, not whatever ARIA might re-emit. Prevents ARIA from modifying the action between block and confirmation.
+- **Context injection** — Pending actions appear in Tier 1 context so ARIA knows about them.
+- **10-minute expiry** — Pending actions expire after 10 minutes if not confirmed.
+- **System prompt update** — Destructive actions instruction informs ARIA about the code-level gate.
+- **`send_email` NOT gated** — Trusts the prompt-level draft/confirm flow (already a 2-turn process by design).
+- **`modify_event` NOT gated** — Changes data but doesn't destroy it; version history in Google Calendar.
+- **38 new tests** in `tests/test_destructive_gate.py` — blocking, pass-through, pending lifecycle, execution, confirmation detection, daemon shortcut, cancellation, action set membership.
+- **Total test count:** 2052 tests across 90 files, all passing
+
+---
+
 ## [0.8.3] — 2026-03-29
 
 ### Added — Tool Use Enforcement Pipeline

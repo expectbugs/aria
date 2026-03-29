@@ -118,6 +118,73 @@ def log_request(text: str, status: str, response: str = "", error: str = "",
         logging.getLogger("aria").error("Failed to log request: %s", e)
 
 
+# --- Destructive Action Confirmation Shortcut ---
+
+_CONFIRMATION_PHRASES = frozenset({
+    "yes", "yeah", "yep", "yup", "sure", "do it", "go ahead",
+    "confirm", "confirmed", "approve", "approved",
+    "ok", "okay", "k",
+    "yes delete it", "yes, delete it", "delete it",
+    "yes trash it", "yes, trash it", "trash it",
+    "yes please", "please do", "go for it",
+    "yes remove it", "yes, remove it", "remove it",
+})
+
+_CANCELLATION_PHRASES = frozenset({
+    "no", "nope", "nah", "cancel", "don't", "dont", "never mind",
+    "nevermind", "stop", "abort", "no thanks", "no thank you",
+    "no don't", "no, don't", "don't do that",
+})
+
+
+def _is_confirmation(text: str) -> bool:
+    """Detect simple, unambiguous user confirmation of a pending action.
+
+    Conservative: only matches short responses (< 40 chars) that are clearly
+    confirmatory. Anything longer is probably a new request.
+    """
+    t = text.lower().strip().rstrip("!.,")
+    return len(t) < 40 and t in _CONFIRMATION_PHRASES
+
+
+def _is_cancellation(text: str) -> bool:
+    """Detect user cancellation of a pending action."""
+    t = text.lower().strip().rstrip("!.,")
+    return len(t) < 40 and t in _CANCELLATION_PHRASES
+
+
+async def _check_pending_confirmation(text: str) -> SessionResponse | None:
+    """If user is confirming/cancelling a pending destructive action, handle it.
+
+    Returns SessionResponse if handled (caller should use it and skip ARIA),
+    or None if this isn't a confirmation/cancellation (proceed normally).
+    """
+    from actions import get_pending_confirmations, execute_pending, clear_all_pending
+
+    pending = get_pending_confirmations()
+    if not pending:
+        return None
+
+    if _is_cancellation(text):
+        clear_all_pending()
+        return SessionResponse(
+            text="Cancelled — no changes made.", tool_calls=[])
+
+    if _is_confirmation(text):
+        # Execute the most recent pending action
+        conf_id = pending[0]["confirmation_id"]
+        desc = pending[0]["description"]
+        ok, msg = await execute_pending(conf_id)
+        if ok:
+            return SessionResponse(
+                text=f"Done — {desc}.", tool_calls=[])
+        else:
+            return SessionResponse(
+                text=f"Couldn't complete that: {msg}", tool_calls=[])
+
+    return None  # Not a simple confirmation — let ARIA handle it
+
+
 # --- Query Routing ---
 
 async def _route_query(text: str, context: str = "",
@@ -502,6 +569,13 @@ async def ask(req: AskRequest, request: Request):
         raise HTTPException(status_code=400, detail="Empty input")
 
     try:
+        # Destructive action confirmation shortcut
+        shortcut = await _check_pending_confirmation(text)
+        if shortcut:
+            duration = time.time() - start
+            log_request(text, "ok", response=shortcut.text, duration=duration)
+            return AskResponse(response=shortcut.text)
+
         extra_context = await _get_context_for_text(text)
         query_result = await _route_query(text, extra_context)
         delivery_meta = {"channel": req.channel}
@@ -555,6 +629,25 @@ async def _process_task(task_id: str, text: str, channel: str = "voice"):
             _tasks[task_id]["trace"] = trace
 
         _t("start", text)
+
+        # Destructive action confirmation shortcut
+        shortcut = await _check_pending_confirmation(text)
+        if shortcut:
+            _t("confirmation_shortcut", shortcut.text)
+            response_text = shortcut.text
+            duration = time.time() - start
+            log_request(text, "ok", response=response_text, duration=duration)
+            if channel == "cli":
+                _tasks[task_id].update({
+                    "status": "done", "audio": b"",
+                    "response_text": response_text})
+            else:
+                dr = await delivery_engine.execute_delivery(
+                    response_text, source=channel, push_voice=False)
+                _tasks[task_id].update({
+                    "status": "done", "audio": dr.get("audio", b""),
+                    "response_text": response_text})
+            return
 
         extra_context = await _get_context_for_text(text)
         _t("context", extra_context)
@@ -895,6 +988,19 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
         # Make transcript available to /ask/status immediately (before Claude runs)
         _tasks[task_id]["transcript"] = user_text
 
+        # Destructive action confirmation shortcut
+        shortcut = await _check_pending_confirmation(user_text)
+        if shortcut:
+            response = shortcut.text
+            duration = time.time() - start
+            log_request(user_text, "ok", response=response, duration=duration)
+            dr = await delivery_engine.execute_delivery(
+                response, source="voice", push_voice=False)
+            _tasks[task_id].update({
+                "status": "done", "audio": dr.get("audio", b""),
+                "response_text": response})
+            return
+
         # Step 2: Build context and query ARIA (same pipeline as /ask)
         extra_context = await _get_context_for_text(user_text)
         query_result = await _route_query(user_text, extra_context)
@@ -1090,6 +1196,17 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
 
         # Build context — same unified context as voice/file, plus SMS channel note
         user_text = body if body else "The user sent a file via SMS."
+
+        # Destructive action confirmation shortcut
+        shortcut = await _check_pending_confirmation(user_text)
+        if shortcut:
+            duration = time.time() - start
+            log_request(f"[sms:{from_number}] {user_text}", "ok",
+                        response=shortcut.text, duration=duration)
+            await delivery_engine.execute_delivery(
+                shortcut.text, source="sms", push_voice=True,
+                sms_target=from_number)
+            return
         has_media = bool(file_blocks)
 
         extra_context = await _get_context_for_text(

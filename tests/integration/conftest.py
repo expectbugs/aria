@@ -127,6 +127,17 @@ def clean_tables(test_pool):
     yield
 
 
+@pytest.fixture(autouse=True)
+def bypass_destructive_gate():
+    """Integration tests test store operations, not the confirmation gate.
+
+    The gate is tested separately in test_destructive_gate.py.
+    """
+    import actions
+    with patch.object(actions, "_DESTRUCTIVE_ACTIONS", frozenset()):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Fixture loading — real production data shapes for replay tests
 # ---------------------------------------------------------------------------
