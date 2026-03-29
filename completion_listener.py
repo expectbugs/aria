@@ -84,10 +84,16 @@ async def _on_completion(task_id: str, status: str, result_text: str):
 
         # Delivery routing via shared execute_delivery (push voice — no task to poll)
         import delivery_engine as _de
-        dr = await _de.execute_delivery(
-            response, content_type="task_completion",
-            source=task_data.get("channel", "voice"),
-            push_voice=True)
+        task_channel = task_data.get("channel", "voice")
+        if task_channel == "cli":
+            # CLI channel: deliver as image to phone (user is at PC, phone nearby)
+            dr = await _de.execute_delivery(
+                response, content_type="task_completion",
+                source="monitor_finding", push_voice=False)
+        else:
+            dr = await _de.execute_delivery(
+                response, content_type="task_completion",
+                source=task_channel, push_voice=True)
         log.info("Task %s result delivered via %s", task_id, dr["method"])
 
     except Exception as e:

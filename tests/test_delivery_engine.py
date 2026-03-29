@@ -41,7 +41,11 @@ def _mock_devices(phone=True, glasses=False, watch=False):
 class TestGetUserState:
     @patch("delivery_engine._get_device_states", return_value=_mock_devices(phone=True))
     @patch("delivery_engine.location_store")
-    def test_home_available(self, mock_loc, mock_devs):
+    @patch("delivery_engine.datetime")
+    def test_home_available(self, mock_dt, mock_loc, mock_devs):
+        # Pin to 2pm — outside quiet hours (0-7am) so activity is "available"
+        mock_dt.now.return_value = datetime(2026, 3, 28, 14, 0)
+        mock_dt.fromisoformat = datetime.fromisoformat
         mock_loc.get_latest.return_value = _mock_location("Rapids Trail, Waukesha")
         state = get_user_state()
         assert state.activity == "available"

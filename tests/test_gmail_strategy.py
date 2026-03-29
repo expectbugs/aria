@@ -558,7 +558,11 @@ class TestTier3AIJudgment:
             "subject": "Important notice",
             "snippet": "Please review the attached document",
         }
+        # new=lambda forces a plain callable — patch() auto-detects async def
+        # targets and creates AsyncMock even with return_value, which still
+        # produces an unawaited coroutine when asyncio.run is also mocked.
         with patch("asyncio.get_running_loop", side_effect=RuntimeError), \
+             patch("aria_api.ask_haiku", new=lambda *a, **kw: "important"), \
              patch("asyncio.run", return_value="important"):
             result = gmail_strategy._classify_tier3(email)
         assert result.classification == "important"
@@ -572,6 +576,7 @@ class TestTier3AIJudgment:
             "snippet": "Test",
         }
         with patch("asyncio.get_running_loop", side_effect=RuntimeError), \
+             patch("aria_api.ask_haiku", new=lambda *a, **kw: "routine"), \
              patch("asyncio.run", side_effect=Exception("API down")):
             result = gmail_strategy._classify_tier3(email)
         assert result.classification == "routine"

@@ -51,7 +51,7 @@ About {name}:
 
 Known places: {places_str}.
 
-Channels: requests arrive via voice (Tasker), file share (AutoShare), or SMS/MMS (Twilio). For voice, respond naturally for speech. For SMS (noted in context), respond naturally — long responses are split across multiple messages automatically. No markdown or special formatting.
+Channels: requests arrive via voice (Tasker), file share (AutoShare), SMS/MMS (Twilio), or CLI (terminal). For voice, respond naturally for speech. For SMS (noted in context), respond naturally — long responses are split across multiple messages automatically. No markdown or special formatting. For CLI, respond with full detail — the user is reading on a screen, not listening. Markdown is acceptable for CLI channel.
 
 DATA ACCESS:
 You can query data stores using the query helper via your Bash tool:

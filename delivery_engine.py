@@ -235,6 +235,8 @@ def evaluate(content_type: str = "response",
         return DeliveryDecision("image", "ARIA requested glasses, not connected — image fallback")
 
     # Default by source channel
+    if source == "cli":
+        return DeliveryDecision("text", "CLI channel — text response only")
     if source == "sms":
         return DeliveryDecision("sms", "SMS request — SMS response")
     if source == "watch":

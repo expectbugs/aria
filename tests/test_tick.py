@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta
 from unittest.mock import patch, MagicMock, call
 
 import tick
+from delivery_engine import DeliveryDecision
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +91,11 @@ class TestFireTimer:
     @patch("tick.sms.send_to_owner")
     @patch("tick.timer_store.complete_timer")
     @patch("tick.is_quiet_hours", return_value=False)
-    def test_sms_delivery(self, mock_quiet, mock_complete, mock_send):
+    @patch("delivery_engine.log_decision")
+    @patch("delivery_engine.evaluate", return_value=DeliveryDecision("sms", "test"))
+    @patch("delivery_engine.get_user_state")
+    def test_sms_delivery(self, mock_state, mock_eval, mock_log_dec,
+                          mock_quiet, mock_complete, mock_send):
         timer = {
             "id": "t1", "delivery": "sms", "message": "Laundry done!",
             "label": "Laundry", "priority": "gentle",
@@ -137,7 +142,11 @@ class TestFireTimer:
     @patch("tick.sms.send_to_owner")
     @patch("tick.timer_store.complete_timer")
     @patch("tick.is_quiet_hours", return_value=False)
-    def test_complete_before_delivery(self, mock_quiet, mock_complete, mock_send):
+    @patch("delivery_engine.log_decision")
+    @patch("delivery_engine.evaluate", return_value=DeliveryDecision("sms", "test"))
+    @patch("delivery_engine.get_user_state")
+    def test_complete_before_delivery(self, mock_state, mock_eval, mock_log_dec,
+                                      mock_quiet, mock_complete, mock_send):
         """C8: Timer is marked complete before delivery attempt."""
         call_order = []
         mock_complete.side_effect = lambda *a: call_order.append("complete")

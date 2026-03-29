@@ -93,10 +93,13 @@ START_TIME = time.time()
 
 class AskRequest(BaseModel):
     text: str
+    channel: str = "voice"
+    include_audio: bool = False
 
 class AskResponse(BaseModel):
     response: str
     source: str = "claude"
+    audio: str | None = None
 
 
 # --- Request Logging ---
@@ -471,7 +474,7 @@ async def ask(req: AskRequest, request: Request):
     try:
         extra_context = await _get_context_for_text(text)
         response = await _route_query(text, extra_context)
-        delivery_meta = {"channel": "voice"}
+        delivery_meta = {"channel": req.channel}
         result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
         result = await _verify_and_maybe_retry(text, extra_context, result, log_fn=log_request)
         response = result.to_response()
@@ -479,7 +482,15 @@ async def ask(req: AskRequest, request: Request):
         duration = time.time() - start
         log_request(text, "ok", response=response, duration=duration)
 
-        return AskResponse(response=response)
+        audio_b64 = None
+        if req.include_audio:
+            try:
+                audio_bytes = await _generate_tts(response)
+                audio_b64 = base64.b64encode(audio_bytes).decode()
+            except Exception as e:
+                log.warning("TTS generation failed for /ask include_audio: %s", e)
+
+        return AskResponse(response=response, audio=audio_b64)
 
     except Exception as e:
         duration = time.time() - start
@@ -501,13 +512,13 @@ async def ask_audio(req: AskRequest, request: Request):
         raise HTTPException(status_code=500, detail=f"TTS error: {e}")
 
 
-async def _process_task(task_id: str, text: str):
+async def _process_task(task_id: str, text: str, channel: str = "voice"):
     """Background worker for async ask processing."""
     try:
         start = time.time()
         extra_context = await _get_context_for_text(text)
         response = await _route_query(text, extra_context)
-        delivery_meta = {"channel": "voice"}
+        delivery_meta = {"channel": channel}
         result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
         result = await _verify_and_maybe_retry(text, extra_context, result, log_fn=log_request)
         response_text = result.to_response()
@@ -515,14 +526,28 @@ async def _process_task(task_id: str, text: str):
         duration = time.time() - start
         log_request(text, "ok", response=response_text, duration=duration)
 
-        hint = delivery_meta.get("delivery")
-        dr = await delivery_engine.execute_delivery(
-            response_text, source="voice", hint=hint, push_voice=False)
-        _tasks[task_id].update({
-            "status": "done",
-            "audio": dr["audio"],
-            **({"delivery": dr["method"]} if dr["method"] != "voice" else {}),
-        })
+        if channel == "cli":
+            # CLI channel: generate TTS, no phone push
+            audio = b""
+            try:
+                audio = await _generate_tts(response_text)
+            except Exception as e:
+                log.warning("TTS generation failed for cli task: %s", e)
+            _tasks[task_id].update({
+                "status": "done",
+                "audio": audio,
+                "response_text": response_text,
+            })
+        else:
+            hint = delivery_meta.get("delivery")
+            dr = await delivery_engine.execute_delivery(
+                response_text, source=channel, hint=hint, push_voice=False)
+            _tasks[task_id].update({
+                "status": "done",
+                "audio": dr["audio"],
+                "response_text": response_text,
+                **({"delivery": dr["method"]} if dr["method"] != "voice" else {}),
+            })
     except Exception as e:
         log.exception("Task %s failed: %s", task_id, e)
         log_request(text, "error", error=str(e))
@@ -540,13 +565,13 @@ async def ask_start(req: AskRequest, request: Request):
 
     task_id = str(uuid.uuid4())[:8]
     _tasks[task_id] = {"status": "processing", "created": time.time()}
-    asyncio.create_task(_process_task(task_id, text))
+    asyncio.create_task(_process_task(task_id, text, channel=req.channel))
     return {"task_id": task_id}
 
 
 async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
                              mime_type: str | None, caption: str,
-                             saved_path: str = ""):
+                             saved_path: str = "", channel: str = "voice"):
     """Background worker for async file processing."""
     try:
         start = time.time()
@@ -569,7 +594,7 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         )
 
         response = await _route_query(user_text, extra_context, file_blocks)
-        delivery_meta = {"channel": "voice"}
+        delivery_meta = {"channel": channel}
         result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
         result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
         response = result.to_response()
@@ -578,14 +603,27 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         log_request(f"[file:{filename}] {user_text}", "ok",
                     response=response, duration=duration)
 
-        hint = delivery_meta.get("delivery")
-        dr = await delivery_engine.execute_delivery(
-            response, source="file", hint=hint, push_voice=False)
-        _tasks[task_id].update({
-            "status": "done",
-            "audio": dr["audio"],
-            **({"delivery": dr["method"]} if dr["method"] != "voice" else {}),
-        })
+        if channel == "cli":
+            audio = b""
+            try:
+                audio = await _generate_tts(response)
+            except Exception as e:
+                log.warning("TTS generation failed for cli file task: %s", e)
+            _tasks[task_id].update({
+                "status": "done",
+                "audio": audio,
+                "response_text": response,
+            })
+        else:
+            hint = delivery_meta.get("delivery")
+            dr = await delivery_engine.execute_delivery(
+                response, source="file", hint=hint, push_voice=False)
+            _tasks[task_id].update({
+                "status": "done",
+                "audio": dr["audio"],
+                "response_text": response,
+                **({"delivery": dr["method"]} if dr["method"] != "voice" else {}),
+            })
     except Exception as e:
         log_request(f"[file:{filename}] {caption}", "error", error=str(e))
         _tasks[task_id].update({"status": "error", "error": str(e)})
@@ -637,11 +675,13 @@ async def ask_file(request: Request):
     saved_path = inbox / f"{ts}_{filename}"
     saved_path.write_bytes(file_bytes)
 
+    channel = request.query_params.get("channel", "voice")
+
     task_id = str(uuid.uuid4())[:8]
     _tasks[task_id] = {"status": "processing", "created": time.time()}
     asyncio.create_task(
         _process_file_task(task_id, file_bytes, filename, mime_type, text,
-                           str(saved_path))
+                           str(saved_path), channel=channel)
     )
     return {"task_id": task_id}
 
@@ -692,6 +732,8 @@ async def ask_status(task_id: str, request: Request):
         content = {"status": "done"}
         if task.get("delivery"):
             content["delivery"] = task["delivery"]
+        if task.get("response_text"):
+            content["response"] = task["response_text"]
         return JSONResponse(status_code=200, content=content)
 
 
@@ -772,6 +814,7 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
         _tasks[task_id].update({
             "status": "done",
             "audio": dr["audio"],
+            "response_text": response,
             "transcript": user_text,
             **({"delivery": dr["method"]} if dr["method"] != "voice" else {}),
         })

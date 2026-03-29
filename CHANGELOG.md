@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.8.1] — 2026-03-28
+
+### Added — CLI Channel
+
+- **`aria_cli.py`** — Interactive CLI wrapper for talking to ARIA from the terminal. Text conversation loop with readline history, file input (`/file`), optional audio playback (`--audio` flag / `/audio` toggle). Uses `channel="cli"` for proper delivery routing.
+- **CLI channel support in daemon** — `AskRequest` accepts `channel` (default "voice") and `include_audio` (default false). `/ask` optionally returns base64 WAV alongside text. `/ask/start`, `/ask/file` propagate channel. `/ask/status` now returns response text when task is done.
+- **Delivery engine CLI routing** — `evaluate(source="cli")` returns "text" method, preventing phone pushes for CLI-originated requests.
+- **System prompt CLI awareness** — ARIA knows about CLI channel, uses full detail and markdown when responding to CLI requests.
+- **14 new tests** in `tests/test_cli_channel.py` covering model fields, channel propagation, audio inclusion, delivery engine routing, and async task flow.
+
+### Fixed
+
+- **3 time-dependent test failures** — `test_delivery_engine::test_home_available`, `test_tick::test_sms_delivery`, `test_tick::test_complete_before_delivery` all failed during quiet hours (midnight-7am) because they didn't mock `datetime.now()` or the delivery engine's time-based routing. Added proper time/delivery mocks.
+- **Unawaited coroutine warning** in `test_gmail_strategy` — `_classify_tier3` tests mocked `asyncio.run` but not `ask_haiku`, leaving a real coroutine unawaited. Fixed with `new=lambda` to bypass Python's `AsyncMock` auto-detection on `async def` targets.
+
 ## [0.8.0] — 2026-03-28
 
 ### Added — Phase 4b: Gmail + Google Calendar Intelligence
