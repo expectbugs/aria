@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
@@ -50,6 +51,7 @@ class ClassificationResult:
     tier: str             # tier1_hard, tier2_pattern, tier3_ai
     confidence: float     # 0.0-1.0
     reason: str           # human-readable explanation
+    category: str | None = None  # organizational tag (Financial, Physical Mail, etc.)
 
 
 # --- Rules Loading ---
@@ -120,7 +122,16 @@ def classify_batch(emails: list[dict]) -> list[ClassificationResult]:
 # --- Tier 1: Hard Rules ---
 
 def _classify_tier1(email: dict) -> ClassificationResult | None:
-    """Deterministic rules from gmail_rules.yaml."""
+    """Deterministic rules from gmail_rules.yaml.
+
+    Check order (first match wins):
+      1. Global content overrides (verification codes, OTPs — time-aware)
+      2. Active email watches (user-requested alerts for expected emails)
+      3. Per-sender content overrides
+      4. Always-important senders/domains
+      5. Always-junk senders/domains
+      6. Conversation threads
+    """
     rules = load_rules()
     from_addr = (email.get("from_address") or "").lower()
     from_domain = from_addr.split("@")[-1] if "@" in from_addr else ""
@@ -128,7 +139,37 @@ def _classify_tier1(email: dict) -> ClassificationResult | None:
     body = email.get("body") or ""
     content = f"{subject} {body}"
 
-    # Always important senders/domains
+    # 1. Global content overrides (checked BEFORE any sender rules)
+    result = _check_global_content_overrides(email, rules, content)
+    if result:
+        return result
+
+    # 2. Active email watches
+    watch_result = _check_email_watches(email, from_addr, content)
+    if watch_result:
+        return watch_result
+
+    # 3. Per-sender content overrides (content_pattern is optional)
+    for override in rules.get("content_overrides", []):
+        sender_pat = override.get("sender_pattern", "")
+        if not sender_pat:
+            continue
+        sender_str = from_addr + " " + (email.get("from_name") or "")
+        if not re.search(sender_pat, sender_str, re.IGNORECASE):
+            continue
+        content_pat = override.get("content_pattern", "")
+        if content_pat and not re.search(content_pat, content, re.IGNORECASE):
+            continue
+        classification = override.get("classification", ROUTINE)
+        cat = override.get("category")
+        reason_parts = [f"Content override: {sender_pat}"]
+        if content_pat:
+            reason_parts.append(f"+ {content_pat}")
+        return ClassificationResult(
+            classification, "tier1_hard", 0.9,
+            " ".join(reason_parts), category=cat)
+
+    # 4. Always important senders/domains
     important = rules.get("always_important", {})
     if from_addr in [s.lower() for s in important.get("senders", [])]:
         return ClassificationResult(IMPORTANT, "tier1_hard", 1.0,
@@ -137,7 +178,7 @@ def _classify_tier1(email: dict) -> ClassificationResult | None:
         return ClassificationResult(IMPORTANT, "tier1_hard", 1.0,
                                     f"Domain {from_domain} in always_important")
 
-    # Always junk senders/domains
+    # 5. Always junk senders/domains
     junk = rules.get("always_junk", {})
     if from_addr in [s.lower() for s in junk.get("senders", [])]:
         return ClassificationResult(JUNK, "tier1_hard", 1.0,
@@ -146,26 +187,143 @@ def _classify_tier1(email: dict) -> ClassificationResult | None:
         return ClassificationResult(JUNK, "tier1_hard", 1.0,
                                     f"Domain {from_domain} in always_junk")
 
-    # Content overrides (per-sender content patterns)
-    for override in rules.get("content_overrides", []):
-        sender_pat = override.get("sender_pattern", "")
-        content_pat = override.get("content_pattern", "")
-        classification = override.get("classification", ROUTINE)
-        if sender_pat and content_pat:
-            if re.search(sender_pat, from_addr + " " + (email.get("from_name") or ""),
-                        re.IGNORECASE):
-                if re.search(content_pat, content, re.IGNORECASE):
-                    return ClassificationResult(
-                        classification, "tier1_hard", 0.9,
-                        f"Content override: {sender_pat} + {content_pat}")
-
-    # Conversation threads the user has replied to
+    # 6. Conversation threads the user has replied to
     thread_id = email.get("thread_id")
-    if thread_id and thread_id in rules.get("conversation_threads", []):
-        return ClassificationResult(CONVERSATION, "tier1_hard", 0.95,
-                                    "Active conversation thread")
+    if thread_id:
+        if thread_id in rules.get("conversation_threads", []):
+            return ClassificationResult(CONVERSATION, "tier1_hard", 0.95,
+                                        "Active conversation thread (manual)")
+        if _user_participated_in_thread(thread_id):
+            return ClassificationResult(CONVERSATION, "tier1_hard", 0.95,
+                                        "Active conversation thread (user replied)")
 
     return None
+
+
+def _user_participated_in_thread(thread_id: str) -> bool:
+    """Check if user has sent any emails in this thread (DB lookup)."""
+    try:
+        import db as _db
+        with _db.get_conn() as conn:
+            row = conn.execute(
+                """SELECT 1 FROM email_cache
+                   WHERE thread_id = %s AND 'SENT' = ANY(labels)
+                   LIMIT 1""",
+                (thread_id,),
+            ).fetchone()
+            return row is not None
+    except Exception:
+        return False
+
+
+def _check_email_watches(email: dict, from_addr: str,
+                          content: str) -> ClassificationResult | None:
+    """Check active email watches — user-requested alerts for expected emails.
+
+    Both sender_pattern and content_pattern are optional (but at least one
+    must be present). A watch matches if all present patterns match.
+    Matching watches are fulfilled (one-shot).
+    """
+    try:
+        import gmail_store
+        watches = gmail_store.get_active_watches()
+    except Exception:
+        return None
+
+    email_id = email.get("id") or ""
+    from_name = email.get("from_name") or ""
+    sender_str = f"{from_addr} {from_name}"
+
+    for watch in watches:
+        sender_pat = watch.get("sender_pattern") or ""
+        content_pat = watch.get("content_pattern") or ""
+
+        if not sender_pat and not content_pat:
+            continue
+
+        if sender_pat and not re.search(sender_pat, sender_str, re.IGNORECASE):
+            continue
+        if content_pat and not re.search(content_pat, content, re.IGNORECASE):
+            continue
+
+        # Match — fulfill the watch
+        classification = watch.get("classification", IMPORTANT)
+        description = watch.get("description", "")
+        try:
+            gmail_store.fulfill_watch(int(watch["id"]), email_id)
+            log.info("Email watch fulfilled: %s (email %s)", description, email_id)
+        except Exception as e:
+            log.warning("Failed to fulfill watch %s: %s", watch.get("id"), e)
+
+        return ClassificationResult(
+            classification, "tier1_hard", 1.0,
+            f"Email watch matched: {description}",
+            category="Watched")
+
+    return None
+
+
+def _check_global_content_overrides(email: dict, rules: dict,
+                                     content: str) -> ClassificationResult | None:
+    """Check global content overrides — patterns that override ALL sender rules.
+
+    Supports time-aware rules: classification_within applies if the email
+    is newer than max_age_hours, classification_after applies otherwise.
+    """
+    subject = email.get("subject") or ""
+    for override in rules.get("global_content_overrides", []):
+        content_pat = override.get("content_pattern", "")
+        if not content_pat:
+            continue
+        # check_subject_only: only match against subject, not full body
+        # (prevents FAQ/footer text in body from triggering verification patterns)
+        search_text = subject if override.get("check_subject_only") else content
+        if not re.search(content_pat, search_text, re.IGNORECASE):
+            continue
+
+        cat = override.get("category")
+        max_age = override.get("max_age_hours")
+        if max_age is not None:
+            email_age_hours = _email_age_hours(email)
+            if email_age_hours is not None and email_age_hours > float(max_age):
+                cls_after = override.get("classification_after", JUNK)
+                return ClassificationResult(
+                    cls_after, "tier1_hard", 0.95,
+                    f"Global content override (expired, {email_age_hours:.1f}h old): {content_pat}",
+                    category=cat)
+            cls_within = override.get("classification_within", IMPORTANT)
+            return ClassificationResult(
+                cls_within, "tier1_hard", 0.95,
+                f"Global content override (fresh, {email_age_hours:.1f}h old): {content_pat}",
+                category=cat)
+
+        # No time constraint — simple global override
+        classification = override.get("classification", IMPORTANT)
+        return ClassificationResult(
+            classification, "tier1_hard", 0.95,
+            f"Global content override: {content_pat}", category=cat)
+
+    return None
+
+
+def _email_age_hours(email: dict) -> float | None:
+    """Calculate email age in hours from its timestamp."""
+    ts = email.get("timestamp")
+    if not ts:
+        return None
+    try:
+        if isinstance(ts, str):
+            # Handle both naive and aware datetime strings
+            from dateutil.parser import parse as parse_dt
+            ts = parse_dt(ts)
+        if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+            now = datetime.now(timezone.utc)
+        else:
+            now = datetime.now()
+        delta = now - ts
+        return delta.total_seconds() / 3600
+    except Exception:
+        return None
 
 
 # --- Tier 2: Pattern Scoring ---
@@ -348,3 +506,49 @@ def _classify_tier3(email: dict) -> ClassificationResult:
         log.error("Tier 3 classification failed: %s", e)
         return ClassificationResult(ROUTINE, "tier3_ai", 0.2,
                                     f"AI classification failed: {e}")
+
+
+# --- Auto-Cleanup ---
+
+def get_auto_cleanup_candidates() -> list[dict]:
+    """Find emails matching auto_cleanup rules that have expired.
+
+    Returns list of dicts with 'email_id' and 'rule' for tick.py to trash.
+    """
+    rules = load_rules()
+    cleanup_rules = rules.get("auto_cleanup", [])
+    if not cleanup_rules:
+        return []
+
+    candidates = []
+    try:
+        import db as _db
+        with _db.get_conn() as conn:
+            for rule in cleanup_rules:
+                sender_pat = rule.get("sender_pattern", "")
+                max_age = rule.get("max_age_hours")
+                if not sender_pat or not max_age:
+                    continue
+
+                cutoff = datetime.now(timezone.utc) - timedelta(
+                    hours=float(max_age))
+                rows = conn.execute(
+                    """SELECT id, from_address, subject FROM email_cache
+                       WHERE from_address ILIKE %s
+                       AND timestamp < %s
+                       AND NOT ('TRASH' = ANY(labels))""",
+                    (f"%{sender_pat}%", cutoff),
+                ).fetchall()
+
+                for row in rows:
+                    candidates.append({
+                        "email_id": row["id"],
+                        "from": row["from_address"],
+                        "subject": row["subject"],
+                        "rule": sender_pat,
+                        "action": rule.get("action", "trash"),
+                    })
+    except Exception as e:
+        log.error("Auto-cleanup candidate lookup failed: %s", e)
+
+    return candidates

@@ -541,6 +541,29 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
                         metadata["dispatched_task_id"] = task_id
                 else:
                     failures.append("Failed to dispatch task — Redis unavailable")
+            elif act == "watch_email":
+                import gmail_store
+                watch_id = gmail_store.add_watch(
+                    sender_pattern=action.get("sender_pattern"),
+                    content_pattern=action.get("content_pattern"),
+                    classification=action.get("classification", "important"),
+                    description=action.get("description", ""),
+                    expires_days=int(action.get("expires_days", 30)),
+                )
+                log.info("Email watch created: id=%d, desc='%s'",
+                         watch_id, action.get("description", ""))
+            elif act == "cancel_watch":
+                import gmail_store
+                watch_id = action.get("id")
+                desc = action.get("description", "")
+                if watch_id:
+                    if not gmail_store.cancel_watch(int(watch_id)):
+                        failures.append(f"No active watch found with id {watch_id}.")
+                elif desc:
+                    if not gmail_store.cancel_watch_by_description(desc):
+                        failures.append(f"No active watch matching '{desc}'.")
+                else:
+                    failures.append("cancel_watch needs 'id' or 'description'.")
             elif act == "send_email":
                 try:
                     import google_client

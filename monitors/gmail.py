@@ -50,6 +50,7 @@ class GmailMonitor(BaseMonitor):
                     classification=result.classification,
                     confidence=result.confidence,
                     reason=result.reason,
+                    category=result.category,
                 )
 
                 # Produce findings for important/urgent/actionable emails

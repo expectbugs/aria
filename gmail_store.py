@@ -325,14 +325,15 @@ def get_email_count(hours: int = 24) -> dict:
 # --- Classification Storage ---
 
 def save_classification(email_id: str, tier: str, classification: str,
-                        confidence: float, reason: str):
+                        confidence: float, reason: str,
+                        category: str | None = None):
     """Insert a classification decision."""
     with db.get_conn() as conn:
         conn.execute(
             """INSERT INTO email_classifications
-               (email_id, tier, classification, confidence, reason)
-               VALUES (%s, %s, %s, %s, %s)""",
-            (email_id, tier, classification, confidence, reason),
+               (email_id, tier, classification, confidence, reason, category)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (email_id, tier, classification, confidence, reason, category),
         )
 
 
@@ -360,6 +361,76 @@ def record_user_override(email_id: str, override_text: str):
         )
 
 
+# --- Email Watches ---
+
+def add_watch(sender_pattern: str | None, content_pattern: str | None,
+              classification: str = "important", description: str = "",
+              expires_days: int = 30) -> int:
+    """Create an email watch. Returns the watch ID."""
+    expires_at = datetime.now() + timedelta(days=expires_days)
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """INSERT INTO email_watches
+               (sender_pattern, content_pattern, classification, description, expires_at)
+               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+            (sender_pattern, content_pattern, classification, description, expires_at),
+        ).fetchone()
+    return row["id"]
+
+
+def cancel_watch(watch_id: int) -> bool:
+    """Cancel an active watch. Returns True if found and cancelled."""
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "UPDATE email_watches SET active = FALSE WHERE id = %s AND active = TRUE RETURNING id",
+            (watch_id,),
+        ).fetchone()
+    return row is not None
+
+
+def cancel_watch_by_description(description: str) -> bool:
+    """Cancel active watches matching a description pattern. Returns True if any cancelled."""
+    with db.get_conn() as conn:
+        row = conn.execute(
+            """UPDATE email_watches SET active = FALSE
+               WHERE active = TRUE AND description ILIKE %s RETURNING id""",
+            (f"%{description}%",),
+        ).fetchone()
+    return row is not None
+
+
+def fulfill_watch(watch_id: int, email_id: str):
+    """Mark a watch as fulfilled by a specific email."""
+    with db.get_conn() as conn:
+        conn.execute(
+            """UPDATE email_watches
+               SET fulfilled_at = NOW(), fulfilled_email_id = %s, active = FALSE
+               WHERE id = %s""",
+            (email_id, watch_id),
+        )
+
+
+def get_active_watches() -> list[dict]:
+    """Get all active, non-expired watches."""
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM email_watches
+               WHERE active = TRUE
+               AND (expires_at IS NULL OR expires_at > NOW())
+               ORDER BY created_at DESC""",
+        ).fetchall()
+    return [db.serialize_row(r) for r in rows]
+
+
+def expire_watches():
+    """Deactivate watches that have passed their expiry."""
+    with db.get_conn() as conn:
+        conn.execute(
+            """UPDATE email_watches SET active = FALSE
+               WHERE active = TRUE AND expires_at IS NOT NULL AND expires_at <= NOW()""",
+        )
+
+
 # --- Context Builders ---
 
 def get_email_context(today: str) -> str:
@@ -378,6 +449,14 @@ def get_email_context(today: str) -> str:
             parts.append(f"  - {sender}: {e.get('subject', '(no subject)')}")
         if len(unread) > 5:
             parts.append(f"  ... and {len(unread) - 5} more")
+
+    # Active email watches
+    watches = get_active_watches()
+    if watches:
+        parts.append(f"Active email watches ({len(watches)}):")
+        for w in watches:
+            desc = w.get("description") or f"sender={w.get('sender_pattern', '?')}"
+            parts.append(f"  - {desc}")
 
     # Today's email summary
     counts = get_email_count(hours=24)

@@ -121,6 +121,10 @@ Email — """ + name + """'s Gmail is synced and classified automatically. Impor
 - Reply: """ + name + """ says "reply to that email and say..." → draft the response, present it for confirmation, then emit the send_email ACTION block ONLY after """ + name + """ explicitly approves. NEVER auto-send.
 - Calendar extraction: if an email mentions an appointment (date + time + context), ask """ + name + """ if he wants it added to his calendar. NEVER auto-add.
 <!--ACTION::{"action": "send_email", "to": "recipient@example.com", "subject": "Re: Subject", "body": "Email body text", "in_reply_to": "original_message_id", "thread_id": "gmail_thread_id"}-->
+- Watch for email: """ + name + """ says "tell me when I get an email from X about Y" → create an email watch. The watch overrides normal sender rules — even if X is normally classified as junk, the matching email gets surfaced immediately. Watches are one-shot (auto-fulfilled when matched) and expire after 30 days by default.
+<!--ACTION::{"action": "watch_email", "sender_pattern": "twilio", "content_pattern": "refund", "classification": "urgent", "description": "Twilio refund status"}-->
+<!--ACTION::{"action": "cancel_watch", "description": "Twilio refund"}-->
+At least one of sender_pattern or content_pattern is required. Both are regex patterns. expires_days defaults to 30.
 
 Calendar events sync with Google Calendar. Events created by voice appear in Google Calendar within seconds. Edits and deletions sync both ways. The add_event/modify_event/delete_event ACTION blocks work the same — Google sync is automatic.
 

@@ -47,7 +47,8 @@ ALL_TABLES = [
     "tool_traces", "entity_mentions", "interaction_quality",
     "monitor_findings", "verification_log",
     "delivery_log", "device_state", "deferred_deliveries",
-    "email_cache", "email_classifications", "calendar_sync_state",
+    "email_cache", "email_classifications", "email_watches",
+    "calendar_sync_state",
 ]
 
 

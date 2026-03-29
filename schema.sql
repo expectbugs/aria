@@ -174,11 +174,27 @@ CREATE TABLE IF NOT EXISTS email_classifications (
     classification TEXT NOT NULL,
     confidence FLOAT,
     reason TEXT,
+    category TEXT,
     user_override TEXT,
     surfaced BOOLEAN DEFAULT FALSE,
     acted_on BOOLEAN DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_email_class_email ON email_classifications(email_id);
+
+-- Email watches (temporary alerts for expected emails)
+CREATE TABLE IF NOT EXISTS email_watches (
+    id SERIAL PRIMARY KEY,
+    sender_pattern TEXT,
+    content_pattern TEXT,
+    classification TEXT NOT NULL DEFAULT 'important',
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    fulfilled_at TIMESTAMPTZ,
+    fulfilled_email_id TEXT,
+    active BOOLEAN DEFAULT TRUE
+);
+CREATE INDEX IF NOT EXISTS idx_email_watches_active ON email_watches(active) WHERE active = TRUE;
 
 -- Calendar sync state (singleton row for incremental sync token)
 CREATE TABLE IF NOT EXISTS calendar_sync_state (

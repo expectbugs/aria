@@ -13,9 +13,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **`gmail_store.py`** — Full email cache with tsvector full-text search, classification storage, context builders for ARIA injection, attachment download, From header parsing, Gmail category detection
 - **`gmail_strategy.py`** — Three-tier email classification engine: Tier 1 hard rules (YAML sender/domain/content), Tier 2 pattern scoring (Gmail category, domain reputation, promo patterns, reply history, entity DB), Tier 3 AI judgment (Haiku for uncertain emails)
 - **`monitors/gmail.py`** — GmailMonitor: classifies unclassified emails from email_cache, produces Finding objects for important/urgent/actionable emails feeding existing delivery pipeline
-- **`data/gmail_rules.yaml`** — Empty template strategy file for interactive classification session
+- **`data/gmail_rules.yaml`** — Comprehensive strategy file from interactive classification session: 72 always_junk domains, 77 content overrides with 16 categories, global overrides for verification codes (subject-only, 2h expiry), shipping/delivery, receipts, and financial transactions. Core principle: specific beats general — account-specific emails override junk sender rules.
+- **Email watches** — `watch_email` / `cancel_watch` ACTION blocks for user-requested alerts ("tell me when Twilio emails about my refund"). One-shot, auto-expire after 30 days. Watches override all sender rules. `email_watches` table, full CRUD in `gmail_store.py`.
+- **Auto-cleanup** — `auto_cleanup` section in gmail_rules.yaml for time-sensitive emails (e.g., ShirtPunch daily deals trashed after 24h). `get_auto_cleanup_candidates()` in gmail_strategy.py, `process_email_cleanup()` job in tick.py, `POST /google/gmail/trash` endpoint in daemon.py.
+- **Conversation auto-tracking** — `_user_participated_in_thread()` in gmail_strategy.py detects threads where user has SENT emails, auto-classifies as conversation (no manual thread ID list needed).
+- **Classification categories** — `category` field on `ClassificationResult` and `email_classifications` table. 16 categories: Financial, Health, Shipping, Physical Mail, Tech Services, Work, Taxes, Utilities, Shopping, Legal, Insurance, Gaming, Gaming News, Paid Surveys, Charitable, Daily Deals.
 - **`email_cache` table** — Full email bodies with tsvector GIN index on subject+body, attachment_paths array, gmail_category
-- **`email_classifications` table** — Classification audit trail with tier, confidence, reason, user_override
+- **`email_classifications` table** — Classification audit trail with tier, confidence, reason, category, user_override
+- **`email_watches` table** — Temporary user-requested email alerts with sender/content patterns, expiry, fulfillment tracking
 - **`calendar_sync_state` table** — Singleton row for Google Calendar incremental syncToken
 - **Google Calendar bidirectional sync** — `calendar_store.py` now writes to Google first then local, with offline resilience (google_id=NULL, synced next cycle). `sync_from_google()` for incremental sync. Google wins conflicts.
 - **`send_email` ACTION block** — ARIA can compose and send email replies via Gmail API (confirmation required — never auto-sends)
