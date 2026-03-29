@@ -1,9 +1,10 @@
 # ARIA — Project Status
 
 ## Current Version
-v0.8.2 (2026-03-29)
+v0.8.3 (2026-03-29)
 
 ## What's Working
+- **Tool use enforcement** (v0.8.3): Per-query tool reminders, tool call tracking, factual response validation with retry
 - **Personality** (v0.8.2): Snarky banter by default, context-gated seriousness, occasional image-gen humor
 - **Voice assistant**: Full voice loop via Tasker (STT, Claude, TTS)
 - **CLI wrapper** (v0.8.1): `aria_cli.py` — terminal conversation with ARIA, file input, optional audio playback

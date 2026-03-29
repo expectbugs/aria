@@ -171,7 +171,7 @@ class TestSessionQuery:
             mock_proc.stdout.push_line({"type": "result", "result": "Hello!"})
             result = await s.query("Hi")
 
-        assert result == "Hello!"
+        assert result.text == "Hello!"
         assert s._request_count == 1
 
     @pytest.mark.asyncio
@@ -229,7 +229,7 @@ class TestSessionQuery:
             mock_proc.stdout.push_line({"type": "result", "result": "ok2"})
             result = await s.query("second")
 
-        assert result == "ok2"
+        assert result.text == "ok2"
         msgs = mock_proc.stdin.get_messages()
         second_msg = msgs[-1]["message"]["content"]
         assert "CONVERSATION HISTORY" not in second_msg
@@ -248,7 +248,7 @@ class TestSessionQuery:
             mock_proc.stdout.push_line({"type": "result", "result": "I see an image"})
             result = await s.query("What is this?", file_blocks=file_blocks)
 
-        assert result == "I see an image"
+        assert result.text == "I see an image"
         msgs = mock_proc.stdin.get_messages()
         content = msgs[-1]["message"]["content"]
         assert isinstance(content, list)
@@ -294,7 +294,7 @@ class TestSessionQuery:
                 {"type": "result", "result": "done"})
             result = await s.query("test")
 
-        assert result == "done"
+        assert result.text == "done"
         # Verify approval was sent
         msgs = mock_proc.stdin.get_messages()
         approvals = [m for m in msgs if m.get("type") == "control_response"]
@@ -315,7 +315,7 @@ class TestSessionQuery:
                 {"type": "result", "result": "final answer"})
             result = await s.query("test")
 
-        assert result == "final answer"
+        assert result.text == "final answer"
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +350,7 @@ class TestSessionRecycling:
             mock_proc2.stdout.push_line({"type": "result", "result": "recycled"})
             result = await s.query("after recycle")
 
-        assert result == "recycled"
+        assert result.text == "recycled"
         assert spawn_count == 2  # spawned twice
 
     @pytest.mark.asyncio
@@ -399,7 +399,7 @@ class TestSessionPool:
                 mock_proc.stdout.push_line({"type": "result", "result": "deep answer"})
                 result = await pool.query_deep("complex question")
 
-        assert result == "deep answer"
+        assert result.text == "deep answer"
 
     @pytest.mark.asyncio
     async def test_query_fast_routes_to_fast(self):
@@ -412,7 +412,7 @@ class TestSessionPool:
                 mock_proc.stdout.push_line({"type": "result", "result": "fast answer"})
                 result = await pool.query_fast("set a timer")
 
-        assert result == "fast answer"
+        assert result.text == "fast answer"
 
     @pytest.mark.asyncio
     async def test_start_spawns_both(self):

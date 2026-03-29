@@ -13,6 +13,10 @@ from starlette.testclient import TestClient
 
 import daemon
 import config
+from session_pool import SessionResponse
+
+def _sr(text):
+    return SessionResponse(text=text, tool_calls=[])
 import delivery_engine
 from tests.helpers import make_action_result
 
@@ -75,7 +79,7 @@ class TestAskCliChannel:
     def test_cli_channel_returns_text(self, mock_log, mock_ctx, mock_claude,
                                       mock_actions, mock_verify, client):
         mock_ctx.return_value = "context"
-        mock_claude.return_value = "Hello from CLI!"
+        mock_claude.return_value = _sr("Hello from CLI!")
         result = make_action_result(clean_response="Hello from CLI!")
         mock_actions.return_value = result
         mock_verify.return_value = result
@@ -97,7 +101,7 @@ class TestAskCliChannel:
                                                    mock_verify, client):
         """Verify channel='cli' flows into process_actions metadata."""
         mock_ctx.return_value = ""
-        mock_claude.return_value = "ok"
+        mock_claude.return_value = _sr("ok")
         result = make_action_result(clean_response="ok")
         mock_actions.return_value = result
         mock_verify.return_value = result
@@ -126,7 +130,7 @@ class TestAskIncludeAudio:
                                           mock_actions, mock_verify, mock_tts,
                                           client):
         mock_ctx.return_value = ""
-        mock_claude.return_value = "Audio test"
+        mock_claude.return_value = _sr("Audio test")
         result = make_action_result(clean_response="Audio test")
         mock_actions.return_value = result
         mock_verify.return_value = result
@@ -154,7 +158,7 @@ class TestAskIncludeAudio:
                                              client):
         """TTS failure is non-fatal — response text is still returned."""
         mock_ctx.return_value = ""
-        mock_claude.return_value = "Text only"
+        mock_claude.return_value = _sr("Text only")
         result = make_action_result(clean_response="Text only")
         mock_actions.return_value = result
         mock_verify.return_value = result
@@ -184,7 +188,7 @@ class TestAskStatusResponseText:
                                             mock_actions, mock_verify, mock_tts,
                                             client):
         mock_ctx.return_value = ""
-        mock_claude.return_value = "Async hello"
+        mock_claude.return_value = _sr("Async hello")
         result = make_action_result(clean_response="Async hello")
         mock_actions.return_value = result
         mock_verify.return_value = result
@@ -223,7 +227,7 @@ class TestProcessTaskCliChannel:
                                          mock_actions, mock_verify, mock_tts,
                                          mock_delivery, client):
         mock_ctx.return_value = ""
-        mock_claude.return_value = "CLI response"
+        mock_claude.return_value = _sr("CLI response")
         result = make_action_result(clean_response="CLI response")
         mock_actions.return_value = result
         mock_verify.return_value = result
@@ -288,7 +292,7 @@ class TestAskStatusTrace:
                                     mock_actions, mock_verify, mock_tts,
                                     client):
         mock_ctx.return_value = "some context"
-        mock_claude.return_value = "Hello!"
+        mock_claude.return_value = _sr("Hello!")
         result = make_action_result(clean_response="Hello!")
         mock_actions.return_value = result
         mock_verify.return_value = result

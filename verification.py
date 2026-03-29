@@ -180,3 +180,71 @@ def log_verification(result: VerificationResult, retry_attempt: int = 0,
                 )
     except Exception as e:
         log.error("[VERIFY] Failed to log verification: %s", e)
+
+
+# --- Tool Use Validation ---
+
+_CONVERSATIONAL_EXACT = frozenset({
+    "ok", "okay", "got it", "thanks", "thank you", "sure", "yep", "yeah",
+    "no", "nope", "nah", "yes", "lol", "ha", "haha", "nice", "cool",
+    "hmm", "hm", "right", "alright", "sounds good",
+})
+
+_CONVERSATIONAL_PATTERNS = re.compile(
+    r"^(?:good (?:morning|night|evening|afternoon))\b"
+    r"|^(?:hey|hi|hello|yo|sup|what'?s up)\b"
+    r"|^(?:how are you|how'?s it going)"
+    r"|^(?:bye|later|see you|talk (?:later|soon))\b",
+    re.IGNORECASE,
+)
+
+_FACTUAL_CLAIM_PATTERNS = re.compile(
+    r"your (?:appointment|event|timer|reminder|next|last|calendar) "
+    r"|you (?:have|had|ate|consumed|logged|took|slept|burned|walked) \d"
+    r"|\b(?:on|for|at|until) (?:January|February|March|April|May|June|"
+    r"July|August|September|October|November|December) \d"
+    r"|(?:^|\. )(?:There (?:are|is) \d|You have \d|Your \w+ (?:is|was|are) )"
+    r"|\d[\d,]+ (?:calories|cal|steps|mg|mcg|grams?|hours?|minutes?)\b"
+    r"|(?:the only|no other|that'?s all|nothing else|your calendar is (?:empty|clear))",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _is_conversational(text: str) -> bool:
+    """Detect banter, greetings, acknowledgments that don't need tool verification."""
+    stripped = text.strip()
+    # Very short responses are likely conversational
+    if len(stripped) < 40 and not any(c.isdigit() for c in stripped):
+        return True
+    # Exact match on common conversational responses
+    if stripped.rstrip("!.?").lower() in _CONVERSATIONAL_EXACT:
+        return True
+    # Single-line question responses
+    if stripped.endswith("?") and "\n" not in stripped and len(stripped) < 200:
+        return True
+    # Greeting/farewell patterns
+    if _CONVERSATIONAL_PATTERNS.match(stripped):
+        return True
+    return False
+
+
+def _has_factual_claims(text: str) -> bool:
+    """Detect date assertions, numeric claims, state claims, event references."""
+    return bool(_FACTUAL_CLAIM_PATTERNS.search(text))
+
+
+def validate_tool_use(response_text: str,
+                      tool_calls: list[str]) -> tuple[bool, str]:
+    """Check whether a response with factual claims was backed by tool use.
+
+    Returns (ok, reason):
+      - ok=True: response is fine (conversational, or tools were used, or no claims)
+      - ok=False: factual claims detected without any tool calls
+    """
+    if _is_conversational(response_text):
+        return True, "conversational"
+    if tool_calls:
+        return True, f"tools_used: {', '.join(tool_calls[:5])}"
+    if _has_factual_claims(response_text):
+        return False, "factual_claims_without_tool_use"
+    return True, "no_factual_claims"

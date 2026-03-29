@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.8.3] — 2026-03-29
+
+### Added — Tool Use Enforcement Pipeline
+
+- **Per-query tool reminder injection** — Every query to ARIA now ends with an explicit instruction to verify facts with tools before responding. ~50 tokens, injected at the END of the prompt where attention is strongest (combats "lost in the middle" decay).
+- **Tool call tracking in CLI sessions** — `SessionResponse` dataclass replaces bare string returns from session pool. Tracks which tools ARIA used during response generation by watching `tool_use` content blocks in the stream-json protocol.
+- **Factual response validation** — New `validate_tool_use()` in `verification.py` classifies responses as conversational vs factual. Factual claims without tool use trigger an automatic retry instructing ARIA to verify with tools first.
+- **`_is_conversational()` classifier** — Detects banter, greetings, acknowledgments that don't need tool verification. Short responses without numbers, exact-match phrases, single-line questions, greeting patterns.
+- **`_has_factual_claims()` detector** — Catches date assertions, numeric claims, state claims ("your X is Y"), calendar references, completeness claims ("the only event").
+- **System prompt: VERIFY BEFORE CLAIMING** — Explicit instruction near end of primary prompt: "The injected context is a SUBSET of available data — always check with query.py when precision matters."
+- **30 new tests** in `tests/test_tool_enforcement.py` — SessionResponse, tool reminder content, conversational/factual classification, validate_tool_use integration, system prompt content.
+- **Total test count:** 2014 tests across 89 files, all passing
+
+---
+
 ## [0.8.2] — 2026-03-29
 
 ### Changed — Personality Overhaul

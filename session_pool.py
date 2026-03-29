@@ -9,11 +9,30 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import config
 from conversation_history import get_recent_turns
 from system_prompt import build_primary_prompt
+
+
+@dataclass
+class SessionResponse:
+    """Response from a CLI session query, with tool call metadata."""
+    text: str
+    tool_calls: list[str] = field(default_factory=list)  # tool names used
+
+
+# Tool use reminder — injected at the END of every query so it sits near
+# response generation where attention is strongest (combats lost-in-the-middle).
+_TOOL_USE_REMINDER = (
+    "[INSTRUCTION] Before responding, consider: do you have VERIFIED information "
+    "for your answer? Your tools are: query.py (health, nutrition, vehicle, legal, "
+    "calendar, conversations, email), Bash (shell commands, web fetch). "
+    "If your response contains facts, dates, numbers, or state claims, you MUST "
+    "verify them with a tool first. Do NOT respond from memory alone."
+)
 
 log = logging.getLogger("aria")
 
@@ -112,7 +131,7 @@ class _Session:
             await self._spawn()
 
     async def query(self, user_text: str, extra_context: str = "",
-                    file_blocks: list[dict] | None = None) -> str:
+                    file_blocks: list[dict] | None = None) -> SessionResponse:
         """Send a prompt to the persistent Claude process and return the response."""
         async with self._lock:
             await self._ensure_alive()
@@ -129,6 +148,9 @@ class _Session:
             if extra_context:
                 parts.append(f"[CONTEXT]\n{extra_context}\n[/CONTEXT]")
             parts.append(f"User says: {user_text}")
+
+            # Tool use reminder — last item before generation
+            parts.append(_TOOL_USE_REMINDER)
             prompt = "\n".join(parts)
 
             # Build message content — text-only or multimodal
@@ -153,6 +175,7 @@ class _Session:
             self._request_count += 1
 
             # Read stdout lines until we get a result
+            tool_calls_seen: list[str] = []
             try:
                 while True:
                     line = await asyncio.wait_for(
@@ -186,7 +209,24 @@ class _Session:
                                 self._context_bytes // 4000,
                             )
                             self._request_count = self._max_requests
-                        return result
+                        if tool_calls_seen:
+                            log.info("[TOOLS] Session '%s' used %d tools: %s",
+                                     self.name, len(tool_calls_seen),
+                                     ", ".join(tool_calls_seen[:10]))
+                        return SessionResponse(
+                            text=result, tool_calls=tool_calls_seen)
+
+                    elif msg_type == "assistant":
+                        # Track tool_use content blocks in assistant messages
+                        msg_data = data.get("message", {})
+                        if isinstance(msg_data, dict):
+                            content = msg_data.get("content", [])
+                            if isinstance(content, list):
+                                for block in content:
+                                    if (isinstance(block, dict)
+                                            and block.get("type") == "tool_use"):
+                                        tool_calls_seen.append(
+                                            block.get("name", "unknown"))
 
                     elif msg_type == "control_request":
                         # Auto-approve any permission/hook requests
@@ -201,7 +241,7 @@ class _Session:
                         self._proc.stdin.write(resp.encode())
                         await self._proc.stdin.drain()
 
-                    # Ignore other types (assistant, system, stream_event, etc.)
+                    # Ignore other types (system, stream_event, etc.)
 
             except asyncio.TimeoutError:
                 log.error("Session '%s' timed out after %ss",
@@ -290,12 +330,12 @@ class SessionPool:
         log.info("Session pool stopped")
 
     async def query_deep(self, text: str, context: str = "",
-                         file_blocks: list[dict] | None = None) -> str:
+                         file_blocks: list[dict] | None = None) -> SessionResponse:
         """Query the deep (max effort) session."""
         return await self._deep.query(text, context, file_blocks)
 
     async def query_fast(self, text: str, context: str = "",
-                         file_blocks: list[dict] | None = None) -> str:
+                         file_blocks: list[dict] | None = None) -> SessionResponse:
         """Query the fast (auto effort) session."""
         return await self._fast.query(text, context, file_blocks)
 

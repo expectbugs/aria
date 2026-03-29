@@ -11,6 +11,10 @@ from unittest.mock import patch, MagicMock, AsyncMock
 import pytest
 
 import daemon
+from session_pool import SessionResponse
+
+def _sr(text):
+    return SessionResponse(text=text, tool_calls=[])
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +40,7 @@ def _mock_execute_delivery():
 @pytest.fixture(autouse=True)
 def _bypass_verification():
     """Delivery tests focus on routing, not verification."""
-    async def _passthrough(text, context, result, log_fn=None):
+    async def _passthrough(text, context, result, log_fn=None, tool_calls=None):
         return result
     with patch("daemon._verify_and_maybe_retry", new=_passthrough):
         yield
@@ -46,7 +50,7 @@ class TestVoiceTaskDeliveryRouting:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon._route_query", new_callable=AsyncMock,
-           return_value='Here is the answer! <!--ACTION::{"action": "set_delivery", "method": "voice"}-->')
+           return_value=_sr('Here is the answer! <!--ACTION::{"action": "set_delivery", "method": "voice"}-->'))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_voice_delivery_generates_tts(self, mock_ctx, mock_claude,
                                                   mock_log):
@@ -66,7 +70,7 @@ class TestVoiceTaskDeliveryRouting:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon._route_query", new_callable=AsyncMock,
-           return_value='Text answer <!--ACTION::{"action": "set_delivery", "method": "sms"}-->')
+           return_value=_sr('Text answer <!--ACTION::{"action": "set_delivery", "method": "sms"}-->'))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_sms_delivery_sends_text(self, mock_ctx, mock_claude,
                                              mock_log):
@@ -88,7 +92,7 @@ class TestSmsWebhookDeliveryRouting:
     @patch("daemon.db.get_conn")
     @patch("daemon.log_request")
     @patch("daemon._route_query", new_callable=AsyncMock,
-           return_value='Voice answer <!--ACTION::{"action": "set_delivery", "method": "voice"}-->')
+           return_value=_sr('Voice answer <!--ACTION::{"action": "set_delivery", "method": "voice"}-->'))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_sms_to_voice_routing(self, mock_ctx, mock_claude,
                                           mock_log, mock_conn):
@@ -110,7 +114,7 @@ class TestSmsWebhookDeliveryRouting:
 class TestFileTaskDeliveryRouting:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
-    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Analysis")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value=_sr("Analysis"))
     @patch("daemon.build_request_context", new_callable=AsyncMock, return_value="")
     async def test_default_voice_delivery(self, mock_ctx, mock_claude,
                                             mock_log):

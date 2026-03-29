@@ -28,7 +28,7 @@ import redis_client
 import sms
 
 from actions import process_actions, ActionResult
-from session_pool import get_session_pool
+from session_pool import get_session_pool, SessionResponse
 from aria_api import _is_simple_query, ask_aria as _ask_aria_fallback, ask_haiku
 from claude_session import ClaudeSession  # kept for Action ARIA (Step 6)
 from version import __version__
@@ -121,12 +121,14 @@ def log_request(text: str, status: str, response: str = "", error: str = "",
 # --- Query Routing ---
 
 async def _route_query(text: str, context: str = "",
-                       file_blocks: list[dict] | None = None) -> str:
+                       file_blocks: list[dict] | None = None) -> SessionResponse:
     """Route a query through the CLI session pool, with API fallback.
 
     Simple queries (timers, greetings, weather) go to the fast session.
     Everything else goes to the deep session. If the session pool fails,
     falls back to the Anthropic API (ask_aria).
+
+    Returns SessionResponse with text and tool call metadata.
     """
     pool = get_session_pool()
     try:
@@ -135,12 +137,18 @@ async def _route_query(text: str, context: str = "",
         return await pool.query_deep(text, context, file_blocks)
     except Exception as e:
         log.warning("Session pool failed, falling back to API: %s", e)
-        return await _ask_aria_fallback(text, context, file_blocks)
+        fallback_text = await _ask_aria_fallback(text, context, file_blocks)
+        return SessionResponse(text=fallback_text, tool_calls=[])
 
 
 async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
-                                   log_fn=None) -> ActionResult:
+                                   log_fn=None,
+                                   tool_calls: list[str] | None = None) -> ActionResult:
     """Verify claims in response. Retry up to 2x on action claim violations.
+
+    Also checks tool use: if the response contains factual claims but ARIA
+    didn't use any tools to verify them, triggers a retry instructing ARIA
+    to use tools.
 
     Only retries when claims_without_actions is non-empty (ARIA said "I logged"
     but emitted no ACTION blocks). Date/numeric claim issues are logged but
@@ -149,8 +157,29 @@ async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
     if not getattr(config, 'VERIFICATION_ENABLED', True):
         return result
 
-    from verification import needs_verification, verify_response, log_verification
+    from verification import (needs_verification, verify_response,
+                              log_verification, validate_tool_use)
 
+    # --- Tool use validation ---
+    tool_ok, tool_reason = validate_tool_use(
+        result.clean_response, tool_calls or [])
+    if not tool_ok:
+        log.warning("[TOOL_VERIFY] Factual response without tool use: %s",
+                    text[:100])
+        pool = get_session_pool()
+        retry_prompt = (
+            "[INTERNAL — do not acknowledge] Your previous response contained "
+            "factual claims but you didn't use any tools to verify them. "
+            "Use query.py or Bash to look up the actual data, then regenerate "
+            "your response. Do not apologize or reference this correction."
+        )
+        retry_resp = await pool.query_deep(retry_prompt, context)
+        result = await process_actions(
+            retry_resp.text, metadata=result.metadata, log_fn=log_fn)
+        # Update tool_calls from the retry
+        tool_calls = retry_resp.tool_calls
+
+    # --- Existing action claim verification ---
     if not needs_verification(text, result.clean_response, result):
         return result
 
@@ -166,7 +195,8 @@ async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
     for attempt in range(1, 3):
         correction = verification.correction_prompt
         retry_resp = await pool.query_deep(correction, "")
-        result = await process_actions(retry_resp, metadata=result.metadata, log_fn=log_fn)
+        result = await process_actions(
+            retry_resp.text, metadata=result.metadata, log_fn=log_fn)
         verification = verify_response(result.clean_response, result, context)
         log_verification(verification, retry_attempt=attempt,
                          request_text=text, response_text=result.clean_response)
@@ -473,10 +503,12 @@ async def ask(req: AskRequest, request: Request):
 
     try:
         extra_context = await _get_context_for_text(text)
-        response = await _route_query(text, extra_context)
+        query_result = await _route_query(text, extra_context)
         delivery_meta = {"channel": req.channel}
-        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
-        result = await _verify_and_maybe_retry(text, extra_context, result, log_fn=log_request)
+        result = await process_actions(query_result.text, metadata=delivery_meta, log_fn=log_request)
+        result = await _verify_and_maybe_retry(
+            text, extra_context, result, log_fn=log_request,
+            tool_calls=query_result.tool_calls)
         response = result.to_response()
 
         duration = time.time() - start
@@ -530,11 +562,13 @@ async def _process_task(task_id: str, text: str, channel: str = "voice"):
         is_simple = _is_simple_query(text)
         _t("route", f"{'fast' if is_simple else 'deep'} session")
 
-        response = await _route_query(text, extra_context)
-        _t("raw_response", response)
+        query_result = await _route_query(text, extra_context)
+        _t("raw_response", query_result.text)
+        if query_result.tool_calls:
+            _t("tool_calls", ", ".join(query_result.tool_calls))
 
         delivery_meta = {"channel": channel}
-        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await process_actions(query_result.text, metadata=delivery_meta, log_fn=log_request)
         _t("actions", json.dumps({
             "types": result.action_types,
             "found": result.actions_found,
@@ -542,7 +576,9 @@ async def _process_task(task_id: str, text: str, channel: str = "voice"):
             "warnings": result.warnings,
         }, default=str))
 
-        result = await _verify_and_maybe_retry(text, extra_context, result, log_fn=log_request)
+        result = await _verify_and_maybe_retry(
+            text, extra_context, result, log_fn=log_request,
+            tool_calls=query_result.tool_calls)
         _t("verification", "ok" if not result.warnings else "; ".join(result.warnings))
 
         response_text = result.to_response()
@@ -632,11 +668,13 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         _t("context", extra_context)
         _t("route", "deep session (file)")
 
-        response = await _route_query(user_text, extra_context, file_blocks)
-        _t("raw_response", response)
+        query_result = await _route_query(user_text, extra_context, file_blocks)
+        _t("raw_response", query_result.text)
+        if query_result.tool_calls:
+            _t("tool_calls", ", ".join(query_result.tool_calls))
 
         delivery_meta = {"channel": channel}
-        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
+        result = await process_actions(query_result.text, metadata=delivery_meta, log_fn=log_request)
         _t("actions", json.dumps({
             "types": result.action_types,
             "found": result.actions_found,
@@ -644,7 +682,9 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
             "warnings": result.warnings,
         }, default=str))
 
-        result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
+        result = await _verify_and_maybe_retry(
+            user_text, extra_context, result, log_fn=log_request,
+            tool_calls=query_result.tool_calls)
         _t("verification", "ok" if not result.warnings else "; ".join(result.warnings))
 
         response = result.to_response()
@@ -857,10 +897,12 @@ async def _process_voice_task(task_id: str, audio_bytes: bytes):
 
         # Step 2: Build context and query ARIA (same pipeline as /ask)
         extra_context = await _get_context_for_text(user_text)
-        response = await _route_query(user_text, extra_context)
+        query_result = await _route_query(user_text, extra_context)
         delivery_meta = {"channel": "voice"}
-        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
-        result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
+        result = await process_actions(query_result.text, metadata=delivery_meta, log_fn=log_request)
+        result = await _verify_and_maybe_retry(
+            user_text, extra_context, result, log_fn=log_request,
+            tool_calls=query_result.tool_calls)
         response = result.to_response()
 
         # Delivery engine decides channel
@@ -1061,11 +1103,13 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
         else:
             extra_context = sms_note
 
-        response = await _route_query(user_text, extra_context,
-                                     file_blocks if file_blocks else None)
+        query_result = await _route_query(user_text, extra_context,
+                                         file_blocks if file_blocks else None)
         delivery_meta = {"channel": "sms"}
-        result = await process_actions(response, metadata=delivery_meta, log_fn=log_request)
-        result = await _verify_and_maybe_retry(user_text, extra_context, result, log_fn=log_request)
+        result = await process_actions(query_result.text, metadata=delivery_meta, log_fn=log_request)
+        result = await _verify_and_maybe_retry(
+            user_text, extra_context, result, log_fn=log_request,
+            tool_calls=query_result.tool_calls)
         response = result.to_response()
 
         # Delivery routing — SMS source, push voice (phone doesn't poll for SMS requests)

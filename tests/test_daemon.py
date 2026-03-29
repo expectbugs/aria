@@ -12,7 +12,11 @@ from starlette.testclient import TestClient
 
 import daemon
 import config
+from session_pool import SessionResponse
 from tests.helpers import make_action_result
+
+def _sr(text):
+    return SessionResponse(text=text, tool_calls=[])
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +102,7 @@ class TestAskEndpoint:
     @patch("daemon.log_request")
     def test_successful_ask(self, mock_log, mock_ctx, mock_claude, mock_actions, mock_verify, client):
         mock_ctx.return_value = "context"
-        mock_claude.return_value = "Hello from ARIA!"
+        mock_claude.return_value = _sr("Hello from ARIA!")
         result = make_action_result(clean_response="Hello from ARIA!")
         mock_actions.return_value = result
         mock_verify.return_value = result
@@ -137,7 +141,7 @@ class TestAsyncTaskLifecycle:
     def test_full_lifecycle(self, mock_log, mock_actions, mock_tts,
                             mock_ctx, mock_claude, client):
         mock_ctx.return_value = ""
-        mock_claude.return_value = "Test response"
+        mock_claude.return_value = _sr("Test response")
         mock_actions.return_value = "Test response"
         mock_tts.return_value = b"fake wav data"
 
@@ -193,7 +197,7 @@ class TestLocationEndpoint:
 class TestNudgeEndpoint:
     @patch("daemon._route_query", new_callable=AsyncMock)
     def test_composes_nudge(self, mock_claude, client):
-        mock_claude.return_value = "Hey, don't forget to eat!"
+        mock_claude.return_value = _sr("Hey, don't forget to eat!")
 
         resp = client.post("/nudge", json={
             "triggers": ["No meals logged today"],

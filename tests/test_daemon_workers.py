@@ -12,7 +12,12 @@ from unittest.mock import patch, MagicMock, AsyncMock
 import pytest
 
 import daemon
+from session_pool import SessionResponse
 from tests.helpers import make_action_result
+
+def _sr(text):
+    """Shortcut: build a SessionResponse for mocking _route_query."""
+    return SessionResponse(text=text, tool_calls=[])
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +31,7 @@ def reset_tasks():
 def _bypass_verification():
     """Worker tests focus on delivery/task mechanics, not verification.
     Make _verify_and_maybe_retry a passthrough that returns its input."""
-    async def _passthrough(text, context, result, log_fn=None):
+    async def _passthrough(text, context, result, log_fn=None, tool_calls=None):
         return result
     with patch("daemon._verify_and_maybe_retry", new=_passthrough):
         yield
@@ -48,7 +53,7 @@ class TestProcessTask:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon.process_actions", return_value=make_action_result(clean_response="Hello!"))
-    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Hello!")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value=_sr("Hello!"))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_success(self, mock_ctx, mock_claude, mock_actions, mock_log):
         daemon._tasks["t1"] = {"status": "processing", "created": 0}
@@ -72,7 +77,7 @@ class TestProcessTask:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon.process_actions", return_value=make_action_result(clean_response="OK"))
-    @patch("daemon._route_query", new_callable=AsyncMock, return_value="OK")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value=_sr("OK"))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_tts_error(self, mock_ctx, mock_claude, mock_actions, mock_log):
         """TTS errors inside execute_delivery are caught there, task still completes."""
@@ -88,7 +93,7 @@ class TestProcessFileTask:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon.process_actions")
-    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Analysis done")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value=_sr("Analysis done"))
     @patch("daemon.build_request_context", new_callable=AsyncMock, return_value="ctx")
     async def test_image_file(self, mock_ctx, mock_claude, mock_actions, mock_log):
         mock_actions.return_value = make_action_result(clean_response="Analysis done")
@@ -105,7 +110,7 @@ class TestProcessFileTask:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon.process_actions")
-    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Result")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value=_sr("Result"))
     @patch("daemon.build_request_context", new_callable=AsyncMock, return_value="")
     async def test_sms_delivery(self, mock_ctx, mock_claude, mock_actions, mock_log):
         # Simulate set_delivery metadata
@@ -126,7 +131,7 @@ class TestProcessVoiceTask:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon.process_actions", return_value=make_action_result(clean_response="Hello!"))
-    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Hello!")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value=_sr("Hello!"))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_full_pipeline(self, mock_ctx, mock_claude, mock_actions, mock_log):
         mock_engine = MagicMock()
@@ -159,7 +164,7 @@ class TestProcessVoiceTask:
     @pytest.mark.asyncio
     @patch("daemon.log_request")
     @patch("daemon.process_actions")
-    @patch("daemon._route_query", new_callable=AsyncMock, return_value="SMS response")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value=_sr("SMS response"))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_sms_delivery_routing(self, mock_ctx, mock_claude,
                                           mock_actions, mock_log):
@@ -187,7 +192,7 @@ class TestProcessSms:
     @patch("daemon.db.get_conn")
     @patch("daemon.log_request")
     @patch("daemon.process_actions", return_value=make_action_result(clean_response="Got it!"))
-    @patch("daemon._route_query", new_callable=AsyncMock, return_value="Got it!")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value=_sr("Got it!"))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_text_only_sms(self, mock_ctx, mock_claude, mock_actions,
                                    mock_log, mock_conn):
@@ -204,7 +209,7 @@ class TestProcessSms:
     @patch("daemon.db.get_conn")
     @patch("daemon.log_request")
     @patch("daemon.process_actions", return_value=make_action_result(clean_response="I see the label."))
-    @patch("daemon._route_query", new_callable=AsyncMock, return_value="I see the label.")
+    @patch("daemon._route_query", new_callable=AsyncMock, return_value=_sr("I see the label."))
     @patch("daemon._get_context_for_text", new_callable=AsyncMock, return_value="")
     async def test_long_response_split(self, mock_ctx, mock_claude,
                                        mock_actions, mock_log, mock_conn):
