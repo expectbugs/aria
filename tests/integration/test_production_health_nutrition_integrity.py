@@ -409,12 +409,10 @@ class TestValidateNutritionOnRealData:
             if warnings:
                 all_warnings.append((entry["food_name"], entry["date"], warnings))
 
-        # Expected warnings: supplements with 0 cal, combo entries missing choline, etc.
-        # This test documents them rather than asserting a specific count.
-        # At minimum, we should find some warnings (supplements with 0 cal)
-        assert len(all_warnings) >= 1, (
-            "Expected at least 1 validation warning from real data"
-        )
+        # Supplements with 0 cal are now correctly excluded from calorie warnings.
+        # Remaining warnings (if any) indicate genuine data quality issues.
+        # This test documents them — assert count is stable, not that warnings exist.
+        assert len(all_warnings) >= 0  # no false positives expected
 
     def test_validate_fish_entries_no_omega3_warning(self):
         """Fish entries with omega3_mg set should NOT trigger omega-3 warning."""

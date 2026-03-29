@@ -191,9 +191,13 @@ def _validate_nutrition(nutrition_actions: list[dict],
         nutrients = action.get("nutrients", {})
         source = action.get("source", "")
 
-        # 1. Calories present and > 0
+        # 1. Calories present and > 0 (skip for supplements — genuinely 0 cal)
         cal = nutrients.get("calories")
-        if cal is None or cal == 0:
+        food_lower = food.lower()
+        is_supplement = any(kw in food_lower for kw in
+                           ("supplement", "vitamin", "multivitamin", "magnesium",
+                            "pill", "capsule", "tablet"))
+        if (cal is None or cal == 0) and not is_supplement:
             warnings.append(f"No calories on '{food}' — verify entry.")
 
         # 2. Fish/salmon must have omega-3

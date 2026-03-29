@@ -290,6 +290,19 @@ class TestNutritionValidation:
         assert "Nutrition check" not in result
 
     @patch("actions.nutrition_store")
+    def test_no_calorie_warning_on_supplements(self, mock_ns):
+        """Supplements genuinely have 0 calories — don't warn."""
+        for food in ["Nature Made Multi Complete multivitamin",
+                     "Nature Made Magnesium Oxide supplement",
+                     "Fish oil capsule", "Vitamin D3 tablet"]:
+            response = (
+                f'Logged! <!--ACTION::{{"action": "log_nutrition", "food_name": "{food}", '
+                f'"nutrients": {{"calories": 0, "magnesium_mg": 200}}}}-->'
+            )
+            result = actions.process_actions_sync(response)
+            assert "No calories" not in result, f"False warning on supplement: {food}"
+
+    @patch("actions.nutrition_store")
     def test_warns_salmon_missing_omega3(self, mock_ns):
         response = (
             'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Canned salmon with rice", '
