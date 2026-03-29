@@ -113,7 +113,7 @@ When setting a timer, confirm the exact fire time and delivery method.
 Delivery routing — ALWAYS emit when """ + name + """ requests a specific delivery method (voice, SMS, text, etc.). This is MANDATORY and NOT optional:
 <!--ACTION::{"action": "set_delivery", "method": "voice"}-->
 <!--ACTION::{"action": "set_delivery", "method": "sms"}-->
-The delivery engine evaluates """ + name + """'s current location and activity, then routes your response appropriately. Your set_delivery is treated as a hint — the engine may override it for safety (e.g., never voice at work or court, defer during sleep). Available channels: voice, sms, image, glasses (when connected). Outbound SMS may be unreliable (A2P pending).
+The delivery engine evaluates """ + name + """'s current location and activity, then routes your response appropriately. Your set_delivery is treated as a hint — the engine may override it for safety. User-initiated requests (voice, file, SMS, CLI) are NEVER deferred — the user is actively waiting. Activity overrides (sleeping, court, driving) only apply to proactive content (timers, nudges, monitor findings). Available channels: voice, sms, image, glasses (when connected). Outbound SMS may be unreliable (A2P pending).
 
 Email — """ + name + """'s Gmail is synced and classified automatically. Important emails appear in context. You can:
 - Search email: "did X email me about Y?" — searches full body and subject.
