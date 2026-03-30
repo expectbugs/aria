@@ -144,8 +144,14 @@ def verify_response(response_text: str, action_result,
                 evidence="Date claims logged for training data",
             ))
 
-    # Determine overall status
-    contradicted = [c for c in claims if c.status == "contradicted"]
+    # --- Completeness claim detection (log-only — training data) ---
+    completeness_claims = check_completeness_claims(response_text, injected_context)
+    claims.extend(completeness_claims)
+
+    # Determine overall status — completeness claims are "logged" status,
+    # they do NOT affect ok/needs_retry (training data only)
+    contradicted = [c for c in claims
+                    if c.status == "contradicted" and c.claim_type != "completeness"]
     ok = len(contradicted) == 0
 
     return VerificationResult(
@@ -154,6 +160,60 @@ def verify_response(response_text: str, action_result,
         needs_retry=needs_retry,
         correction_prompt=correction_prompt,
     )
+
+
+# --- Completeness claim detection ---
+
+# Patterns that imply the response has exhaustive/complete knowledge of a dataset,
+# when the injected context was actually scoped (e.g. today-only calendar).
+_COMPLETENESS_CLAIMS = re.compile(
+    r"\b(?:the only (?:event|appointment|entry|email|item|reminder))"
+    r"|\b(?:there (?:are|is) no other)"
+    r"|\b(?:that'?s (?:all|everything) (?:I see|in your|you have))"
+    r"|\b(?:nothing else (?:scheduled|planned|logged|in your))"
+    r"|\b(?:your calendar is (?:empty|clear|free))"
+    r"|\b(?:you (?:don'?t|do not) have any (?:other |more )?(?:events?|appointments?))"
+    r"|\b(?:no (?:other |more )?(?:events?|appointments?|entries) (?:scheduled|planned|found|logged))",
+    re.IGNORECASE,
+)
+
+# Context annotations that indicate scoped/limited data was injected
+_SCOPE_INDICATORS = [
+    "today only",
+    "shown — use",
+    "use `query.py",
+    "unread important only",
+    "today + yesterday",
+]
+
+
+def check_completeness_claims(response: str, context: str) -> list[ClaimCheck]:
+    """Detect responses that claim exhaustive knowledge of scoped data.
+
+    Log-only — does NOT trigger retries or visible warnings. Stored in
+    verification_log for training data collection.
+
+    Only flags when:
+    1. Response uses absolute completeness language (not scope-qualified)
+    2. The injected context had scope limitations (scope annotations present)
+    """
+    claims = []
+    match = _COMPLETENESS_CLAIMS.search(response)
+    if not match:
+        return claims
+
+    # Only flag if context was actually scoped
+    context_is_scoped = any(indicator in context for indicator in _SCOPE_INDICATORS)
+    if not context_is_scoped:
+        return claims  # Context wasn't scoped — claim might be correct
+
+    claims.append(ClaimCheck(
+        claim_text=f"Completeness claim on scoped data: '{match.group()[:60]}'",
+        claim_type="completeness",
+        status="logged",  # NOT "contradicted" — doesn't affect ok/needs_retry
+        evidence="Context was scoped (scope annotations present)",
+    ))
+    return claims
 
 
 def log_verification(result: VerificationResult, retry_attempt: int = 0,

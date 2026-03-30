@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.8.5] — 2026-03-29
+
+### Added — Enhanced Verification + Context Scope Annotations
+
+- **Completeness claim detector** — Detects when ARIA claims exhaustive knowledge of scoped data (e.g. "the only event in your calendar" when only today's events were loaded). Log-only — stored in `verification_log` for training data, does NOT trigger retries or visible warnings. Only flags when context has scope annotations AND response uses absolute completeness language.
+- **Context scope annotations** — Every injected context section now includes explicit scope information:
+  - Calendar: `Events (today only, 3 shown — use query.py calendar for full range):`
+  - Health: `Health snapshot (today + yesterday — use query.py health for older):`
+  - Email: `Email (unread important only — use query.py email --search for all):`
+  - Timers/reminders: include item counts `(N total)`
+- **Causal claim detector skipped** — Regex-based detection of "probably from X" would have too many false positives on legitimate hedging/inference. The tool-use enforcement from v0.8.3 already handles the broader pattern.
+- **25 new tests** in `tests/test_verification_enhanced.py` — completeness regex, claim detection, scope annotations for each context section.
+- **Total test count:** 2077 tests across 91 files, all passing
+
+---
+
 ## [0.8.4] — 2026-03-29
 
 ### Added — Destructive Action Confirmation Gate

@@ -84,7 +84,7 @@ class TestGatherAlwaysContext:
             mock_redis.format_task_status.return_value = ""
             result = context.gather_always_context()
         assert "Oven Timer" in result
-        assert "Active timers:" in result
+        assert "Active timers" in result
 
     def test_active_reminders_shown(self):
         seed_reminder(text="Buy groceries", due=date.today().isoformat())
@@ -93,7 +93,7 @@ class TestGatherAlwaysContext:
             mock_redis.format_task_status.return_value = ""
             result = context.gather_always_context()
         assert "Buy groceries" in result
-        assert "Active reminders:" in result
+        assert "Active reminders" in result
 
     def test_location_shown(self):
         seed_location(location_name="Downtown Milwaukee", battery_pct=72)

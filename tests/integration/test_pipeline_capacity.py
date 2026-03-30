@@ -49,7 +49,7 @@ class TestCapacity:
             result = context.gather_always_context()
 
         assert isinstance(result, str)
-        assert "Active timers:" in result
+        assert "Active timers" in result
 
     def test_50_active_reminders_no_crash(self):
         """50 active reminders should not crash gather_always_context()."""
@@ -62,7 +62,7 @@ class TestCapacity:
             result = context.gather_always_context()
 
         assert isinstance(result, str)
-        assert "Active reminders:" in result
+        assert "Active reminders" in result
 
     def test_100_nutrition_entries_aggregation(self):
         """100 nutrition entries for one day aggregate correctly."""

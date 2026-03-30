@@ -47,8 +47,8 @@ class TestEmptyDBContextBuilders:
         assert isinstance(result, str)
         assert "Current date and time:" in result
         # Should not contain timer, reminder, location, or exercise lines
-        assert "Active timers:" not in result
-        assert "Active reminders:" not in result
+        assert "Active timers" not in result
+        assert "Active reminders" not in result
         assert "Location:" not in result
         assert "EXERCISE MODE" not in result
 

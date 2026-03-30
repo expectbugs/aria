@@ -101,7 +101,7 @@ def gather_always_context() -> str:
     # Active timers
     active_timers = timer_store.get_active()
     if active_timers:
-        parts.append("Active timers: " + "; ".join(
+        parts.append(f"Active timers ({len(active_timers)} total): " + "; ".join(
             f"[id={t['id']}] {t['label']} — fires at {t['fire_at'][11:16]}"
             f" ({t['delivery']})"
             for t in active_timers
@@ -110,7 +110,7 @@ def gather_always_context() -> str:
     # Active reminders
     reminders = calendar_store.get_reminders()
     if reminders:
-        parts.append("Active reminders: " + "; ".join(
+        parts.append(f"Active reminders ({len(reminders)} total): " + "; ".join(
             f"[id={r['id']}] {r['text']}"
             + (f" (due {r['due']})" if r.get('due') else "")
             for r in reminders
@@ -242,17 +242,22 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
     week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
-    if _match_keywords(text_lower, _CALENDAR_SUBSTRINGS, _CALENDAR_REGEX):
+    calendar_expanded = _match_keywords(text_lower, _CALENDAR_SUBSTRINGS, _CALENDAR_REGEX)
+    if calendar_expanded:
         events = calendar_store.get_events(start=today, end=week_end)
     else:
         events = calendar_store.get_events(start=today, end=today)
 
     if events:
-        ctx_parts.append("Events: " + "; ".join(
-            f"[id={e['id']}] {e['date']} {e['title']}"
-            + (f" at {e['time']}" if e.get('time') else "")
-            for e in events
-        ))
+        scope = "next 7 days" if calendar_expanded else "today only"
+        ctx_parts.append(
+            f"Events ({scope}, {len(events)} shown — use `query.py calendar` for full range): "
+            + "; ".join(
+                f"[id={e['id']}] {e['date']} {e['title']}"
+                + (f" at {e['time']}" if e.get('time') else "")
+                for e in events
+            )
+        )
 
     # --- Vehicle ---
     if _match_keywords(text_lower, _VEHICLE_SUBSTRINGS, _VEHICLE_REGEX):
@@ -274,7 +279,10 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     if is_image or _match_keywords(text_lower, _HEALTH_SUBSTRINGS, _HEALTH_REGEX):
         health_ctx = gather_health_context()
         if health_ctx:
-            ctx_parts.append(health_ctx)
+            ctx_parts.append(
+                "Health snapshot (today + yesterday — use `query.py health` for older):\n"
+                + health_ctx
+            )
 
         diet_ref = config.DATA_DIR / "diet_reference.md"
         if diet_ref.exists():
@@ -343,7 +351,10 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
             import gmail_store
             email_ctx = gmail_store.get_email_context(today)
             if email_ctx:
-                ctx_parts.append(email_ctx)
+                ctx_parts.append(
+                    "Email (unread important only — use `query.py email --search` for all):\n"
+                    + email_ctx
+                )
         except Exception as e:
             log.warning("Email context unavailable: %s", e)
 

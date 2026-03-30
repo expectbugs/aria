@@ -336,7 +336,7 @@ class TestWithSeededCalendarData:
             result = context.gather_always_context()
 
         assert "Pick up prescription" in result
-        assert "Active reminders:" in result
+        assert "Active reminders" in result
 
     @freeze_time("2026-03-25 14:00:00")
     def test_events_in_request_context(self):
