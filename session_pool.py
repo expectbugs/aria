@@ -242,15 +242,19 @@ class _Session:
                                 f"{data.get('result', 'unknown')}")
                         result_text = data.get("result", "")
 
-                        # Assemble complete response: intermediate text +
-                        # final result (which may duplicate the last text
-                        # block, so only prepend truly intermediate text).
-                        if assistant_text_parts:
-                            # The result usually contains the final assistant
-                            # text. Prepend earlier parts that aren't in it.
-                            intermediate = "\n".join(assistant_text_parts[:-1])
-                            if intermediate and intermediate not in result_text:
-                                result_text = intermediate + "\n" + result_text
+                        # Assemble complete response: the "result" message
+                        # contains only the LAST assistant text block. If
+                        # ARIA said something before a tool call, that text
+                        # was in an earlier assistant message and needs to
+                        # be prepended. We collect all assistant text parts
+                        # and check which ones are NOT in the final result.
+                        if len(assistant_text_parts) > 1:
+                            earlier = []
+                            for part in assistant_text_parts:
+                                if part.strip() not in result_text:
+                                    earlier.append(part.strip())
+                            if earlier:
+                                result_text = "\n".join(earlier) + "\n" + result_text
 
                         # Track output size + check context pressure
                         self._context_bytes += len(result_text)
