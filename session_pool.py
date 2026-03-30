@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -33,6 +34,36 @@ _TOOL_USE_REMINDER = (
     "If your response contains facts, dates, numbers, or state claims, you MUST "
     "verify them with a tool first. Do NOT respond from memory alone."
 )
+
+# --- Context deduplication ---
+# Matches [dedup:KEY:HASH]...content...[/dedup:KEY] tags emitted by context.py.
+# Used to skip re-injecting large static sections (pantry, diet_reference) and
+# unchanged dynamic sections (health snapshot, nutrition) within a session.
+_DEDUP_RE = re.compile(
+    r'\[dedup:(\w+):(\w+)\]\n(.*?)\n\[/dedup:\1\]',
+    re.DOTALL,
+)
+
+
+def _apply_context_dedup(context: str, hashes: dict[str, str]) -> str:
+    """Replace unchanged tagged context sections with brief references.
+
+    Scans for [dedup:key:hash]...content...[/dedup:key] tags.
+    If a section's hash matches the previous injection, replaces with a one-liner.
+    If new or changed, keeps the full content and updates the hash cache.
+
+    Returns the processed context string. Mutates the hashes dict in place.
+    """
+    def _replace(m: re.Match) -> str:
+        key, hash_val, content = m.group(1), m.group(2), m.group(3)
+        if key in hashes and hashes[key] == hash_val:
+            # Content unchanged — skip re-injection
+            return f"[{key}: unchanged from previous context]"
+        # New or changed — inject fully, update cache
+        hashes[key] = hash_val
+        return content.strip()
+
+    return _DEDUP_RE.sub(_replace, context)
 
 log = logging.getLogger("aria")
 
@@ -78,6 +109,7 @@ class _Session:
         self._max_context_bytes = getattr(
             config, "SESSION_MAX_CONTEXT_BYTES", 500_000
         )  # ~125K tokens ≈ 62% of 200K window
+        self._dedup_hashes: dict[str, str] = {}  # key → hash for context dedup
 
     def _is_alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
@@ -107,6 +139,7 @@ class _Session:
         self._request_count = 0
         self._history_injected = False
         self._context_bytes = 0
+        self._dedup_hashes = {}  # fresh session — re-inject everything
         self._spawned_at = datetime.now()
         log.info("Session '%s' spawned (pid=%s, effort=%s)",
                  self.name, self._proc.pid, self._effort)
@@ -146,7 +179,9 @@ class _Session:
                 self._history_injected = True
 
             if extra_context:
-                parts.append(f"[CONTEXT]\n{extra_context}\n[/CONTEXT]")
+                # Dedup large static sections (pantry, diet_ref, health)
+                deduped = _apply_context_dedup(extra_context, self._dedup_hashes)
+                parts.append(f"[CONTEXT]\n{deduped}\n[/CONTEXT]")
             parts.append(f"User says: {user_text}")
 
             # Tool use reminder — last item before generation

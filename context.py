@@ -4,11 +4,23 @@ Tier 1 (always): datetime, timers, reminders, location, battery, exercise state
 Tier 2 (keyword): weather, calendar expansion, health/nutrition, vehicle, legal, projects
 """
 
+import hashlib
 import logging
 import re
 from datetime import datetime, date, timedelta
 
 log = logging.getLogger("aria")
+
+
+def _dedup_tag(key: str, content: str) -> str:
+    """Wrap a context section with dedup tags including a content hash.
+
+    The session pool scans for these tags and skips re-injecting unchanged
+    sections within the same persistent session. Other callers (API fallback,
+    briefing/debrief) see the tags as harmless text.
+    """
+    h = hashlib.md5(content.encode()).hexdigest()[:10]
+    return f"[dedup:{key}:{h}]\n{content}\n[/dedup:{key}]"
 
 
 def _get_diet_day() -> int | None:
@@ -52,12 +64,22 @@ _HEALTH_SUBSTRINGS = [
     "vitamin", "omega", "label", "deficit", "surplus", "smoothie",
     "magnesium", "choline", "zinc", "selenium", "micronutrient",
     "supplement",
+    # Broader triggers (v0.8.6)
+    "what did i eat", "what did i have", "how much did i",
+    "how many calories", "any meals", "did i log", "track my",
+    "blood pressure", "glucose", "a1c",
 ]
 _HEALTH_REGEX = re.compile(
     r'\b(body|pain|sleep|slept|exercise|symptom|headache|sore|medication|'
     r'steps|resting|food|eat|ate|meals?|lunch|dinner|breakfast|snack|'
     r'carbs?|weight)\b',
     re.IGNORECASE)
+
+# Cross-domain triggers: inject health + calendar + email together
+_MULTI_DOMAIN_SUBSTRINGS = [
+    "how am i doing", "am i on track", "how's my day",
+    "what's going on", "status update", "catch me up",
+]
 
 _VEHICLE_SUBSTRINGS = ["xterra", "vehicle", "maintenance", "mileage",
                        "oil change", "tire pressure"]
@@ -207,6 +229,9 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     text_lower = text.lower().replace("-", " ")  # normalize hyphens for keyword matching
     ctx_parts = []
 
+    # Multi-domain triggers: inject health + calendar + email together
+    multi_domain = any(kw in text_lower for kw in _MULTI_DOMAIN_SUBSTRINGS)
+
     # --- Tier 1: Always-inject ---
     always_ctx = gather_always_context()
     if always_ctx:
@@ -242,7 +267,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
     week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
-    calendar_expanded = _match_keywords(text_lower, _CALENDAR_SUBSTRINGS, _CALENDAR_REGEX)
+    calendar_expanded = _match_keywords(text_lower, _CALENDAR_SUBSTRINGS, _CALENDAR_REGEX) or multi_domain
     if calendar_expanded:
         events = calendar_store.get_events(start=today, end=week_end)
     else:
@@ -276,21 +301,26 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
             ))
 
     # --- Health + Nutrition + Fitness (unified) ---
-    if is_image or _match_keywords(text_lower, _HEALTH_SUBSTRINGS, _HEALTH_REGEX):
+    if is_image or multi_domain or _match_keywords(text_lower, _HEALTH_SUBSTRINGS, _HEALTH_REGEX):
         health_ctx = gather_health_context()
         if health_ctx:
-            ctx_parts.append(
+            ctx_parts.append(_dedup_tag("health",
                 "Health snapshot (today + yesterday — use `query.py health` for older):\n"
                 + health_ctx
-            )
+            ))
 
         diet_ref = config.DATA_DIR / "diet_reference.md"
         if diet_ref.exists():
-            ctx_parts.append("Diet reference:\n" + diet_ref.read_text())
+            ctx_parts.append(_dedup_tag("diet_ref",
+                "Diet reference:\n" + diet_ref.read_text()
+            ))
 
         pantry = config.DATA_DIR / "pantry.md"
         if pantry.exists():
-            ctx_parts.append("Pantry (verified nutrition — use these values, do not estimate):\n" + pantry.read_text())
+            ctx_parts.append(_dedup_tag("pantry",
+                "Pantry (verified nutrition — use these values, do not estimate):\n"
+                + pantry.read_text()
+            ))
 
         # Note: 14-day raw health dump removed in v0.4.14 (D4 fix).
         # Today + yesterday are in gather_health_context(). 7-day patterns
@@ -346,7 +376,7 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
             ))
 
     # --- Email ---
-    if _match_keywords(text_lower, _EMAIL_SUBSTRINGS, _EMAIL_REGEX):
+    if multi_domain or _match_keywords(text_lower, _EMAIL_SUBSTRINGS, _EMAIL_REGEX):
         try:
             import gmail_store
             email_ctx = gmail_store.get_email_context(today)

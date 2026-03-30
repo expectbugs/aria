@@ -6,6 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.8.6] — 2026-03-29
+
+### Added — Context Injection Improvements + Deduplication
+
+- **Context deduplication** — Pantry file (~12KB), diet reference (~3.5KB), and health snapshot are wrapped with content-hash tags. The session pool skips re-injecting unchanged sections within a persistent session, replacing them with `[section: unchanged from previous context]`. Saves ~3,750 tokens per health query after the first. Hashes reset on session recycle.
+- **Broader health keyword triggers** — Added: "what did I eat", "how many calories", "blood pressure", "glucose", "a1c", "did I log", "track my", and more.
+- **Cross-domain triggers** — "how am I doing", "am I on track", "catch me up", "status update" now inject health + calendar + email context together.
+- **Context gap detection** — Log-only check for hedging language ("I don't have access to", "I'd need to check") in ARIA responses. Records gaps for future context injection improvements.
+- **17 new tests** in `tests/test_context_dedup.py` — dedup tagging, hash-based dedup, session recycle, broader keywords, gap detection.
+- **Total test count:** 2094 tests across 92 files, all passing
+
+---
+
 ## [0.8.5] — 2026-03-29
 
 ### Added — Enhanced Verification + Context Scope Annotations

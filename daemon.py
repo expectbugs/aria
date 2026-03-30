@@ -118,6 +118,31 @@ def log_request(text: str, status: str, response: str = "", error: str = "",
         logging.getLogger("aria").error("Failed to log request: %s", e)
 
 
+# --- Context Gap Detection (log-only) ---
+
+_CONTEXT_GAP_PATTERNS = re.compile(
+    r"I don't have (?:access to|information about|data on)"
+    r"|I'm not sure (?:what|when|how|where|whether)"
+    r"|I don't see any (?:record|data|entry|entries|information)"
+    r"|I'd need to (?:check|look up|verify|query)"
+    r"|I don't have (?:your|that|this|the) (?:data|information|details)",
+    re.IGNORECASE,
+)
+
+
+def _check_context_gap(response: str, request: str):
+    """Log responses where ARIA hedges about missing data — training signal.
+
+    Does NOT modify the response or trigger retries. The hedging might be
+    appropriate (e.g. ARIA correctly saying it needs more context). This just
+    records the pattern for future context injection improvements.
+    """
+    if _CONTEXT_GAP_PATTERNS.search(response):
+        log.info("[CONTEXT_GAP] Response hedged on data availability. "
+                 "Request: %s | Response snippet: %s",
+                 request[:80], response[:120])
+
+
 # --- Destructive Action Confirmation Shortcut ---
 
 _CONFIRMATION_PHRASES = frozenset({
@@ -584,6 +609,7 @@ async def ask(req: AskRequest, request: Request):
             text, extra_context, result, log_fn=log_request,
             tool_calls=query_result.tool_calls)
         response = result.to_response()
+        _check_context_gap(response, text)
 
         duration = time.time() - start
         log_request(text, "ok", response=response, duration=duration)

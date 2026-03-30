@@ -1,9 +1,10 @@
 # ARIA — Project Status
 
 ## Current Version
-v0.8.5 (2026-03-29)
+v0.8.6 (2026-03-29)
 
 ## What's Working
+- **Context dedup + injection** (v0.8.6): Hash-based dedup for static context (~15KB saved per turn), broader keywords, cross-domain triggers, gap detection
 - **Context scope annotations** (v0.8.5): Scope info on all injected context, completeness claim detection (log-only)
 - **Destructive action gate** (v0.8.4): Code-level confirmation required for all deletes, 10-min pending expiry, daemon shortcut
 - **Tool use enforcement** (v0.8.3): Per-query tool reminders, tool call tracking, factual response validation with retry
