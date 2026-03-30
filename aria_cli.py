@@ -141,6 +141,61 @@ def _print_trace(entry: dict, debug: bool):
     elif event == "tts":
         print(f"  {timestamp} {CYAN}tts{RESET}: {detail}")
 
+    elif event == "tool_calls":
+        print(f"  {timestamp} {YELLOW}tools used{RESET}: {detail}")
+
+    elif event == "assistant_text":
+        label = f"{CYAN}aria says{RESET}"
+        try:
+            data = json.loads(detail)
+            text_val = data.get("text", detail)
+        except (json.JSONDecodeError, TypeError):
+            text_val = detail
+        if debug:
+            print(f"  {timestamp} {label}:")
+            for line in str(text_val).split("\n"):
+                print(f"    {DIM}{line}{RESET}")
+        else:
+            snippet = str(text_val)[:120]
+            print(f"  {timestamp} {label}: {snippet}")
+
+    elif event == "tool_call":
+        label = f"{YELLOW}tool call{RESET}"
+        try:
+            data = json.loads(detail)
+            tool_name = data.get("tool", "?")
+            tool_input = data.get("input", {})
+        except (json.JSONDecodeError, TypeError):
+            tool_name, tool_input = "?", detail
+        if debug:
+            input_str = json.dumps(tool_input, default=str)
+            if len(input_str) > 500:
+                input_str = input_str[:500] + "..."
+            print(f"  {timestamp} {label}: {BOLD}{tool_name}{RESET}")
+            print(f"    {DIM}input: {input_str}{RESET}")
+        else:
+            print(f"  {timestamp} {label}: {tool_name}")
+
+    elif event == "tool_result":
+        label = f"{GREEN}tool result{RESET}"
+        try:
+            data = json.loads(detail)
+            content = data.get("content", detail)
+        except (json.JSONDecodeError, TypeError):
+            content = detail
+        if debug:
+            content_str = str(content)
+            if len(content_str) > 800:
+                content_str = content_str[:800] + "..."
+            print(f"  {timestamp} {label}:")
+            for line in content_str.split("\n")[:20]:
+                print(f"    {DIM}{line}{RESET}")
+        else:
+            print(f"  {timestamp} {label}: {len(str(content)):,} chars")
+
+    elif event == "confirmation_shortcut":
+        print(f"  {timestamp} {GREEN}confirmed{RESET}: {detail}")
+
     elif event == "done":
         print(f"  {timestamp} {GREEN}{BOLD}done{RESET}: {detail}")
 

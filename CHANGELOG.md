@@ -8,6 +8,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ## [0.8.6] — 2026-03-29
 
+### Fixed — Stream Response Assembly
+
+- **Intermediate assistant text blocks no longer dropped** — Session pool now collects ALL text content blocks from `assistant` messages during the stream-json conversation (pre-tool-call text, between-tool-call text). Previously only the final `result` message was captured, silently discarding ARIA's intermediate responses.
+- **`SessionResponse.stream_events`** — New field captures the full stream: assistant text blocks, tool call invocations with inputs, and tool results. Available for debug tracing.
+- **Debug trace: full stream-of-thought** — `_process_task` and `_process_file_task` now emit `assistant_text`, `tool_call`, and `tool_result` trace events before the final `raw_response`. The CLI debug mode (`--debug` / `/debug`) renders all of them.
+- **CLI debug enhancements** — `aria_cli.py` renders new trace event types: `aria says` (intermediate text), `tool call` (with tool name + input), `tool result` (with output), `confirmed` (destructive action shortcut).
+
 ### Added — Context Injection Improvements + Deduplication
 
 - **Context deduplication** — Pantry file (~12KB), diet reference (~3.5KB), and health snapshot are wrapped with content-hash tags. The session pool skips re-injecting unchanged sections within a persistent session, replacing them with `[section: unchanged from previous context]`. Saves ~3,750 tokens per health query after the first. Hashes reset on session recycle.

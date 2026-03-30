@@ -682,6 +682,10 @@ async def _process_task(task_id: str, text: str, channel: str = "voice"):
         _t("route", f"{'fast' if is_simple else 'deep'} session")
 
         query_result = await _route_query(text, extra_context)
+
+        # Emit stream events for debug trace
+        for evt in query_result.stream_events:
+            _t(evt["event"], json.dumps(evt, default=str))
         _t("raw_response", query_result.text)
         if query_result.tool_calls:
             _t("tool_calls", ", ".join(query_result.tool_calls))
@@ -788,6 +792,8 @@ async def _process_file_task(task_id: str, file_bytes: bytes, filename: str,
         _t("route", "deep session (file)")
 
         query_result = await _route_query(user_text, extra_context, file_blocks)
+        for evt in query_result.stream_events:
+            _t(evt["event"], json.dumps(evt, default=str))
         _t("raw_response", query_result.text)
         if query_result.tool_calls:
             _t("tool_calls", ", ".join(query_result.tool_calls))

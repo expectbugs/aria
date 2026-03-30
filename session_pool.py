@@ -23,6 +23,7 @@ class SessionResponse:
     """Response from a CLI session query, with tool call metadata."""
     text: str
     tool_calls: list[str] = field(default_factory=list)  # tool names used
+    stream_events: list[dict] = field(default_factory=list)  # full stream log
 
 
 # Tool use reminder — injected at the END of every query so it sits near
@@ -209,8 +210,14 @@ class _Session:
             await self._proc.stdin.drain()
             self._request_count += 1
 
-            # Read stdout lines until we get a result
+            # Read stdout lines until we get a result.
+            # Collect ALL intermediate events: assistant text blocks (pre- and
+            # between tool calls), tool_use invocations, and tool results.
+            # The final "result" message only contains the last text — earlier
+            # text blocks are lost without this collection.
             tool_calls_seen: list[str] = []
+            stream_events: list[dict] = []
+            assistant_text_parts: list[str] = []
             try:
                 while True:
                     line = await asyncio.wait_for(
@@ -233,9 +240,20 @@ class _Session:
                             raise RuntimeError(
                                 f"Session '{self.name}' error: "
                                 f"{data.get('result', 'unknown')}")
-                        result = data.get("result", "")
+                        result_text = data.get("result", "")
+
+                        # Assemble complete response: intermediate text +
+                        # final result (which may duplicate the last text
+                        # block, so only prepend truly intermediate text).
+                        if assistant_text_parts:
+                            # The result usually contains the final assistant
+                            # text. Prepend earlier parts that aren't in it.
+                            intermediate = "\n".join(assistant_text_parts[:-1])
+                            if intermediate and intermediate not in result_text:
+                                result_text = intermediate + "\n" + result_text
+
                         # Track output size + check context pressure
-                        self._context_bytes += len(result)
+                        self._context_bytes += len(result_text)
                         if self._context_bytes > self._max_context_bytes:
                             log.info(
                                 "[CONTEXT] Session '%s' at %d bytes "
@@ -249,19 +267,49 @@ class _Session:
                                      self.name, len(tool_calls_seen),
                                      ", ".join(tool_calls_seen[:10]))
                         return SessionResponse(
-                            text=result, tool_calls=tool_calls_seen)
+                            text=result_text,
+                            tool_calls=tool_calls_seen,
+                            stream_events=stream_events)
 
                     elif msg_type == "assistant":
-                        # Track tool_use content blocks in assistant messages
+                        # Collect text and tool_use content blocks
                         msg_data = data.get("message", {})
                         if isinstance(msg_data, dict):
                             content = msg_data.get("content", [])
                             if isinstance(content, list):
                                 for block in content:
-                                    if (isinstance(block, dict)
-                                            and block.get("type") == "tool_use"):
-                                        tool_calls_seen.append(
-                                            block.get("name", "unknown"))
+                                    if not isinstance(block, dict):
+                                        continue
+                                    if block.get("type") == "tool_use":
+                                        name = block.get("name", "unknown")
+                                        tool_calls_seen.append(name)
+                                        stream_events.append({
+                                            "event": "tool_call",
+                                            "tool": name,
+                                            "input": block.get("input", {}),
+                                        })
+                                    elif block.get("type") == "text":
+                                        text_val = block.get("text", "")
+                                        if text_val.strip():
+                                            assistant_text_parts.append(
+                                                text_val)
+                                            stream_events.append({
+                                                "event": "assistant_text",
+                                                "text": text_val,
+                                            })
+
+                    elif msg_type == "tool":
+                        # Tool result — capture for debug stream
+                        tool_content = data.get("message", {})
+                        if isinstance(tool_content, dict):
+                            content = tool_content.get("content", "")
+                            # Truncate large tool results for the stream log
+                            if isinstance(content, str) and len(content) > 500:
+                                content = content[:500] + "..."
+                            stream_events.append({
+                                "event": "tool_result",
+                                "content": content,
+                            })
 
                     elif msg_type == "control_request":
                         # Auto-approve any permission/hook requests
