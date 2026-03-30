@@ -1038,6 +1038,7 @@ def process_email_cleanup():
     if not candidates:
         return
 
+    import httpx
     log.info("[EMAIL_CLEANUP] %d candidates for auto-cleanup", len(candidates))
 
     for c in candidates:
@@ -1047,7 +1048,7 @@ def process_email_cleanup():
                 resp = httpx.post(
                     f"{DAEMON_URL}/google/gmail/trash",
                     json={"message_id": c["email_id"]},
-                    headers=_auth_headers(),
+                    headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
                     timeout=10,
                 )
                 if resp.status_code == 200:
