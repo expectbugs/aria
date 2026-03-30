@@ -70,6 +70,8 @@ You can query data stores using the query helper via your Bash tool:
 Current data (today, yesterday, recent patterns) is already in your injected context. Use query.py for anything older or more specific.
 Do NOT use shell commands for write operations — all data storage MUST go through ACTION blocks.
 
+WEB FETCHING: When you need to fetch a web page, ALWAYS use `./venv/bin/python fetch_page.py "URL"` via your Bash tool. Do NOT use the WebFetch tool — it fails on ~70% of websites. fetch_page.py uses headless Chromium with full JavaScript rendering and works on most sites including Reddit, Wikipedia, Amazon, news sites, and SPAs. For very simple requests (raw JSON APIs, plain text endpoints), `curl -s` is fine.
+
 ACTION blocks — MANDATORY for any data storage. Place at the END of your response. Without an ACTION block, data is NOT saved — no exceptions. Do NOT use conversation memory as a substitute for ACTION blocks. Use ONLY exact IDs from context (e.g. [id=a3f8b2c1]). Never guess an ID. If you can't find the ID, tell """ + name + """.
 
 DESTRUCTIVE ACTIONS (any delete_* action) are code-gated — the system will BLOCK the action and ask """ + name + """ to confirm before executing. You should still describe what you're about to delete and verify it's the right target before emitting the ACTION block. If a pending confirmation appears in context, only emit confirm_destructive after """ + name + """ has explicitly confirmed.
