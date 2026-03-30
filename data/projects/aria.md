@@ -1,9 +1,10 @@
 # ARIA — Project Status
 
 ## Current Version
-v0.8.6 (2026-03-29)
+v0.8.7 (2026-03-30)
 
 ## What's Working
+- **Email integration polish** (v0.8.7): Classification accuracy 35.5%→28.0% important rate, `check_subject_only` for per-sender overrides, shipping split by urgency, P1-P4 priority scoring, email surfacing tracker, Tier 3 AI upgraded to Sonnet, email body access via query.py, trash_email ACTION, stale finding cleanup, **junk auto-archive** (Tier 1 junk removed from Gmail inbox every tick, batch Gmail API, historical cleanup script)
 - **Context dedup + injection** (v0.8.6): Hash-based dedup for static context (~15KB saved per turn), broader keywords, cross-domain triggers, gap detection
 - **Context scope annotations** (v0.8.5): Scope info on all injected context, completeness claim detection (log-only)
 - **Destructive action gate** (v0.8.4): Code-level confirmation required for all deletes, 10-min pending expiry, daemon shortcut

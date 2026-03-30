@@ -573,6 +573,29 @@ async def google_gmail_trash(request: Request):
     return {"status": "ok", "trashed": message_id}
 
 
+@app.post("/google/gmail/archive")
+async def google_gmail_archive(request: Request):
+    """Archive Gmail messages (remove INBOX label). Updates local cache."""
+    verify_auth(request)
+    body = await request.json()
+    message_ids = body.get("message_ids", [])
+    if not message_ids:
+        raise HTTPException(status_code=400, detail="Missing message_ids")
+
+    client = google_client.get_client()
+    count = await client.gmail_batch_modify(
+        message_ids, remove_labels=["INBOX"])
+
+    # Update local cache
+    try:
+        import gmail_store
+        gmail_store.archive_emails(message_ids)
+    except Exception as e:
+        log.warning("Failed to update local labels for archived emails: %s", e)
+
+    return {"status": "ok", "archived": count}
+
+
 @app.post("/email/search")
 async def email_search(request: Request):
     """Search emails by keyword."""

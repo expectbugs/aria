@@ -52,6 +52,7 @@ class ClassificationResult:
     confidence: float     # 0.0-1.0
     reason: str           # human-readable explanation
     category: str | None = None  # organizational tag (Financial, Physical Mail, etc.)
+    priority: int = 3     # P1=time-critical, P2=high, P3=normal, P4=low
 
 
 # --- Rules Loading ---
@@ -102,16 +103,57 @@ def classify_email(email: dict) -> ClassificationResult:
     """
     # Tier 1: Hard rules
     result = _classify_tier1(email)
-    if result:
-        return result
+    if not result:
+        # Tier 2: Pattern scoring
+        result = _classify_tier2(email)
+    if not result:
+        # Tier 3: AI judgment
+        result = _classify_tier3(email)
 
-    # Tier 2: Pattern scoring
-    result = _classify_tier2(email)
-    if result:
-        return result
+    # Assign priority after classification
+    result.priority = _assign_priority(email, result)
+    return result
 
-    # Tier 3: AI judgment
-    return _classify_tier3(email)
+
+def _assign_priority(email: dict, result: ClassificationResult) -> int:
+    """Assign priority P1-P4 based on classification and content signals.
+
+    P1: Time-critical (verification codes, 2FA, delivery today, urgent)
+    P2: High (financial transactions, watched emails)
+    P3: Normal (regular important)
+    P4: Low (routine, junk)
+    """
+    if result.classification == "urgent":
+        return 1
+
+    subject = (email.get("subject") or "").lower()
+
+    # P1: Time-critical content
+    if re.search(
+        r'verification code|one.time|OTP|password reset|2fa|two.factor|'
+        r'security code|sign.in code|out for delivery|arriving today|'
+        r'delivery today',
+        subject, re.IGNORECASE,
+    ):
+        return 1
+
+    # P2: Financial transactions or watched emails
+    if result.classification in ("important", "actionable"):
+        if result.category == "Watched":
+            return 2
+        if re.search(
+            r'payment.{0,10}(processed|confirmed|received)|'
+            r'transaction|shipped|tracking|\$\d',
+            subject, re.IGNORECASE,
+        ):
+            return 2
+
+    # P3: Regular important
+    if result.classification in ("important", "actionable", "conversation"):
+        return 3
+
+    # P4: Routine/junk
+    return 4
 
 
 def classify_batch(emails: list[dict]) -> list[ClassificationResult]:
@@ -158,8 +200,12 @@ def _classify_tier1(email: dict) -> ClassificationResult | None:
         if not re.search(sender_pat, sender_str, re.IGNORECASE):
             continue
         content_pat = override.get("content_pattern", "")
-        if content_pat and not re.search(content_pat, content, re.IGNORECASE):
-            continue
+        if content_pat:
+            # check_subject_only: match against subject only (prevents body
+            # footer/FAQ text from triggering — same flag as global overrides)
+            search_text = subject if override.get("check_subject_only") else content
+            if not re.search(content_pat, search_text, re.IGNORECASE):
+                continue
         classification = override.get("classification", ROUTINE)
         cat = override.get("category")
         reason_parts = [f"Content override: {sender_pat}"]
@@ -368,6 +414,11 @@ def _classify_tier2(email: dict) -> ClassificationResult | None:
         score -= 1
         signals.append("Has List-Unsubscribe (-1)")
 
+    # "Unsubscribe" text in body (marketing signal even without header)
+    if re.search(r'\bunsubscribe\b', body, re.IGNORECASE):
+        score -= 1
+        signals.append("Body contains 'unsubscribe' (-1)")
+
     # Addressed directly to user (not BCC)
     to = (email.get("to_addresses") or "").lower()
     owner_email = getattr(config, "OWNER_EMAIL", "").lower()
@@ -378,8 +429,8 @@ def _classify_tier2(email: dict) -> ClassificationResult | None:
     # Contains user's name in body
     owner_name = getattr(config, "OWNER_NAME", "").split()[0] if getattr(config, "OWNER_NAME", "") else ""
     if owner_name and len(owner_name) > 2 and owner_name.lower() in body.lower():
-        score += 2
-        signals.append(f"Contains user name '{owner_name}' (+2)")
+        score += 1
+        signals.append(f"Contains user name '{owner_name}' (+1)")
 
     # Check if user has ever replied to this sender (check for SENT messages to this domain)
     try:
@@ -452,7 +503,7 @@ def _extract_header_from_email(email: dict, name: str) -> str:
 # --- Tier 3: AI Judgment ---
 
 def _classify_tier3(email: dict) -> ClassificationResult:
-    """AI judgment via Haiku for uncertain emails."""
+    """AI judgment for uncertain emails (configurable model, default Sonnet)."""
     from_addr = email.get("from_address") or "?"
     from_name = email.get("from_name") or ""
     subject = email.get("subject") or "(no subject)"
@@ -476,32 +527,30 @@ def _classify_tier3(email: dict) -> ClassificationResult:
         "Marketing emails with unsubscribe are usually junk."
     )
 
+    tier3_model = getattr(config, "TIER3_EMAIL_MODEL", "claude-sonnet-4-6")
+
     try:
         import asyncio
-        from aria_api import ask_haiku
+        from aria_api import ask_model
 
-        # ask_haiku is async — run it in the event loop if available,
-        # otherwise use asyncio.run for sync context
         try:
             loop = asyncio.get_running_loop()
-            # Already in async context — can't use asyncio.run
-            # Return a default classification; the monitor will handle this
-            # via its own async context
             log.warning("Tier 3 called from async context — deferring to routine")
             return ClassificationResult(ROUTINE, "tier3_ai", 0.3,
                                         "Deferred (async context)")
         except RuntimeError:
-            # No running loop — safe to use asyncio.run
-            response = asyncio.run(ask_haiku(prompt, context))
+            response = asyncio.run(ask_model(
+                prompt, context, model=tier3_model, max_tokens=50,
+                system_prompt="Classify the email. Reply with exactly one word.",
+            ))
 
         response = response.strip().lower()
         if response in (IMPORTANT, ROUTINE, JUNK, ACTIONABLE, URGENT):
             return ClassificationResult(response, "tier3_ai", 0.7,
-                                        f"Haiku classified as {response}")
-        # Haiku returned something unexpected — default to routine
-        log.warning("Haiku returned unexpected classification: %s", response)
+                                        f"AI ({tier3_model}) classified as {response}")
+        log.warning("Tier 3 returned unexpected classification: %s", response)
         return ClassificationResult(ROUTINE, "tier3_ai", 0.3,
-                                    f"Haiku response unparseable: {response[:50]}")
+                                    f"AI response unparseable: {response[:50]}")
     except Exception as e:
         log.error("Tier 3 classification failed: %s", e)
         return ClassificationResult(ROUTINE, "tier3_ai", 0.2,

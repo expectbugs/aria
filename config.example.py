@@ -158,6 +158,12 @@ COLLECT_ENTITY_MENTIONS = True      # extract entities from responses
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 HAIKU_MAX_TOKENS = 2048
 
+# --- Tier 3 Email Classification (smarter model for uncertain emails) ---
+TIER3_EMAIL_MODEL = "claude-sonnet-4-6"
+
+# --- Junk Email Auto-Archive (remove Tier 1 junk from Gmail INBOX) ---
+JUNK_AUTO_ARCHIVE = True
+
 # --- Response Verification (Phase 3) ---
 VERIFICATION_ENABLED = True             # master switch for claim verification
 VERIFICATION_MAX_RETRIES = 2            # max retries on action claim violations

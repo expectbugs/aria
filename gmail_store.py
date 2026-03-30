@@ -220,6 +220,28 @@ def save_attachment_paths(email_id: str, paths: list[str]):
         )
 
 
+# --- Email Archive ---
+
+def archive_emails(email_ids: list[str]) -> int:
+    """Remove INBOX label from cached emails. Returns count updated."""
+    if not email_ids:
+        return 0
+    try:
+        placeholders = ", ".join(["%s"] * len(email_ids))
+        with db.get_conn() as conn:
+            result = conn.execute(
+                f"""UPDATE email_cache
+                    SET labels = array_remove(labels, 'INBOX')
+                    WHERE id IN ({placeholders})
+                    AND 'INBOX' = ANY(labels)""",
+                email_ids,
+            )
+            return result.rowcount
+    except Exception as e:
+        log.error("Failed to archive emails in cache: %s", e)
+        return 0
+
+
 # --- Email Queries ---
 
 def get_email(email_id: str) -> dict | None:
@@ -276,8 +298,15 @@ def get_recent(hours: int = 24, limit: int = 50) -> list[dict]:
     return [db.serialize_row(r) for r in rows]
 
 
-def get_unread_important(limit: int = 10) -> list[dict]:
-    """Get emails with UNREAD label classified as important/urgent/actionable."""
+def get_unread_important(limit: int = 10, max_age_hours: int = 72,
+                         max_surfaced: int = 3) -> list[dict]:
+    """Get emails with UNREAD label classified as important/urgent/actionable.
+
+    Filters:
+      - Only emails < max_age_hours old (default 72h)
+      - Only emails surfaced < max_surfaced times (default 3)
+    """
+    cutoff = datetime.now() - timedelta(hours=max_age_hours)
     with db.get_conn() as conn:
         rows = conn.execute(
             """SELECT e.id, e.from_address, e.from_name, e.subject, e.snippet,
@@ -286,11 +315,32 @@ def get_unread_important(limit: int = 10) -> list[dict]:
                JOIN email_classifications c ON c.email_id = e.id
                WHERE 'UNREAD' = ANY(e.labels)
                AND c.classification IN ('important', 'urgent', 'actionable')
+               AND e.timestamp >= %s
+               AND COALESCE(c.surfaced_count, 0) < %s
                ORDER BY e.timestamp DESC
                LIMIT %s""",
-            (limit,),
+            (cutoff, max_surfaced, limit),
         ).fetchall()
     return [db.serialize_row(r) for r in rows]
+
+
+def mark_surfaced(email_ids: list[str]):
+    """Increment surfaced_count and update last_surfaced for given emails."""
+    if not email_ids:
+        return
+    try:
+        placeholders = ", ".join(["%s"] * len(email_ids))
+        with db.get_conn() as conn:
+            conn.execute(
+                f"""UPDATE email_classifications
+                    SET surfaced_count = COALESCE(surfaced_count, 0) + 1,
+                        last_surfaced = NOW(),
+                        surfaced = TRUE
+                    WHERE email_id IN ({placeholders})""",
+                email_ids,
+            )
+    except Exception as e:
+        log.error("Failed to mark emails surfaced: %s", e)
 
 
 def get_unclassified(limit: int = 50) -> list[dict]:
@@ -440,7 +490,7 @@ def get_email_context(today: str) -> str:
     """
     parts = []
 
-    # Unread important emails
+    # Unread important emails (filtered by recency + surfacing count)
     unread = get_unread_important(limit=10)
     if unread:
         parts.append(f"Unread important emails ({len(unread)}):")
@@ -449,6 +499,8 @@ def get_email_context(today: str) -> str:
             parts.append(f"  - {sender}: {e.get('subject', '(no subject)')}")
         if len(unread) > 5:
             parts.append(f"  ... and {len(unread) - 5} more")
+        # Track surfacing to prevent stale emails from being shown repeatedly
+        mark_surfaced([e["id"] for e in unread])
 
     # Active email watches
     watches = get_active_watches()

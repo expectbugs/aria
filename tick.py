@@ -928,7 +928,7 @@ def process_monitors():
     if not getattr(config, "MONITORS_ENABLED", True):
         return
 
-    from monitors import store_finding, cleanup_expired
+    from monitors import store_finding, cleanup_expired, mark_delivered_bulk
     from monitors.health import HealthMonitor
     from monitors.fitness import FitnessMonitor
     from monitors.vehicle import VehicleMonitor
@@ -967,6 +967,55 @@ def process_monitors():
             log.exception("[MONITOR] %s monitor failed", monitor.domain)
 
     save_state(state)
+
+    # Drain stale email findings (prevents old emails from clogging context)
+    try:
+        mark_delivered_bulk("gmail", max_age_hours=24)
+    except Exception:
+        log.exception("[MONITOR] gmail stale cleanup failed")
+
+
+def process_junk_archival():
+    """Archive (remove from INBOX) emails classified as definite junk.
+
+    Only processes Tier 1 (curated rules) junk — no heuristic or AI junk.
+    Runs after monitor classification to catch newly identified junk.
+    """
+    if not getattr(config, "JUNK_AUTO_ARCHIVE", True):
+        return
+
+    try:
+        import httpx
+
+        with db.get_conn() as conn:
+            rows = conn.execute(
+                """SELECT e.id FROM email_cache e
+                   JOIN email_classifications c ON c.email_id = e.id
+                   WHERE c.classification = 'junk'
+                   AND c.tier = 'tier1_hard'
+                   AND 'INBOX' = ANY(e.labels)
+                   LIMIT 1000""",
+            ).fetchall()
+
+        if not rows:
+            return
+
+        ids = [r["id"] for r in rows]
+        log.info("[JUNK_ARCHIVE] Archiving %d Tier 1 junk emails from inbox", len(ids))
+
+        resp = httpx.post(
+            f"{DAEMON_URL}/google/gmail/archive",
+            json={"message_ids": ids},
+            headers={"Authorization": f"Bearer {config.AUTH_TOKEN}"},
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            log.info("[JUNK_ARCHIVE] Archived %d junk emails",
+                     resp.json().get("archived", 0))
+        else:
+            log.warning("[JUNK_ARCHIVE] Archive failed: HTTP %s", resp.status_code)
+    except Exception:
+        log.exception("[JUNK_ARCHIVE] Failed")
 
 
 def process_email_cleanup():
@@ -1199,6 +1248,7 @@ def main():
         ("google_poll", process_google_poll),
         ("monitors", process_monitors),
         ("email_cleanup", process_email_cleanup),
+        ("junk_archival", process_junk_archival),
         ("safety_net", process_safety_net),
         ("deferred_deliveries", process_deferred_deliveries),
         ("webhook_cleanup", cleanup_processed_webhooks),

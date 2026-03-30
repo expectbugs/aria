@@ -160,12 +160,14 @@ class TestClassificationStorage:
 class TestEmailContext:
     def test_context_with_unread(self):
         with patch("gmail_store.get_unread_important",
-                   return_value=[{"from_name": "Alice", "subject": "Urgent", "from_address": "a@b.com"}]), \
+                   return_value=[{"id": "msg1", "from_name": "Alice", "subject": "Urgent", "from_address": "a@b.com"}]), \
+             patch("gmail_store.mark_surfaced") as mock_surfaced, \
              patch("gmail_store.get_email_count",
                    return_value={"important": 1, "junk": 5}):
             ctx = gmail_store.get_email_context("2026-03-28")
         assert "Alice" in ctx
         assert "Urgent" in ctx
+        mock_surfaced.assert_called_once_with(["msg1"])
 
     def test_context_empty(self):
         with patch("gmail_store.get_unread_important", return_value=[]), \

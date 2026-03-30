@@ -72,6 +72,9 @@ FINDING_CATEGORIES: dict[str, str] = {
     "irregular_sleep": "A",
     "hr_trend_up": "A",
     "hrv_declining": "A",
+    # Email findings
+    "email_urgent": "C",
+    "email_important": "B",
     # Category B — repeat-low
     "gpu_temp_elevated": "B",
     # Category C — repeat-high
@@ -238,6 +241,24 @@ def mark_delivered(finding_ids: list[int], method: str):
             )
     except Exception as e:
         log.error("[MONITOR] Failed to mark findings delivered: %s", e)
+
+
+def mark_delivered_bulk(domain: str, max_age_hours: int = 24):
+    """Mark all undelivered findings from a domain older than max_age_hours as delivered."""
+    try:
+        cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+        with db.get_conn() as conn:
+            result = conn.execute(
+                """UPDATE monitor_findings
+                   SET delivered = TRUE, delivered_at = NOW(), delivery_method = 'stale_cleanup'
+                   WHERE domain = %s AND delivered = FALSE AND created_at < %s""",
+                (domain, cutoff),
+            )
+            if result.rowcount:
+                log.info("[MONITOR] Stale cleanup: marked %d old %s findings delivered",
+                         result.rowcount, domain)
+    except Exception as e:
+        log.error("[MONITOR] Stale cleanup failed: %s", e)
 
 
 def cleanup_expired():

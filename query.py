@@ -215,8 +215,29 @@ def format_email(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_email_full(email: dict | None) -> str:
+    """Format a single email with full body for --id lookup."""
+    if not email:
+        return "Email not found."
+    lines = [f"Email ID: {email.get('id', '?')}"]
+    lines.append(f"From: {email.get('from_name', '')} <{email.get('from_address', '?')}>")
+    lines.append(f"To: {email.get('to_addresses', '?')}")
+    lines.append(f"Subject: {email.get('subject', '(no subject)')}")
+    lines.append(f"Date: {email.get('timestamp', '?')}")
+    if email.get('has_attachments'):
+        paths = email.get('attachment_paths') or []
+        lines.append(f"Attachments: {len(paths)} file(s)")
+        for p in paths:
+            lines.append(f"  - {p}")
+    lines.append(f"\n--- Body ---\n{email.get('body', '(no body)')}")
+    return "\n".join(lines)
+
+
 def cmd_email(args):
-    if args.search:
+    if args.email_id:
+        email = gmail_store.get_email(args.email_id)
+        return format_email_full(email)
+    elif args.search:
         results = gmail_store.search_emails(args.search, limit=args.limit)
     elif args.sender:
         results = gmail_store.search_emails(args.sender, limit=args.limit)
@@ -285,6 +306,8 @@ def main(argv=None):
 
     # email
     p_email = subparsers.add_parser("email", help="Search emails")
+    p_email.add_argument("--id", dest="email_id", type=str, default=None,
+                         help="Get full email by message ID")
     p_email.add_argument("--search", type=str, default=None)
     p_email.add_argument("--from", dest="sender", type=str, default=None)
     p_email.add_argument("--days", type=int, default=7)

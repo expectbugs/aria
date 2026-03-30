@@ -1,0 +1,564 @@
+# Gmail classification rules — curated through interactive session 2026-03-28.
+# Loaded by gmail_strategy.py, hot-reloaded on file change.
+#
+# Priority order in classifier:
+#   1. global_content_overrides (verification codes, shipping — override ALL sender rules)
+#   2. Active email watches (user-requested alerts from email_watches table)
+#   3. content_overrides (per-sender, with optional content_pattern + category)
+#   4. always_important
+#   5. always_junk
+#   6. Conversation threads (YAML + DB auto-detect from SENT emails)
+#   7. Tier 2 pattern scoring → Tier 3 AI judgment
+
+# --- Global content overrides (highest priority) ---
+global_content_overrides:
+  # Verification codes / OTP — important when fresh, junk when expired
+  - content_pattern: "verification code|one-time code|\\bOTP\\b|activation link|security code|login code|sign.in code|here.s your.{0,15}code|your code is"
+    check_subject_only: true
+    max_age_hours: 2
+    classification_within: important
+    classification_after: junk
+
+  # Delivery imminent — important (P1)
+  - content_pattern: "out for delivery|arriving today|delivery today|will be delivered today"
+    classification: important
+    category: Shipping
+
+  # General shipping/tracking — routine (informational, not actionable)
+  - content_pattern: "has shipped|tracking number|shipment confirmation|shipping confirmation|your.{0,20}has been shipped|delivery details|delivery confirmation|package.{0,10}deliver|order.{0,20}deliver|delivery from"
+    classification: routine
+    category: Shipping
+
+  # Receipts / order confirmations from any sender (including food)
+  - content_pattern: "order receipt|transaction receipt|receipt for \\$|payment of \\$|your.{0,20}order.{0,30}confirmed|we got your order|purchase complete|receipt for order|order has been confirmed|order confirmation|check #\\d"
+    classification: routine
+    category: Financial
+
+  # Financial transactions from any sender (specific beats general)
+  - content_pattern: "payment.{0,15}(processed|confirmed|received|completed|scheduled|went through|successful)|thank you for.{0,40}payment|payment of \\$\\d|charged \\$\\d|your.{0,15}bill.{0,15}paid|auto.?pay.{0,15}(set|scheduled|processed)|settlement offer"
+    classification: routine
+    category: Financial
+
+# --- Auto-cleanup (trash after time window) ---
+auto_cleanup:
+  - sender_pattern: "shirtpunch"
+    max_age_hours: 24
+    action: trash
+
+# --- Always important (simple, no category needed) ---
+always_important:
+  senders: []
+  domains: []
+
+# --- Always junk (everything from these is junk, unless rescued by higher-priority overrides) ---
+always_junk:
+  senders:
+    - store-news@amazon.com
+    - do-not-reply@amazon.com
+    - no-reply@amazon.com
+    - googlepixel-noreply@google.com
+    - googlepixelbuds-noreply@google.com
+    - googlepixelwatch-noreply@google.com
+    - customer-reviews-messages@amazon.com
+
+  domains:
+    # Social media / notifications
+    - linkedin.com
+    - em.linkedin.com
+    - ss.email.nextdoor.com
+    - is.email.nextdoor.com
+    - rs.email.nextdoor.com
+    - glassdoor.com
+    - quora.com
+    - redditmail.com
+
+    # Financial marketing (no active services)
+    - r.sofi.com
+    - m.sofi.org
+    - e.usa.experian.com
+    - s.usa.experian.com
+    - cardmessage.capitalone.com
+    - bankmessage.capitalone.com
+    - notification.capitalone.com
+    - chase.com
+    - e.upgrade.com
+    - mail.upgrade.com
+    - home.upstart.com
+    - sezzle.com
+    - email.trustage.com
+    - email-freedommortgage.com
+    - creditscore.uwcu.org
+
+    # Rideshare / transportation
+    - marketing.lyftmail.com
+
+    # Retail marketing
+    - em.target.com
+
+    # Food / restaurants (actively unwanted temptation)
+    - doordash.com
+    - promotions.papajohns.com
+    - cousinsubs.com
+    - emails.arbys.com
+    - arbys.com
+    - info.tacobell.com
+    - c.factor75.com
+    - s.factor75.com
+    - r.factor75.com
+    - h.factor75.com
+    - factor75.com
+    - invoice.factor75.com
+    - us.mcdonalds.com
+
+    # Shopping / product marketing
+    - em.keurig.com
+    - keenfootwear.com
+    - safeopt.com
+    - em.autozone.com
+    - em.cars.com
+    - mail.carvana.com
+    - kwikrewards.com
+    - mail.adobe.com
+    - email.consumerreports.org
+    - combssweethomes.ccsend.com
+    - em1.turbotax.intuit.com
+    - mnestore.com
+    - eg.expedia.com
+    - elkhornchrysler.com
+    - info.twomen.com
+
+    # Streaming / entertainment
+    - hulumail.com
+    - mail.plex.tv
+    - mail.hbomax.com
+    - amazonmusic.com
+    - rifftrax.com
+    - gog.com
+
+    # FragranceNet promos (orders/tracking rescued by content_overrides)
+    - em.fragrancenet.com
+
+    # More food (marketing only — receipts rescued by global receipt override)
+    - e-offers.dominos.com
+    - e-rewards.dominos.com
+
+    # More financial marketing
+    - message.capitalone.com
+    - email.sezzle.com
+    - e.chase.com
+    - matic.com
+
+    # More streaming / entertainment
+    - msg.amazonmusic.com
+    - youtube.com
+    - legal.spotify.com
+
+    # More misc marketing
+    - wikimedia.org
+    - e.mail.realtor.com
+    - marketing01.email-allstate.com
+    - allstate-emarketing.com
+    - qualtrics-research.com
+    - eml.upstart.com
+    - joesalbums.com
+    - mail.beehiiv.com
+    - email-advocateaurorahealth.org
+    - qualtrics-survey.com
+    - surveynrc.com
+    - mail.punchbowl.com
+    - bitwage.com
+    - h6.hilton.com
+
+    # More misc junk
+    - brotherali.com
+
+    # Misc junk
+    - tesla.com
+    - tezlab.app
+    - itr.mail.codecademy.com
+    - fitbit.com
+    - qemailserver.com
+    - shop.app
+    - lumosity.com
+    - alerts.spotify.com
+    - spotify.com
+    - email.teladochealth.com
+    - e.affirm.com
+
+    # Content-dependent senders (default=junk, rescued by content_overrides above)
+    - mercurycards.com
+    - betterhelp.com
+    - mgb.betterhelp.com
+    - confirm.resurgent.com
+    - em4965.ecollect.resurgent.com
+    - mail.ecollect2.resurgent.com
+
+# --- Content overrides (per-sender rules with optional content patterns + categories) ---
+# Sender-only entries (no content_pattern) match ALL emails from that sender.
+# Entries with content_pattern only match when content matches; non-matching
+# emails fall through to always_important/always_junk/tier2.
+content_overrides:
+
+  # ========== LEGAL (urgent) ==========
+  - sender_pattern: "da\\.wi\\.gov"
+    classification: urgent
+    category: Legal
+  - sender_pattern: "co\\.walworth\\.wi\\.us"
+    classification: urgent
+    category: Legal
+  - sender_pattern: "stcol\\.com"
+    classification: important
+    category: Legal
+  - sender_pattern: "rmcpay\\.com"
+    classification: important
+    category: Financial
+
+  # ========== WORK ==========
+  - sender_pattern: "bankerwire\\.com"
+    classification: important
+    category: Work
+  - sender_pattern: "glassdoor"
+    content_pattern: "banker wire"
+    classification: important
+    category: Work
+
+  # ========== HEALTH / MEDICAL ==========
+  - sender_pattern: "aurorahealthcare\\.org|aah\\.org"
+    classification: important
+    category: Health
+  - sender_pattern: "careclinical\\.com"
+    classification: important
+    category: Health
+  - sender_pattern: "information\\.optum\\.com"
+    classification: important
+    category: Health
+  - sender_pattern: "betterhelp"
+    content_pattern: "sent you a message|new message.{0,20}(therapy|therapist)|session scheduled|REMINDER.{0,20}session|live session.{0,20}(with|at|tomorrow|on )|availability for|your therapist|therapist.{0,30}(responded|sent)|personal summary"
+    classification: important
+    category: Health
+  - sender_pattern: "teladochealth|teladoc\\.com"
+    content_pattern: "appointment|visit|doctor|prescription|consult|confirmation|new message"
+    classification: important
+    category: Health
+    check_subject_only: true
+  # Teladoc — newsletters and surveys are routine
+  - sender_pattern: "teladochealth|teladoc\\.com"
+    classification: routine
+    category: Health
+
+  # ========== INSURANCE / DISABILITY ==========
+  - sender_pattern: "symetra\\.com|symetrainfo\\.com|adobesign\\.com"
+    classification: important
+    category: Insurance
+  - sender_pattern: "allstate"
+    content_pattern: "renewal|policy|coverage|claim|payment|bill|document|premium|your auto|your policy"
+    classification: important
+    category: Insurance
+
+  # ========== FINANCIAL ==========
+  - sender_pattern: "southernlakescu\\.net|email\\.mystatement\\.org"
+    classification: important
+    category: Financial
+  - sender_pattern: "vanguard"
+    content_pattern: "statement.{0,10}ready|your.{0,10}statement|transaction|transfer|distribution|tax form|1099|tax document"
+    classification: important
+    category: Financial
+    check_subject_only: true
+  # Vanguard — everything else (marketing, newsletters) is routine
+  - sender_pattern: "vanguard"
+    classification: routine
+    category: Financial
+  - sender_pattern: "betterment\\.com"
+    classification: important
+    category: Financial
+  - sender_pattern: "affirm-billing@|affirm-confirmation@"
+    classification: important
+    category: Financial
+  - sender_pattern: "aidvantage"
+    classification: important
+    category: Financial
+  - sender_pattern: "visasecure\\.jackhenry"
+    classification: important
+    category: Financial
+  - sender_pattern: "notify\\.proton\\.me"
+    classification: important
+    category: Financial
+  - sender_pattern: "link\\.com"
+    classification: important
+    category: Financial
+  - sender_pattern: "payments-noreply@google"
+    classification: important
+    category: Financial
+  - sender_pattern: "myfico"
+    content_pattern: "score|alert|updated"
+    classification: important
+    category: Financial
+    check_subject_only: true
+  # Mercury Card — transactions rescued from always_junk
+  - sender_pattern: "mercurycards"
+    content_pattern: "payment|transaction|statement|confirmation|activity|balance|your card"
+    classification: important
+    category: Financial
+  # Resurgent — payment reminders rescued from always_junk (subject-only)
+  - sender_pattern: "resurgent"
+    content_pattern: "payment processed|payment reminder|installment plan|payment.{0,15}scheduled|balance due|amount due|upcoming payment|your.{0,15}payment|account ending in|your next account"
+    classification: important
+    category: Financial
+    check_subject_only: true
+  # PayPal — transactions (subject-only to avoid body footer false positives)
+  - sender_pattern: "paypal\\.com"
+    content_pattern: "receipt|invoice|payment|transaction|refund|transfer|\\$\\d"
+    classification: important
+    category: Financial
+    check_subject_only: true
+  # PayPal — marketing/account management (explicit junk)
+  - sender_pattern: "paypal\\.com"
+    content_pattern: "introducing|new feature|Pay in 4|offer saved|rewards|logged in|stay logged"
+    classification: junk
+    check_subject_only: true
+  # Venmo — transactions and security (subject-only to avoid marketing body matches)
+  - sender_pattern: "venmo"
+    content_pattern: "paid|received|sent|completed|transaction|transfer|security|device|sign.in|authorized|\\$\\d"
+    classification: important
+    category: Financial
+    check_subject_only: true
+  # PayPal — marketing/policy (explicit junk)
+  - sender_pattern: "paypal\\.com"
+    content_pattern: "privacy policy|terms of|policy update|new feature|introducing"
+    classification: junk
+  # Receipts
+  - sender_pattern: "secureparkingusa\\.com"
+    classification: routine
+    category: Financial
+  - sender_pattern: "loke\\.global"
+    classification: routine
+    category: Financial
+  # Paychex — payroll/work (subject-only; expanded password|reset for both orderings)
+  - sender_pattern: "paychex"
+    content_pattern: "pay stub|paycheck|direct deposit|W-2|1099|tax form|tax document|statement|benefits|enrollment|your pay|time off|password|reset|human resources"
+    classification: important
+    category: Financial
+    check_subject_only: true
+  # Paychex — everything else is routine (never junk — it's the payroll company)
+  - sender_pattern: "paychex"
+    classification: routine
+    category: Financial
+  # Google Play — purchases
+  - sender_pattern: "googleplay-noreply@google"
+    content_pattern: "receipt|order|cancel|subscription|purchase"
+    classification: important
+    category: Financial
+
+  # ========== TAXES ==========
+  - sender_pattern: "onlinetaxes@hrblock|MyAccount@hrblock"
+    classification: important
+    category: Taxes
+  - sender_pattern: "hrblock"
+    content_pattern: "your.{0,15}return|refund|filed|tax document|action required|e-file|your tax|accepted|tracker update|welcome back"
+    classification: important
+    category: Taxes
+
+  # Freedom Mortgage — payment/account (marketing domain in always_junk)
+  - sender_pattern: "freedommortgagewebservices|otp\\.freedommortgage"
+    classification: important
+    category: Financial
+  - sender_pattern: "freedommortgagepaperless"
+    classification: important
+    category: Financial
+  # U.S. Bank
+  - sender_pattern: "email\\.usbank\\.com"
+    classification: important
+    category: Financial
+  # John Hancock retirement
+  - sender_pattern: "jhancock\\.com"
+    classification: important
+    category: Financial
+  # Stark Agency (Kwik Trip collections)
+  - sender_pattern: "starkforyou\\.com"
+    classification: important
+    category: Financial
+  # State Collection via payscsi
+  - sender_pattern: "payscsi\\.com"
+    classification: important
+    category: Financial
+  # Optum Financial (HSA tax forms)
+  - sender_pattern: "optumfinancial\\.com"
+    classification: important
+    category: Financial
+
+  # ========== UTILITIES ==========
+  - sender_pattern: "edgebroadband\\.com"
+    classification: important
+    category: Utilities
+  - sender_pattern: "ting\\.com"
+    classification: important
+    category: Utilities
+  - sender_pattern: "we-energies\\.com"
+    content_pattern: "bill|statement|payment|usage|account|balance|due"
+    classification: important
+    category: Utilities
+  - sender_pattern: "googlefi-noreply|Google Fi"
+    content_pattern: "bill|statement|payment|account|monthly"
+    classification: important
+    category: Utilities
+  - sender_pattern: "daleewater\\.com"
+    classification: important
+    category: Utilities
+
+  # ========== SHOPPING ==========
+  - sender_pattern: "shipment-tracking@amazon"
+    classification: important
+    category: Shipping
+  - sender_pattern: "order-update@amazon|auto-confirm@amazon"
+    classification: important
+    category: Shopping
+  - sender_pattern: "account-update@amazon|digital-no-reply@amazon|dsar-request@amazon"
+    classification: important
+    category: Shopping
+  - sender_pattern: "marketplace-messages@amazon"
+    content_pattern: "your.{0,15}order|shipped|delivered|refund|return|seller.{0,20}(sent|message)"
+    classification: important
+    category: Shopping
+  - sender_pattern: "payments-update@amazon"
+    classification: important
+    category: Financial
+  - sender_pattern: "etsy"
+    content_pattern: "purchase|order|shipped|receipt|transaction"
+    classification: important
+    category: Shopping
+  - sender_pattern: "drinktrade\\.com"
+    content_pattern: "delivered|shipped|tracking|order|confirmation|account"
+    classification: important
+    category: Shipping
+  - sender_pattern: "fragrancenet"
+    content_pattern: "your order|order #|order has|delivered|shipped|tracking|warehouse|dispatch"
+    classification: important
+    category: Shopping
+  - sender_pattern: "shirtpunch"
+    classification: routine
+    category: Daily Deals
+
+  # ========== PHYSICAL MAIL ==========
+  - sender_pattern: "usps|informeddelivery"
+    classification: routine
+    category: Physical Mail
+
+  # ========== TECH SERVICES ==========
+  - sender_pattern: "mail\\.anthropic\\.com"
+    classification: important
+    category: Tech Services
+  - sender_pattern: "github\\.com"
+    classification: important
+    category: Tech Services
+  - sender_pattern: "termius\\.com"
+    classification: important
+    category: Tech Services
+  - sender_pattern: "accounts\\.google\\.com"
+    classification: important
+    category: Tech Services
+  - sender_pattern: "googlewallet-noreply"
+    classification: important
+    category: Tech Services
+  - sender_pattern: "faxzero\\.com"
+    classification: important
+    category: Tech Services
+  - sender_pattern: "telnyx\\.com"
+    classification: important
+    category: Tech Services
+  - sender_pattern: "twilio"
+    classification: important
+    category: Tech Services
+  - sender_pattern: "samsung-mail\\.com"
+    content_pattern: "sign.in|security|verification"
+    classification: important
+    category: Tech Services
+
+  # ========== GAMING ==========
+  - sender_pattern: "cloudimperiumgames|star citizen"
+    classification: routine
+    category: Gaming News
+  - sender_pattern: "iam8bit|ldtsoft\\.work"
+    classification: routine
+    category: Gaming
+  - sender_pattern: "square-enix|square.enix"
+    content_pattern: "subscription|purchase|payment|account|character|service"
+    classification: routine
+    category: Gaming
+  - sender_pattern: "roll20"
+    content_pattern: "campaign|game|session|character|invited"
+    classification: important
+    category: Gaming
+
+  # ========== CHARITABLE ==========
+  - sender_pattern: "sheldrick|donorperfect"
+    classification: routine
+    category: Charitable
+
+  # ========== PAID SURVEYS ==========
+  - sender_pattern: "prolific"
+    classification: routine
+    category: Paid Surveys
+
+  # ========== TEMPORARY (active situations — remove when resolved) ==========
+  # Even Realities — waiting for Even Hub public release announcement
+  - sender_pattern: "evenrealities\\.com"
+    classification: important
+  # GoFundMe — active campaign
+  - sender_pattern: "gofundme"
+    classification: important
+  # Murphy RV / InteractRV — active RV shopping
+  - sender_pattern: "murphyrvsales\\.net|interactrv\\.com"
+    classification: important
+  # Two Men and a Truck — active move
+  - sender_pattern: "twomen\\.com|paytrace\\.com"
+    classification: important
+  # TracFone — security alerts (promos fall to tier 2)
+  - sender_pattern: "tracfone"
+    content_pattern: "security|alert|password|account.{0,20}updated|auto.refill|cancel|balance|payment"
+    classification: important
+  # Reddit — account actions rescued from always_junk (verification codes via global override)
+  - sender_pattern: "reddit"
+    content_pattern: "password|account|security|recover|confirm|update your"
+    classification: important
+
+  # Social Security Administration
+  - sender_pattern: "ssa\\.gov"
+    content_pattern: "statement|benefits|account|eligible|your social security"
+    classification: important
+    category: Financial
+  # Prime Video subscription changes
+  - sender_pattern: "primevideo\\.com"
+    classification: routine
+  # Restaurant receipts (toasttab POS platform)
+  - sender_pattern: "toasttab\\.com"
+    classification: routine
+    category: Financial
+
+  # ========== MISC ROUTING ==========
+  - sender_pattern: "calendar-noreply@google"
+    classification: routine
+  - sender_pattern: "smartthings\\.com"
+    classification: routine
+  - sender_pattern: "umr\\.com"
+    classification: important
+    category: Health
+  - sender_pattern: "shop\\.app"
+    content_pattern: "shipped|delivered|tracking|order.{0,15}(confirmed|ready)|in transit"
+    classification: important
+    category: Shipping
+
+# --- Junk sender patterns (checked via content_overrides with no content_pattern) ---
+# These use sender_pattern matching for domains that can't be exact-matched
+# (e.g., unknown subdomains, name-based matching)
+  - sender_pattern: "AI with ALLIE|ai.with.allie"
+    classification: junk
+  - sender_pattern: "pink floyd"
+    classification: junk
+  - sender_pattern: "lumosity"
+    classification: junk
+  - sender_pattern: "tezlab"
+    classification: junk
+
+# --- Conversation threads (auto-populated from DB SENT emails) ---
+# Manual overrides can be added here; DB auto-detection handles the rest.
+conversation_threads: []

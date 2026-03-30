@@ -50,21 +50,19 @@ def _get_client() -> anthropic.Anthropic:
 
 # --- Haiku (system-internal composition) ---
 
-async def ask_haiku(prompt: str, context: str = "") -> str:
-    """Send a query to Haiku for system-internal composition tasks.
+async def ask_model(prompt: str, context: str = "",
+                    model: str | None = None,
+                    max_tokens: int = 2048,
+                    system_prompt: str | None = None) -> str:
+    """Send a query to a specified Claude model for system-internal tasks.
 
-    Used for nudge message composition and task completion summaries —
-    simple text generation that doesn't need Opus-level reasoning, tool
-    access, or conversation history.
-
-    Same Anthropic API client, different model and parameters.
+    Generalized API call for nudge composition (Haiku), Tier 3 email
+    classification (Sonnet), and other internal tasks.
     """
     client = _get_client()
+    model = model or getattr(config, "HAIKU_MODEL", "claude-haiku-4-5-20251001")
 
-    model = getattr(config, "HAIKU_MODEL", "claude-haiku-4-5-20251001")
-    max_tokens = getattr(config, "HAIKU_MAX_TOKENS", 2048)
-
-    system_prompt = (
+    sys_prompt = system_prompt or (
         "You are ARIA, a personal assistant. Compose natural, warm messages. "
         "No markdown. No ACTION blocks. No bullet points."
     )
@@ -77,23 +75,30 @@ async def ask_haiku(prompt: str, context: str = "") -> str:
         response = client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=system_prompt,
+            system=sys_prompt,
             messages=[{"role": "user", "content": user_text}],
         )
     except anthropic.APITimeoutError:
-        raise RuntimeError("Haiku API timed out")
+        raise RuntimeError(f"{model} API timed out")
     except anthropic.APIError as e:
-        raise RuntimeError(f"Haiku API error: {e}")
+        raise RuntimeError(f"{model} API error: {e}")
 
-    # Extract text from response
     text_parts = []
     for block in response.content:
         if block.type == "text":
             text_parts.append(block.text)
 
     result = "\n".join(text_parts)
-    log.info("Haiku response: %d chars, model=%s", len(result), model)
+    log.info("Model response: %d chars, model=%s", len(result), model)
     return result
+
+
+async def ask_haiku(prompt: str, context: str = "") -> str:
+    """Send a query to Haiku for system-internal composition tasks.
+
+    Backward-compatible wrapper around ask_model().
+    """
+    return await ask_model(prompt, context)
 
 
 # --- Tool Definitions ---

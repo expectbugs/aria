@@ -177,7 +177,9 @@ CREATE TABLE IF NOT EXISTS email_classifications (
     category TEXT,
     user_override TEXT,
     surfaced BOOLEAN DEFAULT FALSE,
-    acted_on BOOLEAN DEFAULT FALSE
+    acted_on BOOLEAN DEFAULT FALSE,
+    surfaced_count INTEGER DEFAULT 0,
+    last_surfaced TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_email_class_email ON email_classifications(email_id);
 

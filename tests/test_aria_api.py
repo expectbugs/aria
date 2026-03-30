@@ -609,5 +609,5 @@ class TestAskHaiku:
             request=MagicMock()
         )
 
-        with pytest.raises(RuntimeError, match="Haiku API timed out"):
+        with pytest.raises(RuntimeError, match="API timed out"):
             await aria_api.ask_haiku("test")

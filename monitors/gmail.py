@@ -9,10 +9,29 @@ This monitor only does analysis on locally cached data.
 """
 
 import logging
+from datetime import datetime, timezone
 
 from monitors import BaseMonitor, Finding
 
 log = logging.getLogger("aria.monitors.gmail")
+
+
+def _email_age_hours(email: dict) -> float | None:
+    """Calculate email age in hours from its timestamp."""
+    ts = email.get("timestamp")
+    if not ts:
+        return None
+    try:
+        if isinstance(ts, str):
+            from dateutil.parser import parse as parse_dt
+            ts = parse_dt(ts)
+        if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+            now = datetime.now(timezone.utc)
+        else:
+            now = datetime.now()
+        return (now - ts).total_seconds() / 3600
+    except Exception:
+        return None
 
 
 class GmailMonitor(BaseMonitor):
@@ -55,21 +74,36 @@ class GmailMonitor(BaseMonitor):
 
                 # Produce findings for important/urgent/actionable emails
                 if result.classification in ("important", "urgent", "actionable"):
+                    # Age gate: only create findings for emails < 24h old
+                    age = _email_age_hours(email)
+                    if age is not None and age > 24:
+                        log.info("[MONITOR] Skipping finding for old email %s (%.1fh old)",
+                                 email.get("id", "?"), age)
+                        continue
+
                     sender = email.get("from_name") or email.get("from_address", "?")
                     subject = email.get("subject") or "(no subject)"
-                    urgency = "urgent" if result.classification == "urgent" else "normal"
+
+                    # Use shared check_keys for proper category routing
+                    if result.priority == 1 or result.classification == "urgent":
+                        check_key = "email_urgent"
+                        urgency = "urgent"
+                    else:
+                        check_key = "email_important"
+                        urgency = "normal"
 
                     findings.append(Finding(
                         domain="gmail",
                         summary=f"Email from {sender}: {subject}",
                         urgency=urgency,
-                        check_key=f"email_{email['id']}",
+                        check_key=check_key,
                         data={
                             "email_id": email["id"],
                             "from": sender,
                             "subject": subject,
                             "classification": result.classification,
                             "tier": result.tier,
+                            "priority": result.priority,
                         },
                     ))
             except Exception as e:

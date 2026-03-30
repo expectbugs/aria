@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.8.7] — 2026-03-30
+
+### Fixed — Email Classification Accuracy
+
+- **Important rate reduced 35.5% → 28.0%** — Tier 1 content_overrides were too broad; body text (footers, FAQ) triggered false matches. Added `check_subject_only` flag to per-sender content_overrides (PayPal, Venmo, myfico, Paychex, Resurgent, Vanguard, Teladoc). PayPal false positives: 22→8, Venmo: 19→8.
+- **Tier 2 "user name" weight reduced +2→+1** — "Adam" in marketing emails (Amazon review requests, Google Play) no longer triggers important. Corporate(+1) + name(+1) = 2 = routine.
+- **"Unsubscribe" body text** — new -1 score signal in Tier 2 pattern scoring.
+- **Shipping split by urgency** — "out for delivery/arriving today" stays important (P1), all other shipping/tracking notifications demoted to routine. Global shipping override replaced with two rules.
+- **PayPal content_pattern tightened** — removed "sent you|received|completed|shipping|statement" (too generic), added `\$\d` for transaction amounts. Explicit junk rule for PayPal marketing.
+- **Paychex safe fallback** — `check_subject_only` with expanded pattern (password|reset as separate terms), plus sender-only routine fallback ensures no Paychex email is ever classified as junk.
+- **Vanguard/Teladoc** — `check_subject_only` + routine fallback. Marketing newsletters no longer classified as important.
+
+### Fixed — Email Pipeline Bugs
+
+- **Email finding Category B deadlock resolved** — `check_key="email_{id}"` (unique per email) never matched `FINDING_CATEGORIES`, defaulting to Category B which requires C-piggybacking. Now uses shared keys: `email_urgent` (Cat C, always delivers) and `email_important` (Cat B, first-of-day).
+- **Email age gate** — GmailMonitor only creates findings for emails < 24h old. Prevents backlog floods (previously created 296 findings from old emails in one burst).
+- **Stale finding cleanup** — `mark_delivered_bulk()` drains old undelivered findings. Called on every monitor cycle for gmail domain. 6 stuck findings cleared.
+
+### Added — Email Features
+
+- **Priority scoring (P1-P4)** — `priority` field on `ClassificationResult`. P1: verification codes, 2FA, delivery today. P2: financial transactions, watched emails. P3: regular important. P4: routine. P1 emails get Category C (immediate delivery).
+- **Email surfacing tracker** — `surfaced_count` + `last_surfaced` columns on `email_classifications`. `get_unread_important()` filters: emails < 72h, surfaced < 3 times. Prevents stale emails from dominating context.
+- **Email body access** — `query.py email --id <message_id>` returns full subject, from, date, body, and attachments.
+- **Trash email ACTION template** — System prompt now includes `trash_email` ACTION block. Handler already existed via destructive gate (v0.8.4).
+- **Tier 3 model upgrade** — Email classification AI judgment upgraded from Haiku to configurable model (default Sonnet 4.6). `ask_model()` generalized API call in `aria_api.py`; `ask_haiku()` refactored as wrapper. `TIER3_EMAIL_MODEL` config setting.
+
+### Added — Junk Email Auto-Archive
+
+- **Gmail batch label modification** — `gmail_modify_labels()` (single message) and `gmail_batch_modify()` (up to 1000 per call, auto-splits) in `google_client.py`. `POST /google/gmail/archive` daemon endpoint.
+- **Ongoing auto-archive** — `process_junk_archival()` in tick.py archives Tier 1 (curated rules only) junk from inbox every tick cycle. Config: `JUNK_AUTO_ARCHIVE = True`.
+- **Historical cleanup script** — `archive_junk.py` searches Gmail directly for always_junk domains/senders, batch-removes INBOX label. Handles rescue overrides: domains with content_pattern rescues get per-domain queries with keyword exclusions (e.g., `from:@glassdoor.com -banker -wire`). Domains with blanket rescues fully excluded.
+- **Local cache sync** — `gmail_store.archive_emails()` removes INBOX from local email_cache labels.
+- **New junk domains** — Added `rs.email.nextdoor.com`, `marketing.lyftmail.com`, `em.target.com` to always_junk.
+
+### Tests
+
+- **50 new tests** in `tests/test_email_pipeline_v087.py` + `tests/test_junk_archival.py` — classification accuracy, age gate, finding categories, surfacing tracker, priority scoring, batch modify, archive endpoint, junk archival, query builder.
+- **Total test count:** 2142 tests across 94 files, all passing
+
+---
+
 ## [0.8.6] — 2026-03-29
 
 ### Fixed — Stream Response Assembly

@@ -437,6 +437,45 @@ class GoogleClient:
             f"{GMAIL_BASE}/users/me/messages/{message_id}/trash"
         )
 
+    async def gmail_modify_labels(self, message_id: str,
+                                   add_labels: list[str] | None = None,
+                                   remove_labels: list[str] | None = None) -> dict:
+        """Modify labels on a single message. Returns updated message."""
+        body: dict = {}
+        if add_labels:
+            body["addLabelIds"] = add_labels
+        if remove_labels:
+            body["removeLabelIds"] = remove_labels
+        return await self._post(
+            f"{GMAIL_BASE}/users/me/messages/{message_id}/modify",
+            json_body=body,
+        )
+
+    async def gmail_batch_modify(self, message_ids: list[str],
+                                  add_labels: list[str] | None = None,
+                                  remove_labels: list[str] | None = None) -> int:
+        """Modify labels on multiple messages. Returns count modified.
+
+        Gmail API limit: 1000 IDs per call. Automatically splits larger
+        batches into multiple calls.
+        """
+        if not message_ids:
+            return 0
+        total = 0
+        for i in range(0, len(message_ids), 1000):
+            chunk = message_ids[i:i + 1000]
+            body: dict = {"ids": chunk}
+            if add_labels:
+                body["addLabelIds"] = add_labels
+            if remove_labels:
+                body["removeLabelIds"] = remove_labels
+            await self._post(
+                f"{GMAIL_BASE}/users/me/messages/batchModify",
+                json_body=body,
+            )
+            total += len(chunk)
+        return total
+
     async def gmail_get_attachment(self, message_id: str,
                                     attachment_id: str) -> bytes:
         """Download a Gmail attachment. Returns raw bytes."""

@@ -135,6 +135,8 @@ Email — """ + name + """'s Gmail is synced and classified automatically. Impor
 <!--ACTION::{"action": "watch_email", "sender_pattern": "twilio", "content_pattern": "refund", "classification": "urgent", "description": "Twilio refund status"}-->
 <!--ACTION::{"action": "cancel_watch", "description": "Twilio refund"}-->
 At least one of sender_pattern or content_pattern is required. Both are regex patterns. expires_days defaults to 30.
+- Trash email: when """ + name + """ asks to delete/trash an email, emit the trash_email ACTION. This goes through the destructive action confirmation gate — """ + name + """ will be asked to confirm before execution.
+<!--ACTION::{"action": "trash_email", "email_id": "gmail_message_id"}-->
 
 Calendar events sync with Google Calendar. Events created by voice appear in Google Calendar within seconds. Edits and deletions sync both ways. The add_event/modify_event/delete_event ACTION blocks work the same — Google sync is automatic.
 
