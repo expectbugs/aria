@@ -996,8 +996,10 @@ async def _process_task(task_id: str, text: str, channel: str = "voice"):
             })
         else:
             hint = delivery_meta.get("delivery")
+            # Ambient wake word commands must push voice — nobody is polling
+            push = (channel == "ambient")
             dr = await delivery_engine.execute_delivery(
-                response_text, source=channel, hint=hint, push_voice=False)
+                response_text, source=channel, hint=hint, push_voice=push)
             _t("delivery", f"{dr['method']} — {dr['reason']}")
             _t("done", f"total: {duration:.1f}s")
             _tasks[task_id].update({

@@ -198,7 +198,7 @@ def evaluate(content_type: str = "response",
     # User-initiated requests: user is actively waiting — never defer.
     # Activity overrides (sleeping, court, driving) only apply to proactive
     # content (timers, nudges, monitor findings, task completions).
-    _user_initiated = {"voice", "file", "sms", "cli"}
+    _user_initiated = {"voice", "file", "sms", "cli", "ambient"}
 
     if source not in _user_initiated:
         # --- Proactive content: activity-based routing ---
@@ -245,6 +245,11 @@ def evaluate(content_type: str = "response",
         if "voice" in state.channels:
             return DeliveryDecision("voice", "watch request — voice response")
         return DeliveryDecision("image", "watch request, no voice — image fallback")
+    if source == "ambient":
+        # Ambient wake word command — deliver like a voice request
+        if "voice" in state.channels:
+            return DeliveryDecision("voice", "ambient wake word — voice response")
+        return DeliveryDecision("image", "ambient wake word — image fallback")
     if source in ("voice", "file"):
         return DeliveryDecision("voice", f"{source} request — voice response")
 
