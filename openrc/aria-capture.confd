@@ -1,0 +1,3 @@
+# ARIA Ambient Capture configuration for OpenRC
+# This service runs on slappy (laptop) only.
+# Ensure AMBIENT_CAPTURE_ENABLED=True in config.py before starting.

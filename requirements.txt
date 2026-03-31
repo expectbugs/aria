@@ -116,3 +116,4 @@ watchfiles==1.1.1
 webencodings==0.5.1
 websockets==16.0
 yarl==1.23.0
+sounddevice==0.5.1

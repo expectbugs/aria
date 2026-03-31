@@ -24,6 +24,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **`wake_word.py`** — Regex-based wake word detection from transcript text. Handles "ARIA", "hey ARIA", comma/colon/exclamation separators. Rejects false positives (Maria, malaria, etc.). Returns (detected, command_text).
 - **`ambient_audio.py`** — Audio file management: date-partitioned storage (`data/ambient/YYYY-MM-DD/seg_HHMMSS_{dur}s.wav`), collision handling, retention-based cleanup with directory pruning.
 
+### Added — Slappy Capture Daemon (Step 3)
+
+- **`slappy_capture.py`** — Standalone ambient audio capture daemon for slappy. Captures from DJI Mic 3 via PipeWire/PulseAudio (`sounddevice`), VAD segmentation (2.0s silence, 1.0s min speech — tuned for ambient), local Whisper transcription (`base` model, CPU int8), HTTP relay to beardos `/ambient/transcript`. Auto-detects DJI Mic 3 in device list, falls back to default input.
+- **Offline queue** — File-based JSON queue in `data/capture_queue/`. Queues transcripts when beardos unreachable, drains FIFO on reconnect. Caps at 1000 files (~8h of speech). Drain attempts during silence gaps every 30s.
+- **Audio save** — Saves WAV segments locally (`data/ambient_local/YYYY-MM-DD/`) for beardos quality pass upload. Graceful failure (transcript relay is priority).
+- **OpenRC service** — `aria-capture.initd`/`aria-capture.confd` with supervise-daemon, depends on net + tailscale + bluetooth.
+- **Signal handling** — SIGTERM/SIGINT for graceful shutdown. Flushes VAD buffer and drains queue on exit.
+- **`sounddevice`** added to requirements.txt.
+
 ### Fixed — Pre-existing Test Failures
 
 - **`test_multiline_findall_with_dotall`** — hardcoded date `2026-03-28` fell outside `days=1` window. Changed to `date.today()` so the test stays valid over time.
