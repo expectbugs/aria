@@ -48,7 +48,10 @@ VAD_SPEECH_THRESHOLD = getattr(config, "AMBIENT_VAD_SPEECH_THRESHOLD", 0.015)
 TARGET_RATE = 16000       # Whisper expects 16kHz
 CHANNELS = 1              # mono
 CHUNK_DURATION_S = 0.1    # 100ms chunks for VAD
-# SAMPLE_RATE and CHUNK_FRAMES set dynamically in run() after device detection
+
+# Sliding window (real-time streaming for glasses context)
+WINDOW_S = getattr(config, "AMBIENT_WINDOW_S", 5.0)          # transcribe last N seconds
+WINDOW_INTERVAL_S = getattr(config, "AMBIENT_WINDOW_INTERVAL_S", 1.0)  # every N seconds
 
 # Offline queue
 QUEUE_DIR = Path(getattr(config, "DATA_DIR", Path(__file__).parent / "data")) / "capture_queue"
@@ -128,12 +131,19 @@ def _drain_queue() -> int:
 # HTTP relay to beardos
 # ---------------------------------------------------------------------------
 
-def _relay_to_beardos(payload: dict) -> bool:
-    """POST a transcript to beardos /ambient/transcript. Returns success."""
+def _relay_to_beardos(payload: dict, stream: bool = False) -> bool:
+    """POST a transcript to beardos /ambient/transcript. Returns success.
+
+    stream=True sends as a streaming partial (cached in Redis only, not stored in DB).
+    stream=False sends as a completed segment (stored permanently).
+    """
     import httpx
 
     url = f"{BEARDOS_URL}/ambient/transcript"
     headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
+
+    if stream:
+        payload = {**payload, "stream": True}
 
     try:
         resp = httpx.post(url, json=payload, headers=headers,
@@ -146,17 +156,21 @@ def _relay_to_beardos(payload: dict) -> bool:
                          data.get("id"))
             return True
         else:
-            log.warning("Relay failed: HTTP %d — %s",
-                        resp.status_code, resp.text[:200])
+            if not stream:  # don't warn on stream failures, they're non-critical
+                log.warning("Relay failed: HTTP %d — %s",
+                            resp.status_code, resp.text[:200])
             return False
     except httpx.ConnectError:
-        log.debug("beardos unreachable (connect error)")
+        if not stream:
+            log.debug("beardos unreachable (connect error)")
         return False
     except httpx.TimeoutException:
-        log.debug("beardos unreachable (timeout)")
+        if not stream:
+            log.debug("beardos unreachable (timeout)")
         return False
     except Exception as e:
-        log.warning("Relay error: %s", e)
+        if not stream:
+            log.warning("Relay error: %s", e)
         return False
 
 
@@ -291,9 +305,16 @@ def run():
     last_queue_drain = 0
     chunk_samples = int(TARGET_RATE * CHUNK_DURATION_S)  # 1600 samples at 16kHz
 
+    # Sliding window state
+    window_max_samples = int(TARGET_RATE * WINDOW_S)
+    rolling_buffer: list[np.ndarray] = []
+    rolling_samples = 0
+    last_window_time = 0.0
+    last_window_text = ""
+
     def _process_utterance(utterance):
         """Transcribe an utterance and relay to beardos. Returns True if processed."""
-        nonlocal segments_processed
+        nonlocal segments_processed, last_window_text
 
         started_at = datetime.now()
         duration_s = len(utterance) / TARGET_RATE
@@ -320,35 +341,87 @@ def run():
             _drain_queue()
         else:
             _queue_transcript(payload)
+
+        # Reset sliding window after a completed segment
+        last_window_text = ""
         return True
+
+    def _process_chunk(pcm_16k: np.ndarray):
+        """Feed a chunk to VAD and sliding window. Called from both capture paths."""
+        nonlocal rolling_samples, last_window_time, last_window_text, last_queue_drain
+
+        # --- VAD path (segment completion → permanent storage) ---
+        utterance = vad.process_chunk(pcm_16k)
+        if utterance is not None:
+            _process_utterance(utterance)
+            # Clear rolling buffer — segment was captured completely by VAD
+            rolling_buffer.clear()
+            rolling_samples = 0
+            return
+
+        # --- Sliding window path (real-time context for glasses) ---
+        rolling_buffer.append(pcm_16k)
+        rolling_samples += len(pcm_16k)
+
+        # Trim buffer to max window size
+        while rolling_samples > window_max_samples and rolling_buffer:
+            removed = rolling_buffer.pop(0)
+            rolling_samples -= len(removed)
+
+        now = time.time()
+
+        # Periodic queue drain during silence
+        if now - last_queue_drain > 30:
+            _drain_queue()
+            last_queue_drain = now
+
+        # Sliding window transcription at configured interval
+        if now - last_window_time < WINDOW_INTERVAL_S:
+            return
+        if rolling_samples < TARGET_RATE:  # need at least 1 second of audio
+            return
+
+        last_window_time = now
+        window_audio = np.concatenate(rolling_buffer)
+
+        # Quick check: is there any speech in the window?
+        rms = float(np.sqrt(np.mean(window_audio ** 2)))
+        if rms < VAD_SPEECH_THRESHOLD:
+            return  # all silence, skip transcription
+
+        result = engine.transcribe_numpy(window_audio, sample_rate=TARGET_RATE)
+        text = result.text.strip()
+
+        if not text or text == last_window_text:
+            return
+
+        last_window_text = text
+        _relay_to_beardos({
+            "text": text,
+            "source": "slappy",
+            "started_at": datetime.now().isoformat(),
+            "duration_s": round(rolling_samples / TARGET_RATE, 2),
+            "confidence": result.language_probability,
+        }, stream=True)
 
     while _running:
         try:
             if use_parecord:
-                # Bluetooth path: parecord reads directly from PipeWire source
-                # at correct levels (sounddevice ALSA path loses gain)
                 log.info("Opening parecord stream (source=%s, 16kHz mono)...", bt_source)
                 proc = subprocess.Popen(
                     ["parecord", "--channels=1", "--rate=16000",
                      "--format=s16le", f"--device={bt_source}", "--raw"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 )
-                log.info("parecord stream open — capturing")
+                log.info("parecord stream open — capturing (window=%.0fs/%.0fs)",
+                         WINDOW_S, WINDOW_INTERVAL_S)
                 try:
                     while _running:
                         raw = proc.stdout.read(chunk_samples * 2)
                         if not raw:
                             break
                         pcm_16k = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-
-                        utterance = vad.process_chunk(pcm_16k)
-                        if utterance is None:
-                            now = time.time()
-                            if now - last_queue_drain > 30:
-                                _drain_queue()
-                                last_queue_drain = now
-                            continue
-                        _process_utterance(utterance)
+                        _process_chunk(pcm_16k)
                 finally:
                     proc.terminate()
                     try:
@@ -357,7 +430,6 @@ def run():
                         proc.kill()
 
             else:
-                # USB/analog path: sounddevice with auto-detected sample rate
                 import sounddevice as sd
                 device = _find_capture_device()
                 try:
@@ -367,8 +439,8 @@ def run():
                     sample_rate = 48000
                 needs_resample = (sample_rate != TARGET_RATE)
                 sd_chunk = int(sample_rate * CHUNK_DURATION_S)
-                log.info("Opening sounddevice stream (device=%s, rate=%d)...",
-                         device, sample_rate)
+                log.info("Opening sounddevice stream (device=%s, rate=%d, window=%.0fs/%.0fs)...",
+                         device, sample_rate, WINDOW_S, WINDOW_INTERVAL_S)
 
                 with sd.InputStream(device=device, samplerate=sample_rate,
                                     channels=CHANNELS, dtype="float32",
@@ -380,15 +452,7 @@ def run():
                             log.debug("Audio overflow")
                         pcm = chunk[:, 0] if chunk.ndim > 1 else chunk.flatten()
                         pcm_16k = resample(pcm, sample_rate, TARGET_RATE) if needs_resample else pcm
-
-                        utterance = vad.process_chunk(pcm_16k)
-                        if utterance is None:
-                            now = time.time()
-                            if now - last_queue_drain > 30:
-                                _drain_queue()
-                                last_queue_drain = now
-                            continue
-                        _process_utterance(utterance)
+                        _process_chunk(pcm_16k)
 
         except Exception as e:
             if not _running:

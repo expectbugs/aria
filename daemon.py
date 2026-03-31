@@ -620,11 +620,16 @@ class AmbientTranscriptRequest(BaseModel):
     duration_s: float | None = None
     confidence: float | None = None
     speaker: str | None = None
+    stream: bool = False             # True = sliding window partial (Redis only, no DB)
 
 
 @app.post("/ambient/transcript")
 async def ambient_transcript(req: AmbientTranscriptRequest, request: Request):
-    """Receive a pre-transcribed ambient segment (from slappy or offline phone)."""
+    """Receive a pre-transcribed ambient segment (from slappy or offline phone).
+
+    stream=False (default): Completed VAD segment → stored permanently in DB.
+    stream=True: Sliding window partial → cached in Redis only for real-time context.
+    """
     if not getattr(config, "AMBIENT_ENABLED", False):
         raise HTTPException(status_code=503, detail="Ambient pipeline not enabled")
     verify_auth(request)
@@ -632,11 +637,39 @@ async def ambient_transcript(req: AmbientTranscriptRequest, request: Request):
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="Empty transcript text")
 
-    import ambient_store
     import wake_word
 
     # Check for wake word
     has_wake, command_text = wake_word.detect(req.text)
+
+    if req.stream:
+        # --- Streaming partial: Redis cache only, no DB write ---
+        try:
+            rc = redis_client.get_client()
+            if rc:
+                import json as _json
+                prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
+                rc.set(f"{prefix}ambient:latest", req.text[:500], ex=30)
+                rc.publish(f"{prefix}ambient:stream", _json.dumps({
+                    "text": req.text[:500], "source": req.source,
+                    "has_wake_word": has_wake,
+                }))
+        except Exception as e:
+            log.warning("[AMBIENT] Redis stream publish failed: %s", e)
+
+        # Wake word still triggers even from streaming partials
+        if has_wake and command_text:
+            log.info("[AMBIENT] Wake word in stream, command: %s", command_text[:100])
+            task_id = str(uuid.uuid4())[:8]
+            _tasks[task_id] = {"status": "processing", "created": time.time()}
+            asyncio.create_task(_process_task(
+                task_id, command_text, channel="ambient",
+            ))
+
+        return {"id": None, "has_wake_word": has_wake}
+
+    # --- Completed segment: store in DB + full Redis publish ---
+    import ambient_store
 
     row = ambient_store.insert_transcript(
         source=req.source,
@@ -649,7 +682,6 @@ async def ambient_transcript(req: AmbientTranscriptRequest, request: Request):
         has_wake_word=has_wake,
     )
 
-    # Publish to Redis for real-time consumers
     try:
         rc = redis_client.get_client()
         if rc:
@@ -659,9 +691,7 @@ async def ambient_transcript(req: AmbientTranscriptRequest, request: Request):
                 "id": row["id"], "text": req.text[:200],
                 "has_wake_word": has_wake, "source": req.source,
             }))
-            # Update latest transcript cache
             rc.set(f"{prefix}ambient:latest", req.text[:500], ex=300)
-            # Increment daily stats
             stats_key = f"{prefix}ambient:stats:{datetime.now().strftime('%Y-%m-%d')}"
             rc.hincrby(stats_key, "transcript_count", 1)
             if req.duration_s:
@@ -670,10 +700,8 @@ async def ambient_transcript(req: AmbientTranscriptRequest, request: Request):
     except Exception as e:
         log.warning("[AMBIENT] Redis publish failed: %s", e)
 
-    # If wake word detected, forward command to /ask pipeline
     if has_wake and command_text:
         log.info("[AMBIENT] Wake word detected, command: %s", command_text[:100])
-        # Fire and forget — process as a normal ARIA query
         task_id = str(uuid.uuid4())[:8]
         _tasks[task_id] = {"status": "processing", "created": time.time()}
         asyncio.create_task(_process_task(
