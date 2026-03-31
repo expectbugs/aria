@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -41,13 +42,13 @@ WHISPER_DEVICE = getattr(config, "WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE_TYPE = getattr(config, "WHISPER_COMPUTE_TYPE", "int8")
 VAD_SILENCE_S = getattr(config, "AMBIENT_VAD_SILENCE_S", 2.0)
 VAD_MIN_SPEECH_S = getattr(config, "AMBIENT_VAD_MIN_SPEECH_S", 1.0)
+VAD_SPEECH_THRESHOLD = getattr(config, "AMBIENT_VAD_SPEECH_THRESHOLD", 0.015)
 
 # Audio capture settings
-SAMPLE_RATE = 48000       # DJI Mic 3 native rate
 TARGET_RATE = 16000       # Whisper expects 16kHz
 CHANNELS = 1              # mono
 CHUNK_DURATION_S = 0.1    # 100ms chunks for VAD
-CHUNK_FRAMES = int(SAMPLE_RATE * CHUNK_DURATION_S)
+# SAMPLE_RATE and CHUNK_FRAMES set dynamically in run() after device detection
 
 # Offline queue
 QUEUE_DIR = Path(getattr(config, "DATA_DIR", Path(__file__).parent / "data")) / "capture_queue"
@@ -246,91 +247,148 @@ def _find_capture_device() -> int | str | None:
 # Main capture loop
 # ---------------------------------------------------------------------------
 
-def run():
-    """Main capture loop. Blocks until shutdown signal."""
-    import sounddevice as sd
+def _find_pulseaudio_source() -> str | None:
+    """Find the Bluetooth audio source name via pactl."""
+    try:
+        result = subprocess.run(
+            ["pactl", "list", "sources", "short"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.strip().split("\n"):
+            if "bluez_input" in line:
+                return line.split("\t")[1]
+    except Exception as e:
+        log.warning("Failed to find PulseAudio Bluetooth source: %s", e)
+    return None
 
+
+def run():
+    """Main capture loop. Blocks until shutdown signal.
+
+    Uses parecord for Bluetooth sources (direct PipeWire capture at correct
+    levels) and falls back to sounddevice for USB/analog sources.
+    """
     log.info("Starting ambient capture daemon")
     log.info("  Model: %s (%s/%s)", WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE)
     log.info("  beardos: %s", BEARDOS_URL)
-    log.info("  VAD: silence=%.1fs, min_speech=%.1fs", VAD_SILENCE_S, VAD_MIN_SPEECH_S)
+    log.info("  VAD: silence=%.1fs, min_speech=%.1fs, threshold=%.4f",
+             VAD_SILENCE_S, VAD_MIN_SPEECH_S, VAD_SPEECH_THRESHOLD)
 
     # Initialize Whisper
     engine = WhisperEngine(WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE)
 
     # Initialize VAD with ambient-tuned thresholds
     vad = EnergyVAD(sample_rate=TARGET_RATE)
+    vad.SPEECH_THRESHOLD = VAD_SPEECH_THRESHOLD
     vad.SILENCE_DURATION = VAD_SILENCE_S
     vad.MIN_SPEECH_DURATION = VAD_MIN_SPEECH_S
 
-    device = _find_capture_device()
+    # Detect capture method: Bluetooth (parecord) or USB/analog (sounddevice)
+    bt_source = _find_pulseaudio_source()
+    use_parecord = bt_source is not None
+
     segments_processed = 0
     last_queue_drain = 0
+    chunk_samples = int(TARGET_RATE * CHUNK_DURATION_S)  # 1600 samples at 16kHz
+
+    def _process_utterance(utterance):
+        """Transcribe an utterance and relay to beardos. Returns True if processed."""
+        nonlocal segments_processed
+
+        started_at = datetime.now()
+        duration_s = len(utterance) / TARGET_RATE
+
+        result = engine.transcribe_numpy(utterance, sample_rate=TARGET_RATE)
+        text = result.text.strip()
+        if not text:
+            return False
+
+        segments_processed += 1
+        log.info("[%d] %.1fs → %s", segments_processed, duration_s, text[:80])
+
+        audio_path = _save_audio_locally(utterance, started_at, duration_s)
+
+        payload = {
+            "text": text,
+            "source": "slappy",
+            "started_at": started_at.isoformat(),
+            "duration_s": round(duration_s, 2),
+            "confidence": result.language_probability,
+        }
+
+        if _relay_to_beardos(payload):
+            _drain_queue()
+        else:
+            _queue_transcript(payload)
+        return True
 
     while _running:
         try:
-            log.info("Opening audio stream (device=%s)...", device)
-            with sd.InputStream(device=device, samplerate=SAMPLE_RATE,
-                                channels=CHANNELS, dtype="float32",
-                                blocksize=CHUNK_FRAMES) as stream:
-                log.info("Audio stream open — capturing")
+            if use_parecord:
+                # Bluetooth path: parecord reads directly from PipeWire source
+                # at correct levels (sounddevice ALSA path loses gain)
+                log.info("Opening parecord stream (source=%s, 16kHz mono)...", bt_source)
+                proc = subprocess.Popen(
+                    ["parecord", "--channels=1", "--rate=16000",
+                     "--format=s16le", f"--device={bt_source}", "--raw"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                log.info("parecord stream open — capturing")
+                try:
+                    while _running:
+                        raw = proc.stdout.read(chunk_samples * 2)
+                        if not raw:
+                            break
+                        pcm_16k = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
-                while _running:
-                    # Read audio chunk
-                    chunk, overflowed = stream.read(CHUNK_FRAMES)
-                    if overflowed:
-                        log.debug("Audio overflow (buffer underrun)")
+                        utterance = vad.process_chunk(pcm_16k)
+                        if utterance is None:
+                            now = time.time()
+                            if now - last_queue_drain > 30:
+                                _drain_queue()
+                                last_queue_drain = now
+                            continue
+                        _process_utterance(utterance)
+                finally:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
 
-                    # Convert to mono float32 and resample to 16kHz
-                    pcm = chunk[:, 0] if chunk.ndim > 1 else chunk.flatten()
-                    pcm_16k = resample(pcm, SAMPLE_RATE, TARGET_RATE)
+            else:
+                # USB/analog path: sounddevice with auto-detected sample rate
+                import sounddevice as sd
+                device = _find_capture_device()
+                try:
+                    dev_info = sd.query_devices(device, kind="input")
+                    sample_rate = int(dev_info["default_samplerate"])
+                except Exception:
+                    sample_rate = 48000
+                needs_resample = (sample_rate != TARGET_RATE)
+                sd_chunk = int(sample_rate * CHUNK_DURATION_S)
+                log.info("Opening sounddevice stream (device=%s, rate=%d)...",
+                         device, sample_rate)
 
-                    # Feed VAD
-                    utterance = vad.process_chunk(pcm_16k)
-                    if utterance is None:
-                        # Periodically drain queue during silence
-                        now = time.time()
-                        if now - last_queue_drain > 30:
-                            _drain_queue()
-                            last_queue_drain = now
-                        continue
+                with sd.InputStream(device=device, samplerate=sample_rate,
+                                    channels=CHANNELS, dtype="float32",
+                                    blocksize=sd_chunk) as stream:
+                    log.info("sounddevice stream open — capturing")
+                    while _running:
+                        chunk, overflowed = stream.read(sd_chunk)
+                        if overflowed:
+                            log.debug("Audio overflow")
+                        pcm = chunk[:, 0] if chunk.ndim > 1 else chunk.flatten()
+                        pcm_16k = resample(pcm, sample_rate, TARGET_RATE) if needs_resample else pcm
 
-                    # Got a complete utterance — transcribe
-                    started_at = datetime.now()
-                    duration_s = len(utterance) / TARGET_RATE
-
-                    result = engine.transcribe_numpy(utterance, sample_rate=TARGET_RATE)
-                    text = result.text.strip()
-
-                    if not text:
-                        continue
-
-                    segments_processed += 1
-                    log.info("[%d] %.1fs → %s", segments_processed,
-                             duration_s, text[:80])
-
-                    # Save audio locally for quality pass
-                    audio_path = _save_audio_locally(utterance, started_at, duration_s)
-
-                    # Build relay payload
-                    payload = {
-                        "text": text,
-                        "source": "slappy",
-                        "started_at": started_at.isoformat(),
-                        "ended_at": (started_at.__class__(
-                            started_at.year, started_at.month, started_at.day,
-                            started_at.hour, started_at.minute, started_at.second,
-                        )).isoformat(),  # approximate
-                        "duration_s": round(duration_s, 2),
-                        "confidence": result.language_probability,
-                    }
-
-                    # Try to relay to beardos
-                    if _relay_to_beardos(payload):
-                        # Also try to drain queue while we have connectivity
-                        _drain_queue()
-                    else:
-                        _queue_transcript(payload)
+                        utterance = vad.process_chunk(pcm_16k)
+                        if utterance is None:
+                            now = time.time()
+                            if now - last_queue_drain > 30:
+                                _drain_queue()
+                                last_queue_drain = now
+                            continue
+                        _process_utterance(utterance)
 
         except Exception as e:
             if not _running:
@@ -339,23 +397,11 @@ def run():
             log.warning("Audio stream error (%s): %s — reconnecting in %ds",
                         error_name, e, RECONNECT_POLL_S)
 
-            # Flush any accumulated VAD speech
             remaining = vad.flush()
             if remaining is not None and len(remaining) > TARGET_RATE * VAD_MIN_SPEECH_S:
                 log.info("Flushing VAD buffer on disconnect")
-                result = engine.transcribe_numpy(remaining, sample_rate=TARGET_RATE)
-                if result.text.strip():
-                    payload = {
-                        "text": result.text.strip(),
-                        "source": "slappy",
-                        "started_at": datetime.now().isoformat(),
-                        "duration_s": round(len(remaining) / TARGET_RATE, 2),
-                        "confidence": result.language_probability,
-                    }
-                    if not _relay_to_beardos(payload):
-                        _queue_transcript(payload)
+                _process_utterance(remaining)
 
-            # Wait before reconnecting
             for _ in range(RECONNECT_POLL_S * 10):
                 if not _running:
                     break
@@ -363,18 +409,8 @@ def run():
 
     # Final flush on shutdown
     remaining = vad.flush()
-    if remaining is not None:
-        result = engine.transcribe_numpy(remaining, sample_rate=TARGET_RATE)
-        if result.text.strip():
-            payload = {
-                "text": result.text.strip(),
-                "source": "slappy",
-                "started_at": datetime.now().isoformat(),
-                "duration_s": round(len(remaining) / TARGET_RATE, 2),
-                "confidence": result.language_probability,
-            }
-            if not _relay_to_beardos(payload):
-                _queue_transcript(payload)
+    if remaining is not None and len(remaining) > TARGET_RATE * VAD_MIN_SPEECH_S:
+        _process_utterance(remaining)
 
     # Final queue drain attempt
     _drain_queue()
