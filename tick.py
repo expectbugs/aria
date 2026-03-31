@@ -1087,6 +1087,86 @@ def _any_briefing_or_debrief_today() -> bool:
         return True  # fail safe: assume briefing happened
 
 
+# --- Ambient Audio Pipeline (Phase 6) ---
+
+def process_ambient_extraction():
+    """Run extraction pass on unprocessed ambient transcripts.
+
+    Cadence controlled by AMBIENT_EXTRACTION_INTERVAL_MIN (default 5).
+    Groups transcripts into conversations, extracts commitments/people/topics
+    via Opus CLI (auto effort, subscription-covered).
+    """
+    if not getattr(config, "AMBIENT_ENABLED", False):
+        return
+
+    state = load_state()
+    interval = getattr(config, "AMBIENT_EXTRACTION_INTERVAL_MIN", 5)
+    last_run = state.get("last_ambient_extraction", "")
+    cutoff = (datetime.now() - timedelta(minutes=interval)).isoformat()
+
+    if last_run and last_run > cutoff:
+        return
+
+    import ambient_extract
+    count = ambient_extract.run_extraction_pass()
+    if count > 0:
+        log.info("Ambient extraction: processed %d transcripts", count)
+
+    state["last_ambient_extraction"] = datetime.now().isoformat()
+    save_state(state)
+
+
+def process_ambient_daily_summary():
+    """Generate daily summary at 11:50pm (alongside safety net timing)."""
+    if not getattr(config, "AMBIENT_ENABLED", False):
+        return
+
+    now = datetime.now()
+    if now.hour != 23 or now.minute < 45:
+        return
+
+    state = load_state()
+    today = now.strftime("%Y-%m-%d")
+    last_summary = state.get("last_ambient_daily_summary", "")
+    if last_summary.startswith(today):
+        return  # already generated today
+
+    import ambient_extract
+    result = ambient_extract.generate_daily_summary(today)
+    if result:
+        log.info("Daily ambient summary generated for %s", today)
+
+    state["last_ambient_daily_summary"] = today
+    save_state(state)
+
+
+def process_ambient_audio_cleanup():
+    """Delete old audio files past retention period. Hourly cadence."""
+    if not getattr(config, "AMBIENT_ENABLED", False):
+        return
+
+    state = load_state()
+    last_run = state.get("last_ambient_audio_cleanup", "")
+    cutoff = (datetime.now() - timedelta(hours=1)).isoformat()
+
+    if last_run and last_run > cutoff:
+        return
+
+    import ambient_audio
+    import ambient_store as _ambient_store
+
+    retention = getattr(config, "AMBIENT_AUDIO_RETENTION_HOURS", 72)
+    files_deleted, bytes_freed = ambient_audio.cleanup_old(retention)
+    rows_cleared = _ambient_store.cleanup_audio(retention)
+
+    if files_deleted > 0 or rows_cleared > 0:
+        log.info("Ambient audio cleanup: %d files (%.1f MB), %d DB rows cleared",
+                 files_deleted, bytes_freed / (1024 * 1024), rows_cleared)
+
+    state["last_ambient_audio_cleanup"] = datetime.now().isoformat()
+    save_state(state)
+
+
 def process_safety_net():
     """11:50pm safety net: deliver suppressed Category A items if no briefings today.
 
@@ -1250,6 +1330,9 @@ def main():
         ("monitors", process_monitors),
         ("email_cleanup", process_email_cleanup),
         ("junk_archival", process_junk_archival),
+        ("ambient_extraction", process_ambient_extraction),
+        ("ambient_daily_summary", process_ambient_daily_summary),
+        ("ambient_audio_cleanup", process_ambient_audio_cleanup),
         ("safety_net", process_safety_net),
         ("deferred_deliveries", process_deferred_deliveries),
         ("webhook_cleanup", cleanup_processed_webhooks),

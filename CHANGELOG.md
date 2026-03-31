@@ -24,6 +24,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **`wake_word.py`** — Regex-based wake word detection from transcript text. Handles "ARIA", "hey ARIA", comma/colon/exclamation separators. Rejects false positives (Maria, malaria, etc.). Returns (detected, command_text).
 - **`ambient_audio.py`** — Audio file management: date-partitioned storage (`data/ambient/YYYY-MM-DD/seg_HHMMSS_{dur}s.wav`), collision handling, retention-based cleanup with directory pruning.
 
+### Added — Extraction Engine (Step 5)
+
+- **`ambient_extract.py`** — Full extraction pipeline using one-shot Opus 4.6 CLI with auto effort (subscription-covered, zero API cost). Effort level scoped to subprocess env only — never leaks to daemon or other sessions.
+  - **`_ask_cli(prompt)`** — Spawns isolated Claude Code subprocess with `CLAUDE_CODE_EFFORT_LEVEL=auto`, stream-json protocol, auto-terminate.
+  - **`extract_from_batch(transcripts)`** — Opus extracts commitments (who/what/to_whom/due_date), people (name/relationship/org), topics, and summary from transcript batches.
+  - **`detect_conversation_boundaries()`** — Groups transcript segments by silence gaps (>5 min = new conversation).
+  - **`process_conversation_group()`** — Creates conversation record, assigns transcripts, runs extraction, stores commitments + person profiles.
+  - **`generate_daily_summary()`** — Opus generates 2-4 paragraph narrative for evening debrief.
+  - **`run_extraction_pass()`** — Main entry point for tick.py: fetches unextracted transcripts, groups, extracts, marks done.
+- **Tick.py jobs** — `process_ambient_extraction` (every 5 min), `process_ambient_daily_summary` (11:50 PM), `process_ambient_audio_cleanup` (hourly). All gated on `AMBIENT_ENABLED`, cadence via tick_state.
+
 ### Added — Slappy Capture Daemon (Step 3)
 
 - **`slappy_capture.py`** — Standalone ambient audio capture daemon for slappy. Captures from DJI Mic 3 via PipeWire/PulseAudio (`sounddevice`), VAD segmentation (2.0s silence, 1.0s min speech — tuned for ambient), local Whisper transcription (`base` model, CPU int8), HTTP relay to beardos `/ambient/transcript`. Auto-detects DJI Mic 3 in device list, falls back to default input.
