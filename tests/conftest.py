@@ -209,3 +209,45 @@ def make_location_row(id=1, lat=42.58, lon=-88.43,
             "lat": lat, "lon": lon, "location": location,
             "accuracy_m": accuracy_m, "speed_mps": speed_mps,
             "battery_pct": battery_pct}
+
+
+def make_transcript_row(id=1, source="slappy", speaker=None,
+                        text="I told Mike we'd have the proposal ready by Friday",
+                        started_at=None, ended_at=None, duration_s=7.2,
+                        confidence=0.94, quality_pass="pending",
+                        quality_text=None, quality_speaker=None,
+                        audio_path=None, has_wake_word=False,
+                        extracted=False, conversation_id=None):
+    sa = started_at or datetime(2026, 3, 20, 14, 23, 1)
+    ea = ended_at or datetime(2026, 3, 20, 14, 23, 8)
+    return {"id": id, "source": source, "speaker": speaker,
+            "text": text, "started_at": sa, "ended_at": ea,
+            "duration_s": duration_s, "confidence": confidence,
+            "quality_pass": quality_pass, "quality_text": quality_text,
+            "quality_speaker": quality_speaker,
+            "audio_path": audio_path, "has_wake_word": has_wake_word,
+            "extracted": extracted, "conversation_id": conversation_id,
+            "created_at": datetime(2026, 3, 20, 14, 23, 1)}
+
+
+def make_commitment_row(id=1, who="self", what="Have proposal ready by Friday",
+                        to_whom="Mike", due_date=date(2026, 3, 22),
+                        source="ambient", source_id=None,
+                        conversation_id=None, status="open",
+                        completed_at=None):
+    return {"id": id, "who": who, "what": what, "to_whom": to_whom,
+            "due_date": due_date, "source": source, "source_id": source_id,
+            "conversation_id": conversation_id, "status": status,
+            "completed_at": completed_at,
+            "created_at": datetime(2026, 3, 20, 14, 23, 0)}
+
+
+def make_person_row(id=1, name="Mike", aliases=None,
+                    relationship="coworker", organization="Banker Wire",
+                    notes=None, mention_count=12, last_mentioned=None):
+    lm = last_mentioned or datetime(2026, 3, 20, 14, 23, 0)
+    return {"id": id, "name": name, "aliases": aliases or [],
+            "relationship": relationship, "organization": organization,
+            "notes": notes, "mention_count": mention_count,
+            "last_mentioned": lm,
+            "created_at": datetime(2026, 3, 15, 8, 0, 0)}

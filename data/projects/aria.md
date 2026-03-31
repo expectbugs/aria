@@ -1,7 +1,7 @@
 # ARIA — Project Status
 
 ## Current Version
-v0.8.7 (2026-03-30)
+v0.9.0 (2026-03-30)
 
 ## What's Working
 - **Email integration polish** (v0.8.7): Classification accuracy 35.5%→28.0% important rate, `check_subject_only` for per-sender overrides, shipping split by urgency, P1-P4 priority scoring, email surfacing tracker, Tier 3 AI upgraded to Sonnet, email body access via query.py, trash_email ACTION, stale finding cleanup, **junk auto-archive** (Tier 1 junk removed from Gmail inbox every tick, batch Gmail API, historical cleanup script)
@@ -27,6 +27,7 @@ v0.8.7 (2026-03-30)
 - **Google Calendar + Gmail** (v0.7.0+): OAuth2 PKCE, async API client, PostgreSQL cache, automated polling
 - **Email intelligence** (v0.8.0): 3-tier classification (rules/scoring/AI), full-text search, send capability, context injection, email watches, auto-cleanup, 16 categories, curated rules from 1,401 emails
 - **Google Calendar sync** (v0.8.0): Bidirectional sync, Google as source of truth, incremental syncToken
+- **Phase 6 foundation** (v0.9.0): Ambient audio pipeline data layer — ambient_transcripts (tsvector full-text search), ambient_conversations, commitments (promise tracker), person_profiles, daily_summaries. Three new stores + config for Qdrant, Neo4j, embedding model, capture daemon.
 - **Swarm workers**: Action ARIA (Opus, complex tasks) + Amnesia pool (Sonnet, quick tasks)
 - **Morning briefing / evening debrief**: Full context aggregation
 - **Autonomous timers/reminders**: Cron-driven, location-based, voice + SMS delivery
@@ -37,6 +38,6 @@ v0.8.7 (2026-03-30)
 - Phase 4: Google Calendar + Gmail integration (DONE — plumbing v0.7.0, intelligence v0.8.0)
 - Phase 4 follow-up: Interactive email classification session (DONE — 98.7% Tier 1 coverage)
 - Phase 5: Pixel Watch 4 app (watch as voice input source)
-- Phase 6: DJI Mic 3 ambient audio pipeline
+- Phase 6: DJI Mic 3 ambient audio pipeline (IN PROGRESS — Step 1 foundation complete)
 - Phase 7: Even Realities G2 glasses integration (delivery channel ready in engine)
 - Phase 8: Qdrant + Neo4j four-layer memory

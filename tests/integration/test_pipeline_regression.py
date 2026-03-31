@@ -239,11 +239,12 @@ class TestRegressionActionRegex:
 
     def test_multiline_findall_with_dotall(self):
         """ACTION block spanning multiple lines must be extracted (re.DOTALL)."""
-        response = '''Here's the result.
-<!--ACTION::{"action": "log_health",
-"date": "2026-03-28",
+        today = date.today().isoformat()
+        response = f'''Here's the result.
+<!--ACTION::{{"action": "log_health",
+"date": "{today}",
 "category": "pain",
-"description": "back pain"}-->'''
+"description": "back pain"}}-->'''
         result = actions.process_actions_sync(response)
         # The health entry should have been created
         entries = health_store.get_entries(days=1)
@@ -252,11 +253,12 @@ class TestRegressionActionRegex:
 
     def test_multiline_sub_strips_completely(self):
         """Multiline ACTION block must be fully stripped from output (re.DOTALL)."""
-        response = '''I logged it.
-<!--ACTION::{"action": "log_health",
-"date": "2026-03-28",
+        today = date.today().isoformat()
+        response = f'''I logged it.
+<!--ACTION::{{"action": "log_health",
+"date": "{today}",
 "category": "general",
-"description": "test"}-->
+"description": "test"}}-->
 Done.'''
         result = actions.process_actions_sync(response)
         assert "<!--" not in result

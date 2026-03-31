@@ -182,6 +182,29 @@ MONITORS_ENABLED = True                   # master switch for all monitors
 MONITOR_FINDING_TTL_HOURS = 24            # auto-expire undelivered findings after this
 MONITOR_DELIVERY_MIN_INTERVAL_MIN = 30    # min minutes between unified deliveries (nudges + findings)
 
+# --- Ambient Audio Pipeline (Phase 6 — DJI Mic 3) ---
+AMBIENT_ENABLED = False                               # master switch for ambient pipeline
+AMBIENT_AUDIO_DIR = DATA_DIR / "ambient"              # storage for raw audio chunks
+AMBIENT_AUDIO_RETENTION_HOURS = 72                    # audio deleted after this; transcripts permanent
+AMBIENT_WHISPER_MODEL = "base"                        # first-pass model for slappy CPU (beardos uses main WHISPER_MODEL)
+AMBIENT_VAD_SILENCE_S = 2.0                           # seconds of silence to end an utterance
+AMBIENT_VAD_MIN_SPEECH_S = 1.0                        # min speech duration to keep (filters noise)
+AMBIENT_EXTRACTION_INTERVAL_MIN = 5                   # minutes between Haiku extraction passes
+AMBIENT_QUALITY_INTERVAL_MIN = 10                     # minutes between WhisperX quality passes
+BEARDOS_URL = "http://100.107.139.121:8450"           # target URL for slappy relay (set per machine)
+AMBIENT_CAPTURE_ENABLED = False                       # True on slappy when DJI Mic 3 is being used
+AMBIENT_CAPTURE_DEVICE = None                         # PipeWire/PulseAudio source name (None = auto-detect)
+
+# --- Qdrant (vector search — Phase 6+) ---
+QDRANT_URL = "http://localhost:6333"
+QDRANT_COLLECTION = "aria_memory"
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"                  # sentence-transformers model name
+
+# --- Neo4j (knowledge graph — Phase 6+) ---
+NEO4J_URI = "bolt://localhost:7687"
+NEO4J_USER = "neo4j"
+NEO4J_PASSWORD = ""                                    # set in config.py (gitignored)
+
 # --- Hardware capabilities ---
 # Set based on what this machine can do. Daemon checks these at runtime.
 ENABLE_GPU = False              # True if NVIDIA GPU available (for Whisper, LoRA, etc.)

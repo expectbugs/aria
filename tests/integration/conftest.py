@@ -49,6 +49,9 @@ ALL_TABLES = [
     "delivery_log", "device_state", "deferred_deliveries",
     "email_cache", "email_classifications", "email_watches",
     "calendar_sync_state",
+    # Phase 6 — Ambient Audio Pipeline
+    "ambient_transcripts", "ambient_conversations",
+    "commitments", "person_profiles", "daily_summaries",
 ]
 
 

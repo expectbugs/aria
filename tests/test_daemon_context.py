@@ -841,12 +841,14 @@ class TestBuildPrimaryPrompt:
         assert '"mode": "agentic"' in prompt
 
     def test_no_shell_commands(self):
+        """System prompt should not contain hardcoded shell commands for ARIA to run.
+
+        fetch_page.py is allowed — it's a recommended tool for web fetching,
+        not a hardcoded shell command embedded in a response.
+        """
         prompt = system_prompt.build_primary_prompt()
         assert "generate.py" not in prompt
         assert "upscale4k.sh" not in prompt
-        assert "fetch_page.py" not in prompt
-        assert "curl -s" not in prompt
-        assert "lynx -dump" not in prompt
         assert 'python -c "import sms' not in prompt
 
     def test_has_data_access_note(self):

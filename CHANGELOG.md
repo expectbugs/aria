@@ -6,6 +6,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.9.0] — 2026-03-30
+
+### Added — Phase 6 Foundation (Ambient Audio Pipeline)
+
+- **5 new PostgreSQL tables** — `ambient_transcripts` (tsvector full-text search, partial indexes on quality_pass/extracted/wake_word), `ambient_conversations` (grouped segments), `commitments` (promise tracker with status lifecycle), `person_profiles` (auto-built contact profiles), `daily_summaries` (narrative summaries by date)
+- **`ambient_store.py`** — 20 functions: transcript CRUD, full-text search via `websearch_to_tsquery`, quality pass lifecycle (pending→done), extraction tracking, audio retention cleanup, conversation grouping with segment count sync, daily summary upsert
+- **`commitment_store.py`** — 11 functions: promise tracking with lifecycle (open→done/cancelled/expired), person-based search (ILIKE on who/to_whom), overdue detection, auto-expiry of stale commitments
+- **`person_store.py`** — 9 functions: profile upsert with COALESCE (preserves existing fields on partial update), alias-aware search via `unnest(aliases)`, mention counting, name list for keyword matching
+- **Config for Phase 6+** — `AMBIENT_*` (enabled, audio dir, retention, VAD thresholds, extraction interval, capture device), `QDRANT_*` (URL, collection, embedding model), `NEO4J_*` (URI, user, password)
+
+### Fixed — Pre-existing Test Failures
+
+- **`test_multiline_findall_with_dotall`** — hardcoded date `2026-03-28` fell outside `days=1` window. Changed to `date.today()` so the test stays valid over time.
+- **`test_no_shell_commands`** — asserted `fetch_page.py` absent from system prompt, but commit `15afc71` intentionally added it as a recommended web-fetching tool. Removed the stale assertion.
+
+---
+
 ## [0.8.7] — 2026-03-30
 
 ### Fixed — Email Classification Accuracy

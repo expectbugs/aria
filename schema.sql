@@ -395,3 +395,113 @@ CREATE TABLE IF NOT EXISTS deferred_deliveries (
     expires_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_deferred_undelivered ON deferred_deliveries(delivered, expires_at);
+
+-- =========================================================================
+-- Phase 6: Ambient Audio Pipeline (Total Recall)
+-- =========================================================================
+
+-- Individual utterances from continuous DJI Mic 3 capture
+CREATE TABLE IF NOT EXISTS ambient_transcripts (
+    id SERIAL PRIMARY KEY,
+    conversation_id INTEGER,              -- FK to ambient_conversations (NULL until grouped)
+    source TEXT NOT NULL,                  -- 'slappy', 'phone', 'beardos'
+    speaker TEXT,                          -- diarization label or person name
+    text TEXT NOT NULL,
+    text_search tsvector
+        GENERATED ALWAYS AS (to_tsvector('english', text)) STORED,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    duration_s REAL,
+    confidence REAL,                       -- Whisper language_probability
+    quality_pass TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'done', 'skipped'
+    quality_text TEXT,                     -- WhisperX refined text (NULL until quality pass)
+    quality_speaker TEXT,                  -- diarization-resolved speaker
+    audio_path TEXT,                       -- path to WAV chunk (NULL after retention cleanup)
+    has_wake_word BOOLEAN NOT NULL DEFAULT FALSE,
+    extracted BOOLEAN NOT NULL DEFAULT FALSE,  -- extraction pass completed
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ambient_started ON ambient_transcripts(started_at);
+CREATE INDEX IF NOT EXISTS idx_ambient_conversation ON ambient_transcripts(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_ambient_quality ON ambient_transcripts(quality_pass)
+    WHERE quality_pass = 'pending';
+CREATE INDEX IF NOT EXISTS idx_ambient_text_search ON ambient_transcripts USING GIN(text_search);
+CREATE INDEX IF NOT EXISTS idx_ambient_wake ON ambient_transcripts(has_wake_word)
+    WHERE has_wake_word = TRUE;
+CREATE INDEX IF NOT EXISTS idx_ambient_extracted ON ambient_transcripts(extracted)
+    WHERE extracted = FALSE;
+
+-- Grouped conversation segments (multiple transcripts form one conversation)
+CREATE TABLE IF NOT EXISTS ambient_conversations (
+    id SERIAL PRIMARY KEY,
+    title TEXT,                            -- auto-generated summary title
+    summary TEXT,                          -- Haiku-generated summary
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    duration_s REAL,
+    segment_count INTEGER NOT NULL DEFAULT 0,
+    speakers TEXT[] DEFAULT '{}',
+    location TEXT,                         -- from location_store at conversation time
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_started ON ambient_conversations(started_at);
+
+-- FK from transcripts to conversations (deferred because conversations created after transcripts)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'fk_ambient_conversation'
+    ) THEN
+        ALTER TABLE ambient_transcripts
+            ADD CONSTRAINT fk_ambient_conversation
+            FOREIGN KEY (conversation_id) REFERENCES ambient_conversations(id)
+            ON DELETE SET NULL;
+    END IF;
+END $$;
+
+-- Commitments/promises extracted from conversations or direct interactions
+CREATE TABLE IF NOT EXISTS commitments (
+    id SERIAL PRIMARY KEY,
+    source TEXT NOT NULL,                  -- 'ambient', 'direct', 'email'
+    source_id INTEGER,                     -- ambient_transcripts.id or request_log.id
+    conversation_id INTEGER REFERENCES ambient_conversations(id) ON DELETE SET NULL,
+    who TEXT NOT NULL,                      -- who made the commitment
+    what TEXT NOT NULL,                     -- the commitment itself
+    to_whom TEXT,                           -- who it was made to
+    due_date DATE,
+    status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'done', 'cancelled', 'expired')),
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_commitments_status ON commitments(status)
+    WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS idx_commitments_who ON commitments(who);
+CREATE INDEX IF NOT EXISTS idx_commitments_due ON commitments(due_date)
+    WHERE due_date IS NOT NULL AND status = 'open';
+
+-- Person profiles built from conversation mentions
+CREATE TABLE IF NOT EXISTS person_profiles (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    aliases TEXT[] DEFAULT '{}',
+    relationship TEXT,                     -- 'coworker', 'friend', 'family', etc.
+    organization TEXT,
+    notes TEXT,
+    last_mentioned TIMESTAMPTZ,
+    mention_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_person_name ON person_profiles(name);
+
+-- Daily narrative summaries of ambient conversations
+CREATE TABLE IF NOT EXISTS daily_summaries (
+    date DATE PRIMARY KEY,
+    summary TEXT NOT NULL,
+    key_topics TEXT[] DEFAULT '{}',
+    people_mentioned TEXT[] DEFAULT '{}',
+    commitments_made INTEGER NOT NULL DEFAULT 0,
+    conversation_count INTEGER NOT NULL DEFAULT 0,
+    total_duration_s REAL NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
