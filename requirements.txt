@@ -117,3 +117,5 @@ webencodings==0.5.1
 websockets==16.0
 yarl==1.23.0
 sounddevice==0.5.1
+qdrant-client==1.17.1
+sentence-transformers==5.3.0

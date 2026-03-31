@@ -24,6 +24,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **`wake_word.py`** — Regex-based wake word detection from transcript text. Handles "ARIA", "hey ARIA", comma/colon/exclamation separators. Rejects false positives (Maria, malaria, etc.). Returns (detected, command_text).
 - **`ambient_audio.py`** — Audio file management: date-partitioned storage (`data/ambient/YYYY-MM-DD/seg_HHMMSS_{dur}s.wav`), collision handling, retention-based cleanup with directory pruning.
 
+### Added — Qdrant Vector Search (Step 6)
+
+- **`embedding_engine.py`** — Lazy singleton for sentence-transformers (`all-MiniLM-L6-v2`, 384 dims, CPU). Same pattern as WhisperEngine. `embed(texts)` for batch, `embed_single(text)` for queries.
+- **`qdrant_store.py`** — Qdrant client wrapper with graceful degradation (returns empty results if unreachable, same as redis_client.py). Collection `aria_memory` created on first use. `search()` with optional category and date post-filtering. `sync_new_data()` incremental sync of transcripts, conversations, and commitments.
+- **Tick.py job** — `process_qdrant_sync` (every 5 min). Fetches new data since last sync, batch embeds, upserts to Qdrant.
+- **Conftest safety guards** — `_block_real_qdrant` and `_block_real_embedding` prevent real connections/model loading in unit tests.
+- **Dependencies** — `qdrant-client`, `sentence-transformers` added to requirements.txt.
+
 ### Added — Extraction Engine (Step 5)
 
 - **`ambient_extract.py`** — Full extraction pipeline using one-shot Opus 4.6 CLI with auto effort (subscription-covered, zero API cost). Effort level scoped to subprocess env only — never leaks to daemon or other sessions.

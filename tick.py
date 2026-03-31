@@ -1167,6 +1167,34 @@ def process_ambient_audio_cleanup():
     save_state(state)
 
 
+def process_qdrant_sync():
+    """Incremental sync of new data to Qdrant for semantic search.
+
+    Cadence: every 5 minutes. Syncs transcripts, conversations, commitments.
+    Gracefully skips if Qdrant is unavailable.
+    """
+    if not getattr(config, "AMBIENT_ENABLED", False):
+        return
+
+    state = load_state()
+    last_run = state.get("last_qdrant_sync", "")
+    cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+
+    if last_run and last_run > cutoff:
+        return
+
+    try:
+        import qdrant_store
+        count = qdrant_store.sync_new_data(since=last_run or None)
+        if count > 0:
+            log.info("Qdrant sync: %d points", count)
+    except Exception as e:
+        log.warning("Qdrant sync failed (non-fatal): %s", e)
+
+    state["last_qdrant_sync"] = datetime.now().isoformat()
+    save_state(state)
+
+
 def process_safety_net():
     """11:50pm safety net: deliver suppressed Category A items if no briefings today.
 
@@ -1333,6 +1361,7 @@ def main():
         ("ambient_extraction", process_ambient_extraction),
         ("ambient_daily_summary", process_ambient_daily_summary),
         ("ambient_audio_cleanup", process_ambient_audio_cleanup),
+        ("qdrant_sync", process_qdrant_sync),
         ("safety_net", process_safety_net),
         ("deferred_deliveries", process_deferred_deliveries),
         ("webhook_cleanup", cleanup_processed_webhooks),

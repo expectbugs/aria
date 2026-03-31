@@ -98,6 +98,26 @@ def _disable_sms_redirect():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _block_real_qdrant(request):
+    """Prevent real Qdrant connections in unit tests."""
+    if "integration" in str(request.fspath):
+        yield
+        return
+    with patch("qdrant_store._client", None):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _block_real_embedding(request):
+    """Prevent real sentence-transformers model loading in unit tests."""
+    if "integration" in str(request.fspath):
+        yield
+        return
+    with patch("embedding_engine._model", None):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Reusable helpers
 # ---------------------------------------------------------------------------
