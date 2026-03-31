@@ -16,6 +16,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **`person_store.py`** — 9 functions: profile upsert with COALESCE (preserves existing fields on partial update), alias-aware search via `unnest(aliases)`, mention counting, name list for keyword matching
 - **Config for Phase 6+** — `AMBIENT_*` (enabled, audio dir, retention, VAD thresholds, extraction interval, capture device), `QDRANT_*` (URL, collection, embedding model), `NEO4J_*` (URI, user, password)
 
+### Added — Beardos Ingest Endpoints (Step 2)
+
+- **`POST /ambient/transcript`** — Receives pre-transcribed text from slappy or phone offline fallback. Stores in DB, checks wake word, publishes to Redis Pub/Sub (`aria:ambient:new_transcript`), caches latest transcript, increments daily stats. Wake word triggers fire-and-forget `/ask` pipeline processing.
+- **`POST /ambient/upload`** — Receives raw audio (multipart or raw body), runs Whisper GPU transcription via `asyncio.to_thread`, saves audio file to `data/ambient/YYYY-MM-DD/`, stores transcript with audio_path. Sets/clears `aria:whisper_busy` Redis flag for GPU contention management.
+- **`GET /ambient/status`** — Pipeline health check returning enabled state, Whisper readiness, and today's transcript count.
+- **`wake_word.py`** — Regex-based wake word detection from transcript text. Handles "ARIA", "hey ARIA", comma/colon/exclamation separators. Rejects false positives (Maria, malaria, etc.). Returns (detected, command_text).
+- **`ambient_audio.py`** — Audio file management: date-partitioned storage (`data/ambient/YYYY-MM-DD/seg_HHMMSS_{dur}s.wav`), collision handling, retention-based cleanup with directory pruning.
+
 ### Fixed — Pre-existing Test Failures
 
 - **`test_multiline_findall_with_dotall`** — hardcoded date `2026-03-28` fell outside `days=1` window. Changed to `date.today()` so the test stays valid over time.

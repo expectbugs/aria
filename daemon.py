@@ -608,6 +608,224 @@ async def email_search(request: Request):
     return {"results": results, "count": len(results)}
 
 
+# ---------------------------------------------------------------------------
+# Ambient audio pipeline (Phase 6 — DJI Mic 3)
+# ---------------------------------------------------------------------------
+
+class AmbientTranscriptRequest(BaseModel):
+    text: str
+    source: str = "slappy"
+    started_at: str                  # ISO timestamp
+    ended_at: str | None = None
+    duration_s: float | None = None
+    confidence: float | None = None
+    speaker: str | None = None
+
+
+@app.post("/ambient/transcript")
+async def ambient_transcript(req: AmbientTranscriptRequest, request: Request):
+    """Receive a pre-transcribed ambient segment (from slappy or offline phone)."""
+    if not getattr(config, "AMBIENT_ENABLED", False):
+        raise HTTPException(status_code=503, detail="Ambient pipeline not enabled")
+    verify_auth(request)
+
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Empty transcript text")
+
+    import ambient_store
+    import wake_word
+
+    # Check for wake word
+    has_wake, command_text = wake_word.detect(req.text)
+
+    row = ambient_store.insert_transcript(
+        source=req.source,
+        text=req.text.strip(),
+        started_at=req.started_at,
+        ended_at=req.ended_at,
+        duration_s=req.duration_s,
+        confidence=req.confidence,
+        speaker=req.speaker,
+        has_wake_word=has_wake,
+    )
+
+    # Publish to Redis for real-time consumers
+    try:
+        rc = redis_client.get_client()
+        if rc:
+            import json as _json
+            prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
+            rc.publish(f"{prefix}ambient:new_transcript", _json.dumps({
+                "id": row["id"], "text": req.text[:200],
+                "has_wake_word": has_wake, "source": req.source,
+            }))
+            # Update latest transcript cache
+            rc.set(f"{prefix}ambient:latest", req.text[:500], ex=300)
+            # Increment daily stats
+            stats_key = f"{prefix}ambient:stats:{datetime.now().strftime('%Y-%m-%d')}"
+            rc.hincrby(stats_key, "transcript_count", 1)
+            if req.duration_s:
+                rc.hincrbyfloat(stats_key, "duration_s", req.duration_s)
+            rc.expire(stats_key, 172800)  # 48h TTL
+    except Exception as e:
+        log.warning("[AMBIENT] Redis publish failed: %s", e)
+
+    # If wake word detected, forward command to /ask pipeline
+    if has_wake and command_text:
+        log.info("[AMBIENT] Wake word detected, command: %s", command_text[:100])
+        # Fire and forget — process as a normal ARIA query
+        task_id = str(uuid.uuid4())[:8]
+        _tasks[task_id] = {"status": "processing", "created": time.time()}
+        asyncio.create_task(_process_task(
+            task_id, command_text, channel="ambient",
+        ))
+
+    return {"id": row["id"], "has_wake_word": has_wake}
+
+
+@app.post("/ambient/upload")
+async def ambient_upload(request: Request):
+    """Receive raw audio for server-side Whisper transcription.
+
+    Accepts multipart form (audio file + metadata fields) or raw audio body.
+    Used by phone capture path and slappy quality-pass uploads.
+    """
+    if not getattr(config, "AMBIENT_ENABLED", False):
+        raise HTTPException(status_code=503, detail="Ambient pipeline not enabled")
+    if not getattr(config, "ENABLE_WHISPER", False):
+        raise HTTPException(status_code=503, detail="Whisper STT not enabled on this host")
+    verify_auth(request)
+
+    import ambient_store
+    import ambient_audio
+    import wake_word
+    import whisper_engine
+
+    content_type = request.headers.get("content-type", "")
+    source = "phone"
+    started_at_str = None
+
+    if "multipart" in content_type:
+        form = await request.form()
+        upload = form.get("audio") or form.get("file")
+        if not upload:
+            raise HTTPException(status_code=400, detail="No audio/file field in form")
+        audio_bytes = await upload.read()
+        source = form.get("source", "phone")
+        started_at_str = form.get("started_at")
+    else:
+        audio_bytes = await request.body()
+        source = request.query_params.get("source", "phone")
+        started_at_str = request.query_params.get("started_at")
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio")
+
+    # Parse started_at or default to now
+    try:
+        started_at = datetime.fromisoformat(started_at_str) if started_at_str else datetime.now()
+    except (ValueError, TypeError):
+        started_at = datetime.now()
+
+    # Set whisper busy flag in Redis
+    try:
+        rc = redis_client.get_client()
+        if rc:
+            prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
+            rc.set(f"{prefix}whisper_busy", "1", ex=60)
+    except Exception:
+        pass
+
+    # Transcribe
+    engine = whisper_engine.get_engine()
+    result = await asyncio.to_thread(engine.transcribe_bytes, audio_bytes)
+
+    # Clear whisper busy flag
+    try:
+        rc = redis_client.get_client()
+        if rc:
+            prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
+            rc.delete(f"{prefix}whisper_busy")
+    except Exception:
+        pass
+
+    if not result.text.strip():
+        return {"id": None, "text": "", "has_wake_word": False}
+
+    # Save audio file
+    audio_path = ambient_audio.save_audio(
+        audio_bytes, started_at=started_at, duration_s=result.duration,
+    )
+
+    # Check for wake word
+    has_wake, command_text = wake_word.detect(result.text)
+
+    row = ambient_store.insert_transcript(
+        source=source,
+        text=result.text.strip(),
+        started_at=started_at.isoformat(),
+        ended_at=(started_at + timedelta(seconds=result.duration)).isoformat()
+        if result.duration else None,
+        duration_s=result.duration,
+        confidence=result.language_probability,
+        audio_path=audio_path,
+        has_wake_word=has_wake,
+    )
+
+    # Publish to Redis
+    try:
+        rc = redis_client.get_client()
+        if rc:
+            import json as _json
+            prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
+            rc.publish(f"{prefix}ambient:new_transcript", _json.dumps({
+                "id": row["id"], "text": result.text[:200],
+                "has_wake_word": has_wake, "source": source,
+            }))
+            rc.set(f"{prefix}ambient:latest", result.text[:500], ex=300)
+            stats_key = f"{prefix}ambient:stats:{datetime.now().strftime('%Y-%m-%d')}"
+            rc.hincrby(stats_key, "transcript_count", 1)
+            if result.duration:
+                rc.hincrbyfloat(stats_key, "duration_s", result.duration)
+            rc.expire(stats_key, 172800)
+    except Exception as e:
+        log.warning("[AMBIENT] Redis publish failed: %s", e)
+
+    # Wake word → ARIA query
+    if has_wake and command_text:
+        log.info("[AMBIENT] Wake word detected, command: %s", command_text[:100])
+        task_id = str(uuid.uuid4())[:8]
+        _tasks[task_id] = {"status": "processing", "created": time.time()}
+        asyncio.create_task(_process_task(
+            task_id, command_text, channel="ambient",
+        ))
+
+    return {"id": row["id"], "text": result.text, "has_wake_word": has_wake}
+
+
+@app.get("/ambient/status")
+async def ambient_status(request: Request):
+    """Pipeline health check for Tasker and monitoring."""
+    verify_auth(request)
+
+    import ambient_store
+    enabled = getattr(config, "AMBIENT_ENABLED", False)
+    whisper_ready = getattr(config, "ENABLE_WHISPER", False)
+
+    today_count = 0
+    if enabled:
+        try:
+            today_count = ambient_store.get_today_count()
+        except Exception:
+            pass
+
+    return {
+        "status": "ok" if enabled else "disabled",
+        "whisper_ready": whisper_ready,
+        "today_count": today_count,
+    }
+
+
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest, request: Request):
     start = time.time()
