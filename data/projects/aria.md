@@ -38,6 +38,6 @@ v0.9.0 (2026-03-30)
 - Phase 4: Google Calendar + Gmail integration (DONE — plumbing v0.7.0, intelligence v0.8.0)
 - Phase 4 follow-up: Interactive email classification session (DONE — 98.7% Tier 1 coverage)
 - Phase 5: Pixel Watch 4 app (watch as voice input source)
-- Phase 6: DJI Mic 3 ambient audio pipeline (IN PROGRESS — Step 1 foundation complete)
+- Phase 6: DJI Mic 3 ambient audio pipeline (DONE — capture, extraction, Qdrant, Neo4j, ARIA integration)
 - Phase 7: Even Realities G2 glasses integration (delivery channel ready in engine)
 - Phase 8: Qdrant + Neo4j four-layer memory

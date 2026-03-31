@@ -24,6 +24,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **`wake_word.py`** — Regex-based wake word detection from transcript text. Handles "ARIA", "hey ARIA", comma/colon/exclamation separators. Rejects false positives (Maria, malaria, etc.). Returns (detected, command_text).
 - **`ambient_audio.py`** — Audio file management: date-partitioned storage (`data/ambient/YYYY-MM-DD/seg_HHMMSS_{dur}s.wav`), collision handling, retention-based cleanup with directory pruning.
 
+### Added — ARIA Integration (Step 8)
+
+- **Context injection (context.py)** — Tier 1: open commitments (top 5 + overdue highlighted), ambient capture status line. Tier 2: keyword-triggered ambient context on "recall", "who said", "what did I say", "commitment", "promise", person name matches. Injects recent transcript snippets (2h), Qdrant semantic search (top 3), person profiles, related commitments. Debrief upgraded with ambient conversations + today's commitments + daily summary. Briefing upgraded with overdue + due-today commitments.
+- **Query CLI (query.py)** — 5 new subcommands: `ambient` (full-text transcript search), `recall` (Qdrant semantic search), `commitments` (promise tracker with status/person filters), `people` (person profile lookup + search), `ambient-conversations` (conversation summaries by date).
+- **System prompt (system_prompt.py)** — Ambient audio section: wake word docs, all query.py subcommands documented, commitment tracking behavior (surface overdue in briefings), person profile queries ("who is [name]?").
+
 ### Added — Neo4j Knowledge Graph (Step 7)
 
 - **`neo4j_store.py`** — Neo4j driver wrapper with graceful degradation. Person/Conversation/Topic/Commitment nodes, PARTICIPATED_IN/DISCUSSED/COMMITTED_TO/KNOWS relationships. `get_person_graph()` returns full relational context, `get_shared_conversations()` for co-participation, `infer_knows_from_conversation()` for automatic relationship building, `get_topic_people()` for topic-based queries.

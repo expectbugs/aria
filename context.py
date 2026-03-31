@@ -94,6 +94,17 @@ _EMAIL_SUBSTRINGS = ["email", "inbox", "mail", "gmail", "message from",
                      "reply to", "respond to", "unread email"]
 _EMAIL_REGEX = re.compile(r'\b(email|inbox|mail|gmail)\b', re.IGNORECASE)
 
+_AMBIENT_SUBSTRINGS = [
+    "remember", "recall", "who said", "what did i say", "what did i tell",
+    "what did he say", "what did she say", "conversation about",
+    "commitment", "promise", "did i promise", "what promises",
+    "who is", "who's", "person", "people i", "mentioned",
+    "what was that", "what were we talking", "what did we discuss",
+    "summarize last", "summarize yesterday",
+]
+_AMBIENT_REGEX = re.compile(
+    r'\b(recall|commitment|promise|mentioned|conversation)\b', re.IGNORECASE)
+
 import config
 import db
 import calendar_store
@@ -170,6 +181,39 @@ def gather_always_context() -> str:
             ))
     except Exception:
         pass  # monitors table may not exist yet during migration
+
+    # Open commitments (Phase 6 — ambient promise tracker)
+    try:
+        import commitment_store
+        open_commitments = commitment_store.get_open(limit=5)
+        if open_commitments:
+            parts.append("Open commitments: " + "; ".join(
+                f"{c['who']} → {c['what']}"
+                + (f" (to {c['to_whom']})" if c.get("to_whom") else "")
+                + (f" [due {c['due_date']}]" if c.get("due_date") else "")
+                for c in open_commitments
+            ))
+        overdue = commitment_store.get_overdue()
+        if overdue:
+            parts.append(f"OVERDUE commitments ({len(overdue)}): " + "; ".join(
+                f"{c['who']} → {c['what']} (due {c['due_date']})"
+                for c in overdue[:3]
+            ))
+    except Exception:
+        pass
+
+    # Ambient capture status (Phase 6)
+    try:
+        import ambient_store
+        today_count = ambient_store.get_today_count()
+        if today_count > 0:
+            today_dur = ambient_store.get_today_duration()
+            dur_min = today_dur / 60
+            parts.append(
+                f"Ambient capture: {today_count} segments today ({dur_min:.0f} min recorded)"
+            )
+    except Exception:
+        pass
 
     # Pending destructive actions awaiting confirmation
     try:
@@ -387,6 +431,81 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
                 )
         except Exception as e:
             log.warning("Email context unavailable: %s", e)
+
+    # --- Ambient recall (Phase 6) ---
+    # Trigger on recall keywords OR known person names
+    ambient_triggered = _match_keywords(text_lower, _AMBIENT_SUBSTRINGS, _AMBIENT_REGEX)
+    if not ambient_triggered:
+        try:
+            import person_store
+            known_names = person_store.get_names()
+            if any(name.lower() in text_lower for name in known_names):
+                ambient_triggered = True
+        except Exception:
+            pass
+
+    if ambient_triggered:
+        try:
+            import ambient_store
+            import commitment_store as _cs
+
+            # Recent transcript snippets (last 2 hours)
+            recent = ambient_store.get_recent(hours=2, limit=10)
+            if recent:
+                ctx_parts.append(
+                    "Recent ambient transcripts (last 2h):\n" + "\n".join(
+                        f"  [{t['started_at'][11:16] if isinstance(t.get('started_at'), str) else '?'}] "
+                        f"{(t.get('quality_text') or t.get('text', ''))[:150]}"
+                        for t in reversed(recent)  # chronological
+                    )
+                )
+
+            # Qdrant semantic search if query looks like a recall question
+            try:
+                import qdrant_store
+                results = qdrant_store.search(text, limit=3, days=30)
+                if results:
+                    ctx_parts.append(
+                        "Semantic recall (top matches from memory):\n" + "\n".join(
+                            f"  [{r.get('timestamp', '?')[:10]}] ({r['category']}) "
+                            f"{r['text'][:200]} [score={r['score']}]"
+                            for r in results
+                        )
+                    )
+            except Exception:
+                pass
+
+            # Person profile if a known name is mentioned
+            try:
+                import person_store as _ps
+                for name in _ps.get_names():
+                    if name.lower() in text_lower:
+                        profile = _ps.get(name)
+                        if profile:
+                            ctx_parts.append(
+                                f"Person: {profile['name']}"
+                                + (f" ({profile['relationship']})" if profile.get("relationship") else "")
+                                + (f" at {profile['organization']}" if profile.get("organization") else "")
+                                + f" — mentioned {profile['mention_count']} times"
+                                + (f", last {profile['last_mentioned'][:10]}" if profile.get("last_mentioned") else "")
+                            )
+                            break  # only inject first matched person
+            except Exception:
+                pass
+
+            # Related commitments
+            related_commits = _cs.get_recent(days=7, limit=5)
+            if related_commits:
+                ctx_parts.append(
+                    "Recent commitments (7d):\n" + "\n".join(
+                        f"  {c['who']} → {c['what']}"
+                        + (f" (to {c['to_whom']})" if c.get("to_whom") else "")
+                        + f" [{c['status']}]"
+                        for c in related_commits
+                    )
+                )
+        except Exception as e:
+            log.warning("Ambient context unavailable: %s", e)
 
     return "\n".join(ctx_parts) if ctx_parts else ""
 
@@ -650,6 +769,41 @@ async def gather_debrief_context() -> str:
     except Exception:
         pass
 
+    # Ambient conversations today (Phase 6)
+    try:
+        import ambient_store
+        import commitment_store as _cs
+        convs = ambient_store.get_conversations(days=1)
+        today_convs = [c for c in convs if c.get("started_at", "").startswith(today)]
+        if today_convs:
+            total_dur = sum(c.get("duration_s", 0) or 0 for c in today_convs)
+            parts.append(f"\nAmbient conversations today ({len(today_convs)} conversations, "
+                         f"{total_dur/60:.0f} min):")
+            for c in today_convs:
+                ts = c.get("started_at", "")
+                time_str = ts[11:16] if len(ts) >= 16 else ""
+                summary = c.get("summary") or c.get("title") or "(no summary)"
+                speakers = ", ".join(c.get("speakers", []))
+                parts.append(f"  - [{time_str}] {speakers}: {summary}")
+
+        # Today's commitments
+        today_commits = _cs.get_recent(days=1)
+        today_commits = [c for c in today_commits
+                         if c.get("created_at", "").startswith(today)]
+        if today_commits:
+            parts.append(f"\nCommitments today ({len(today_commits)}):")
+            for c in today_commits:
+                parts.append(f"  - {c['who']} → {c['what']}"
+                             + (f" (to {c['to_whom']})" if c.get("to_whom") else "")
+                             + (f" [due {c['due_date']}]" if c.get("due_date") else ""))
+
+        # Daily summary if already generated
+        summary = ambient_store.get_daily_summary(today)
+        if summary:
+            parts.append(f"\nDaily ambient summary:\n{summary['summary']}")
+    except Exception:
+        pass
+
     return "\n".join(parts)
 
 
@@ -782,6 +936,23 @@ async def gather_briefing_context() -> str:
             parts.append("\nMonitor findings (last 24h):")
             for f in recent_findings:
                 parts.append(f"  - [{f['urgency']}] {f['domain']}: {f['summary']}")
+    except Exception:
+        pass
+
+    # Overdue and due-today commitments (Phase 6)
+    try:
+        import commitment_store as _cs
+        overdue = _cs.get_overdue()
+        if overdue:
+            parts.append(f"\nOVERDUE commitments ({len(overdue)}):")
+            for c in overdue:
+                parts.append(f"  - {c['who']} → {c['what']} (due {c['due_date']})")
+        due_today = _cs.get_due_today()
+        if due_today:
+            parts.append(f"\nCommitments due today ({len(due_today)}):")
+            for c in due_today:
+                parts.append(f"  - {c['who']} → {c['what']}"
+                             + (f" (to {c['to_whom']})" if c.get("to_whom") else ""))
     except Exception:
         pass
 

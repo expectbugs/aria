@@ -30,6 +30,9 @@ import legal_store
 import nutrition_store
 import vehicle_store
 import gmail_store
+import ambient_store
+import commitment_store
+import person_store
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +250,137 @@ def cmd_email(args):
 
 
 # ---------------------------------------------------------------------------
+# Ambient / recall / commitments / people (Phase 6)
+# ---------------------------------------------------------------------------
+
+def format_transcripts(transcripts: list[dict]) -> str:
+    if not transcripts:
+        return "No ambient transcripts found."
+    lines = [f"Ambient transcripts ({len(transcripts)} results):"]
+    for t in transcripts:
+        ts = t.get("started_at", "?")
+        time_str = ts[11:16] if isinstance(ts, str) and len(ts) >= 16 else ts[:10] if ts else "?"
+        text = t.get("quality_text") or t.get("text", "")
+        dur = t.get("duration_s", 0) or 0
+        lines.append(f"  [{time_str}] ({dur:.1f}s) {text[:200]}")
+    return "\n".join(lines)
+
+
+def format_commitments(commits: list[dict]) -> str:
+    if not commits:
+        return "No commitments found."
+    lines = [f"Commitments ({len(commits)}):"]
+    for c in commits:
+        line = f"  [id={c['id']}] {c['who']} → {c['what']}"
+        if c.get("to_whom"):
+            line += f" (to {c['to_whom']})"
+        if c.get("due_date"):
+            line += f" [due {c['due_date']}]"
+        line += f" [{c['status']}]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def format_people(profiles: list[dict]) -> str:
+    if not profiles:
+        return "No person profiles found."
+    lines = [f"Person profiles ({len(profiles)}):"]
+    for p in profiles:
+        line = f"  {p['name']}"
+        if p.get("relationship"):
+            line += f" ({p['relationship']})"
+        if p.get("organization"):
+            line += f" at {p['organization']}"
+        line += f" — {p['mention_count']} mentions"
+        if p.get("last_mentioned"):
+            line += f", last {p['last_mentioned'][:10]}"
+        if p.get("notes"):
+            line += f"\n    Notes: {p['notes'][:200]}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def format_ambient_conversations(convs: list[dict]) -> str:
+    if not convs:
+        return "No ambient conversations found."
+    lines = [f"Ambient conversations ({len(convs)}):"]
+    for c in convs:
+        ts = c.get("started_at", "?")
+        time_str = ts[11:16] if isinstance(ts, str) and len(ts) >= 16 else ts[:10] if ts else "?"
+        dur = c.get("duration_s", 0) or 0
+        speakers = ", ".join(c.get("speakers", []))
+        summary = c.get("summary") or c.get("title") or "(no summary)"
+        lines.append(f"  [{time_str}] ({dur/60:.0f}min) {speakers}: {summary}")
+    return "\n".join(lines)
+
+
+def format_recall(results: list[dict]) -> str:
+    if not results:
+        return "No matching memories found."
+    lines = [f"Recall results ({len(results)} matches):"]
+    for r in results:
+        ts = r.get("timestamp", "?")
+        date_str = ts[:10] if ts else "?"
+        lines.append(
+            f"  [{date_str}] ({r.get('category', '?')}, score={r.get('score', 0)}) "
+            f"{r.get('text', '')[:200]}"
+        )
+    return "\n".join(lines)
+
+
+def cmd_ambient(args):
+    if args.search:
+        results = ambient_store.search(args.search, days=args.days, limit=args.limit)
+    else:
+        results = ambient_store.get_recent(hours=args.days * 24, limit=args.limit)
+    return format_transcripts(results)
+
+
+def cmd_recall(args):
+    query = " ".join(args.query) if args.query else ""
+    if not query:
+        return "Usage: query.py recall \"what was that conversation about...\""
+    try:
+        import qdrant_store
+        results = qdrant_store.search(query, limit=args.limit, days=args.days)
+        return format_recall(results)
+    except Exception as e:
+        return f"Recall search unavailable: {e}"
+
+
+def cmd_commitments(args):
+    if args.person:
+        results = commitment_store.get_by_person(args.person, status=args.status)
+    elif args.status:
+        if args.status == "open":
+            results = commitment_store.get_open(limit=50)
+        elif args.status == "overdue":
+            results = commitment_store.get_overdue()
+        else:
+            results = commitment_store.get_recent(days=30, limit=50)
+            results = [c for c in results if c.get("status") == args.status]
+    else:
+        results = commitment_store.get_recent(days=args.days, limit=50)
+    return format_commitments(results)
+
+
+def cmd_people(args):
+    if args.name:
+        profile = person_store.get(args.name)
+        if profile:
+            return format_people([profile])
+        # Try search
+        results = person_store.search(args.name)
+        return format_people(results)
+    return format_people(person_store.get_all(limit=args.limit))
+
+
+def cmd_ambient_conversations(args):
+    convs = ambient_store.get_conversations(days=args.days, limit=args.limit)
+    return format_ambient_conversations(convs)
+
+
+# ---------------------------------------------------------------------------
 # Self-reporting for tool traces
 # ---------------------------------------------------------------------------
 
@@ -313,6 +447,32 @@ def main(argv=None):
     p_email.add_argument("--days", type=int, default=7)
     p_email.add_argument("--limit", type=int, default=20)
 
+    # Phase 6 — Ambient audio pipeline
+    p_ambient = subparsers.add_parser("ambient", help="Search ambient transcripts")
+    p_ambient.add_argument("--search", type=str, default=None)
+    p_ambient.add_argument("--days", type=int, default=7)
+    p_ambient.add_argument("--limit", type=int, default=20)
+
+    p_recall = subparsers.add_parser("recall", help="Semantic recall search")
+    p_recall.add_argument("query", nargs="*", help="Natural language recall query")
+    p_recall.add_argument("--days", type=int, default=30)
+    p_recall.add_argument("--limit", type=int, default=5)
+
+    p_commits = subparsers.add_parser("commitments", help="Query commitments/promises")
+    p_commits.add_argument("--status", type=str, default=None,
+                           help="Filter by status: open, done, overdue")
+    p_commits.add_argument("--person", type=str, default=None)
+    p_commits.add_argument("--days", type=int, default=30)
+
+    p_people = subparsers.add_parser("people", help="Query person profiles")
+    p_people.add_argument("--name", type=str, default=None)
+    p_people.add_argument("--limit", type=int, default=20)
+
+    p_aconv = subparsers.add_parser("ambient-conversations",
+                                     help="List ambient conversations")
+    p_aconv.add_argument("--days", type=int, default=7)
+    p_aconv.add_argument("--limit", type=int, default=20)
+
     args = parser.parse_args(argv)
 
     handlers = {
@@ -323,6 +483,11 @@ def main(argv=None):
         "calendar": cmd_calendar,
         "conversations": cmd_conversations,
         "email": cmd_email,
+        "ambient": cmd_ambient,
+        "recall": cmd_recall,
+        "commitments": cmd_commitments,
+        "people": cmd_people,
+        "ambient-conversations": cmd_ambient_conversations,
     }
 
     try:
