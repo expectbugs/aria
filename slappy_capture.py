@@ -23,6 +23,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Ensure PipeWire/PulseAudio session context is available for Bluetooth audio.
+# When running as an OpenRC service, these aren't inherited from the desktop session.
+_uid = os.getuid()
+if "XDG_RUNTIME_DIR" not in os.environ:
+    os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{_uid}"
+if "DBUS_SESSION_BUS_ADDRESS" not in os.environ:
+    os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{_uid}/bus"
+
 import numpy as np
 
 import config
