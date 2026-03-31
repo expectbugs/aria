@@ -118,6 +118,16 @@ def _block_real_embedding(request):
         yield
 
 
+@pytest.fixture(autouse=True)
+def _block_real_neo4j(request):
+    """Prevent real Neo4j connections in unit tests."""
+    if "integration" in str(request.fspath):
+        yield
+        return
+    with patch("neo4j_store._driver", None):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Reusable helpers
 # ---------------------------------------------------------------------------

@@ -24,6 +24,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 - **`wake_word.py`** — Regex-based wake word detection from transcript text. Handles "ARIA", "hey ARIA", comma/colon/exclamation separators. Rejects false positives (Maria, malaria, etc.). Returns (detected, command_text).
 - **`ambient_audio.py`** — Audio file management: date-partitioned storage (`data/ambient/YYYY-MM-DD/seg_HHMMSS_{dur}s.wav`), collision handling, retention-based cleanup with directory pruning.
 
+### Added — Neo4j Knowledge Graph (Step 7)
+
+- **`neo4j_store.py`** — Neo4j driver wrapper with graceful degradation. Person/Conversation/Topic/Commitment nodes, PARTICIPATED_IN/DISCUSSED/COMMITTED_TO/KNOWS relationships. `get_person_graph()` returns full relational context, `get_shared_conversations()` for co-participation, `infer_knows_from_conversation()` for automatic relationship building, `get_topic_people()` for topic-based queries.
+- **`graph_sync.py`** — Entity-to-graph pipeline: syncs conversations (with participant linking, KNOWS inference), commitments, topics, and person profiles from PostgreSQL to Neo4j. MERGE-based deduplication — safe to run repeatedly.
+- **Tick.py job** — `process_graph_sync` (every 5 min alongside Qdrant sync). Batch syncs new conversations + profiles.
+- **Conftest safety guard** — `_block_real_neo4j` prevents real Neo4j connections in unit tests.
+
 ### Added — Qdrant Vector Search (Step 6)
 
 - **`embedding_engine.py`** — Lazy singleton for sentence-transformers (`all-MiniLM-L6-v2`, 384 dims, CPU). Same pattern as WhisperEngine. `embed(texts)` for batch, `embed_single(text)` for queries.

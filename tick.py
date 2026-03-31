@@ -1167,6 +1167,35 @@ def process_ambient_audio_cleanup():
     save_state(state)
 
 
+def process_graph_sync():
+    """Sync new conversations, commitments, and person profiles to Neo4j.
+
+    Cadence: every 5 minutes (alongside Qdrant sync).
+    Gracefully skips if Neo4j is unavailable.
+    """
+    if not getattr(config, "AMBIENT_ENABLED", False):
+        return
+
+    state = load_state()
+    last_run = state.get("last_graph_sync", "")
+    cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+
+    if last_run and last_run > cutoff:
+        return
+
+    try:
+        import graph_sync
+        stats = graph_sync.sync_batch(since=last_run or None)
+        total = sum(stats.values())
+        if total > 0:
+            log.info("Graph sync: %s", stats)
+    except Exception as e:
+        log.warning("Graph sync failed (non-fatal): %s", e)
+
+    state["last_graph_sync"] = datetime.now().isoformat()
+    save_state(state)
+
+
 def process_qdrant_sync():
     """Incremental sync of new data to Qdrant for semantic search.
 
@@ -1362,6 +1391,7 @@ def main():
         ("ambient_daily_summary", process_ambient_daily_summary),
         ("ambient_audio_cleanup", process_ambient_audio_cleanup),
         ("qdrant_sync", process_qdrant_sync),
+        ("graph_sync", process_graph_sync),
         ("safety_net", process_safety_net),
         ("deferred_deliveries", process_deferred_deliveries),
         ("webhook_cleanup", cleanup_processed_webhooks),
