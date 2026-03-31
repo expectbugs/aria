@@ -27,7 +27,7 @@ v0.9.0 (2026-03-30)
 - **Google Calendar + Gmail** (v0.7.0+): OAuth2 PKCE, async API client, PostgreSQL cache, automated polling
 - **Email intelligence** (v0.8.0): 3-tier classification (rules/scoring/AI), full-text search, send capability, context injection, email watches, auto-cleanup, 16 categories, curated rules from 1,401 emails
 - **Google Calendar sync** (v0.8.0): Bidirectional sync, Google as source of truth, incremental syncToken
-- **Phase 6 foundation** (v0.9.0): Ambient audio pipeline data layer — ambient_transcripts (tsvector full-text search), ambient_conversations, commitments (promise tracker), person_profiles, daily_summaries. Three new stores + config for Qdrant, Neo4j, embedding model, capture daemon.
+- **Phase 6 ambient audio pipeline** (v0.9.0): DJI Mic 3 → Bluetooth → slappy capture daemon (parecord, VAD, faster-whisper base CPU) → HTTP relay to beardos. Sliding window streaming (~1.5s latency to Redis). Wake word "ARIA" detection. Extraction engine (Opus 4.6 CLI auto effort, conversation grouping, commitment/person/topic extraction, daily summaries). Qdrant semantic search (sentence-transformers embeddings). Neo4j knowledge graph (person/conversation/topic/commitment relationships). Context injection (commitments in Tier 1, recall/person keywords in Tier 2). 5 new query.py subcommands. Debrief + briefing upgraded with ambient data.
 - **Swarm workers**: Action ARIA (Opus, complex tasks) + Amnesia pool (Sonnet, quick tasks)
 - **Morning briefing / evening debrief**: Full context aggregation
 - **Autonomous timers/reminders**: Cron-driven, location-based, voice + SMS delivery
