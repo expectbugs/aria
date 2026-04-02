@@ -12,6 +12,21 @@ from datetime import datetime, date, timedelta
 log = logging.getLogger("aria")
 
 
+def _mark_category_a_delivered(method: str):
+    """Mark undelivered Category A findings as consumed (e.g. via briefing/debrief)."""
+    try:
+        from monitors import classify_category, get_undelivered, mark_delivered
+        findings = get_undelivered(min_urgency="info")
+        cat_a_ids = [f["id"] for f in findings
+                     if classify_category(f.get("check_key", ""), source="finding") == "A"]
+        if cat_a_ids:
+            mark_delivered(cat_a_ids, method)
+            log.info("Marked %d Category A findings as delivered via %s",
+                     len(cat_a_ids), method)
+    except Exception:
+        pass
+
+
 def _dedup_tag(key: str, content: str) -> str:
     """Wrap a context section with dedup tags including a content hash.
 
@@ -530,6 +545,7 @@ async def _get_context_for_text(text: str, is_image: bool = False) -> str:
         if is_repeat or not _briefing_delivered_today():
             always = gather_always_context()
             briefing = await gather_briefing_context()
+            _mark_category_a_delivered("briefing")
             ctx = always + "\n" + briefing if always else briefing
             log.info("Context: %d chars, path=briefing", len(ctx))
             return ctx
@@ -539,6 +555,7 @@ async def _get_context_for_text(text: str, is_image: bool = False) -> str:
                       "evening debrief", "wrap up my day"]):
         always = gather_always_context()
         debrief = await gather_debrief_context()
+        _mark_category_a_delivered("debrief")
         ctx = always + "\n" + debrief if always else debrief
         log.info("Context: %d chars, path=debrief", len(ctx))
         return ctx

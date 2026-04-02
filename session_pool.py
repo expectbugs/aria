@@ -111,6 +111,8 @@ class _Session:
             config, "SESSION_MAX_CONTEXT_BYTES", 500_000
         )  # ~125K tokens ≈ 62% of 200K window
         self._dedup_hashes: dict[str, str] = {}  # key → hash for context dedup
+        self._consecutive_failures = 0
+        self._last_spawn_attempt: datetime | None = None
 
     def _is_alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
@@ -133,7 +135,7 @@ class _Session:
             "--settings", '{"claudeMdExcludes": ["/home/user/aria/CLAUDE.md"]}',
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
             env=env,
             limit=16 * 1024 * 1024,  # 16MB readline buffer
         )
@@ -163,6 +165,40 @@ class _Session:
                          self.name, self._request_count)
                 await self._kill()
             await self._spawn()
+
+    async def _heal(self) -> str:
+        """Respawn if dead, with crash-loop backoff. Thread-safe with query().
+
+        Returns: 'ok', 'respawned', 'crash_loop', 'backoff', or 'respawn_failed: ...'
+        """
+        async with self._lock:
+            if self._is_alive():
+                self._consecutive_failures = 0
+                return "ok"
+            if self._consecutive_failures >= 5:
+                log.error(
+                    "Session '%s' in crash loop (%d consecutive failures), "
+                    "backing off indefinitely",
+                    self.name, self._consecutive_failures,
+                )
+                return "crash_loop"
+            if self._last_spawn_attempt:
+                backoff = 10 * (2 ** self._consecutive_failures)
+                elapsed = (datetime.now() - self._last_spawn_attempt).total_seconds()
+                if elapsed < backoff:
+                    return "backoff"
+            try:
+                self._last_spawn_attempt = datetime.now()
+                await self._spawn()
+                self._consecutive_failures = 0
+                return "respawned"
+            except Exception as e:
+                self._consecutive_failures += 1
+                log.error(
+                    "Failed to respawn session '%s' (attempt %d): %s",
+                    self.name, self._consecutive_failures, e,
+                )
+                return f"respawn_failed: {e}"
 
     async def query(self, user_text: str, extra_context: str = "",
                     file_blocks: list[dict] | None = None) -> SessionResponse:
@@ -386,6 +422,7 @@ class _Session:
             "context_pct": round(
                 self._context_bytes / self._max_context_bytes * 100, 1
             ) if self._max_context_bytes else 0,
+            "consecutive_failures": self._consecutive_failures,
         }
 
 
@@ -432,6 +469,12 @@ class SessionPool:
             "deep": self._deep.get_status(),
             "fast": self._fast.get_status(),
         }
+
+    async def ensure_healthy(self) -> dict:
+        """Check both sessions and respawn any that have died."""
+        deep_status = await self._deep._heal()
+        fast_status = await self._fast._heal()
+        return {"deep": deep_status, "fast": fast_status}
 
 
 # --- Singleton ---

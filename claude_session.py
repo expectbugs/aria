@@ -48,7 +48,7 @@ class ClaudeSession:
             "--settings", '{"claudeMdExcludes": ["/home/user/aria/CLAUDE.md"]}',
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
             env=env,
             limit=16 * 1024 * 1024,  # 16MB readline buffer (images can be 4MB+ base64)
         )

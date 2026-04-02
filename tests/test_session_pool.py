@@ -463,3 +463,158 @@ class TestSingleton:
         session_pool._pool = None
         p2 = session_pool.get_session_pool()
         assert p1 is not p2
+
+
+# ---------------------------------------------------------------------------
+# _Session._heal — watchdog respawn logic
+# ---------------------------------------------------------------------------
+
+class TestHeal:
+    @pytest.mark.asyncio
+    async def test_heal_returns_ok_when_alive(self):
+        s = session_pool._Session("fast", "auto", 150)
+        mock_proc = make_mock_process()  # returncode=None → alive
+        s._proc = mock_proc
+        assert await s._heal() == "ok"
+
+    @pytest.mark.asyncio
+    async def test_heal_resets_failures_when_alive(self):
+        s = session_pool._Session("fast", "auto", 150)
+        s._consecutive_failures = 3
+        mock_proc = make_mock_process()
+        s._proc = mock_proc
+        await s._heal()
+        assert s._consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_heal_respawns_dead_session(self):
+        s = session_pool._Session("fast", "auto", 150)
+        s._proc = None  # dead
+
+        mock_proc = make_mock_process()
+        with patch("session_pool.asyncio.create_subprocess_exec",
+                   new_callable=AsyncMock, return_value=mock_proc):
+            result = await s._heal()
+
+        assert result == "respawned"
+        assert s._proc is mock_proc
+        assert s._consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_heal_crash_loop_after_5_failures(self):
+        s = session_pool._Session("fast", "auto", 150)
+        s._proc = None
+        s._consecutive_failures = 5
+        result = await s._heal()
+        assert result == "crash_loop"
+
+    @pytest.mark.asyncio
+    async def test_heal_backoff_respects_timing(self):
+        from datetime import timedelta
+        s = session_pool._Session("fast", "auto", 150)
+        s._proc = None
+        s._consecutive_failures = 2
+        # Last attempt was 1 second ago, backoff should be 10*(2^2)=40s
+        s._last_spawn_attempt = session_pool.datetime.now() - timedelta(seconds=1)
+        result = await s._heal()
+        assert result == "backoff"
+
+    @pytest.mark.asyncio
+    async def test_heal_spawns_after_backoff_expires(self):
+        from datetime import timedelta
+        s = session_pool._Session("fast", "auto", 150)
+        s._proc = None
+        s._consecutive_failures = 1
+        # Last attempt 60s ago, backoff is 10*(2^1)=20s → expired
+        s._last_spawn_attempt = session_pool.datetime.now() - timedelta(seconds=60)
+
+        mock_proc = make_mock_process()
+        with patch("session_pool.asyncio.create_subprocess_exec",
+                   new_callable=AsyncMock, return_value=mock_proc):
+            result = await s._heal()
+
+        assert result == "respawned"
+        assert s._consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_heal_increments_failures_on_spawn_error(self):
+        s = session_pool._Session("fast", "auto", 150)
+        s._proc = None
+
+        with patch("session_pool.asyncio.create_subprocess_exec",
+                   new_callable=AsyncMock, side_effect=OSError("no such file")):
+            result = await s._heal()
+
+        assert result.startswith("respawn_failed:")
+        assert s._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_heal_resets_on_success_after_prior_failures(self):
+        from datetime import timedelta
+        s = session_pool._Session("fast", "auto", 150)
+        s._proc = None
+        s._consecutive_failures = 3
+        s._last_spawn_attempt = session_pool.datetime.now() - timedelta(hours=1)
+
+        mock_proc = make_mock_process()
+        with patch("session_pool.asyncio.create_subprocess_exec",
+                   new_callable=AsyncMock, return_value=mock_proc):
+            result = await s._heal()
+
+        assert result == "respawned"
+        assert s._consecutive_failures == 0
+
+
+# ---------------------------------------------------------------------------
+# SessionPool.ensure_healthy
+# ---------------------------------------------------------------------------
+
+class TestEnsureHealthy:
+    @pytest.mark.asyncio
+    async def test_ensure_healthy_both_alive(self):
+        pool = session_pool.SessionPool()
+        mock_proc = make_mock_process()
+        pool._deep._proc = mock_proc
+        pool._fast._proc = make_mock_process()
+        result = await pool.ensure_healthy()
+        assert result == {"deep": "ok", "fast": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_ensure_healthy_respawns_dead_fast(self):
+        pool = session_pool.SessionPool()
+        pool._deep._proc = make_mock_process()  # alive
+        pool._fast._proc = None  # dead
+
+        mock_proc = make_mock_process()
+        with patch("session_pool.asyncio.create_subprocess_exec",
+                   new_callable=AsyncMock, return_value=mock_proc):
+            result = await pool.ensure_healthy()
+
+        assert result["deep"] == "ok"
+        assert result["fast"] == "respawned"
+
+    @pytest.mark.asyncio
+    async def test_ensure_healthy_respawns_both_dead(self):
+        pool = session_pool.SessionPool()
+        pool._deep._proc = None
+        pool._fast._proc = None
+
+        with patch("session_pool.asyncio.create_subprocess_exec",
+                   new_callable=AsyncMock, return_value=make_mock_process()):
+            result = await pool.ensure_healthy()
+
+        assert result["deep"] == "respawned"
+        assert result["fast"] == "respawned"
+
+
+# ---------------------------------------------------------------------------
+# get_status includes consecutive_failures
+# ---------------------------------------------------------------------------
+
+class TestGetStatusFailures:
+    def test_get_status_includes_consecutive_failures(self):
+        s = session_pool._Session("fast", "auto", 150)
+        s._consecutive_failures = 3
+        status = s.get_status()
+        assert "consecutive_failures" in status
+        assert status["consecutive_failures"] == 3

@@ -6,6 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.9.1] — 2026-04-02
+
+### Fixed
+
+- **Session pool watchdog** — Dead sessions (deep or fast) are now automatically respawned by a background watchdog task every 30s. Previously, a session that died while idle was never detected because `_ensure_alive()` only ran at query time. Includes crash-loop protection with exponential backoff (max 5 consecutive failures). Root cause: fast session received zero queries in 3+ days, died from CLI idle timeout, went undetected.
+- **Stderr pipe bomb** — All four Claude CLI subprocess wrappers (session_pool, claude_session, action_aria, amnesia_pool) piped stderr but never read it. A 64KB Linux pipe buffer fill would block the process. Changed to `DEVNULL` since stderr is never consumed.
+- **Category A finding delivery** — Briefing-only monitor findings (health/fitness trends) are now marked as delivered when included in morning briefings or evening debriefs. Previously they accumulated forever in Tier 1 context because nothing called `mark_delivered()` after briefing consumption, and the 11:50pm safety net skipped when a briefing had already happened.
+- **Slappy auto-deploy** — Hardened crontab to use `git reset --hard origin/main` instead of `git pull`, preventing dirty working trees from blocking deployments. Fixed immediate blockage from uncommitted `slappy_capture.py` edits.
+- **Qdrant version mismatch** — Upgraded server from 1.12.5 to 1.17.1 to match client, eliminating compatibility warnings every 6 minutes in tick.log.
+- **Log rotation** — Added `/etc/logrotate.d/aria` config with `copytruncate` for tick.log (10MB threshold), aria.log/err (20MB), monitor.log/deploy.log (5MB). Archived and truncated 74MB tick.log.
+
+### Added
+
+- `SessionPool.ensure_healthy()` / `_Session._heal()` with lock-safe respawn and crash-loop backoff
+- `SESSION_WATCHDOG_INTERVAL` config (default 30s, 0 to disable)
+- `_mark_category_a_delivered()` helper in context.py
+- Fire-and-forget `ensure_healthy()` call on session pool fallback in `_route_query()`
+- `consecutive_failures` field in session `get_status()` for health endpoint observability
+
+---
+
 ## [0.9.0] — 2026-03-30
 
 ### Added — Phase 6 Foundation (Ambient Audio Pipeline)

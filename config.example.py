@@ -57,6 +57,7 @@ DATABASE_URL = "postgresql://aria@/aria"  # local Unix socket, trust auth
 SESSION_RECYCLE_AFTER = 150         # requests before recycling a session
 SESSION_DEEP_EFFORT = "max"         # effort level for deep (complex) queries
 SESSION_FAST_EFFORT = "auto"        # effort level for fast (simple) queries
+SESSION_WATCHDOG_INTERVAL = 30      # seconds between health checks (0 to disable)
 # Both sessions use Opus — never downgrade model, only effort level
 
 # --- Amnesia Pool (stateless Claude Code workers) ---

@@ -50,17 +50,45 @@ logging.basicConfig(
 )
 log = logging.getLogger("aria")
 
+_watchdog_task: asyncio.Task | None = None
+
+
+async def _session_watchdog():
+    """Background task: periodically check session health and respawn dead sessions."""
+    interval = getattr(config, "SESSION_WATCHDOG_INTERVAL", 30)
+    if not interval:
+        return
+    log.info("Session watchdog started (interval=%ds)", interval)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            pool = get_session_pool()
+            result = await pool.ensure_healthy()
+            for name, status in result.items():
+                if status != "ok":
+                    log.warning("Session watchdog: %s → %s", name, status)
+        except Exception as e:
+            log.error("Session watchdog error: %s", e)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and clean up resources."""
+    global _watchdog_task
     db.get_pool()  # warm the connection pool
     redis_client.get_client()  # warm Redis connection (non-fatal if down)
     task_dispatcher.start_dispatcher()  # background task queue consumer
     completion_listener.start_listener()  # Pub/Sub for task result delivery
     await get_amnesia_pool().start()  # pre-warm Claude Code instances for agentic tasks
     await get_session_pool().start()  # pre-warm deep + fast CLI sessions
+    _watchdog_task = asyncio.create_task(_session_watchdog())
     yield
+    if _watchdog_task and not _watchdog_task.done():
+        _watchdog_task.cancel()
+        try:
+            await _watchdog_task
+        except asyncio.CancelledError:
+            pass
     await get_session_pool().stop()  # stop CLI sessions first (may be serving requests)
     task_dispatcher.stop_dispatcher()
     completion_listener.stop_listener()
@@ -229,6 +257,7 @@ async def _route_query(text: str, context: str = "",
         return await pool.query_deep(text, context, file_blocks)
     except Exception as e:
         log.warning("Session pool failed, falling back to API: %s", e)
+        asyncio.create_task(pool.ensure_healthy())  # trigger immediate respawn
         fallback_text = await _ask_aria_fallback(text, context, file_blocks)
         return SessionResponse(text=fallback_text, tool_calls=[])
 

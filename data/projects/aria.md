@@ -1,7 +1,7 @@
 # ARIA — Project Status
 
 ## Current Version
-v0.9.0 (2026-03-30)
+v0.9.1 (2026-04-02)
 
 ## What's Working
 - **Email integration polish** (v0.8.7): Classification accuracy 35.5%→28.0% important rate, `check_subject_only` for per-sender overrides, shipping split by urgency, P1-P4 priority scoring, email surfacing tracker, Tier 3 AI upgraded to Sonnet, email body access via query.py, trash_email ACTION, stale finding cleanup, **junk auto-archive** (Tier 1 junk removed from Gmail inbox every tick, batch Gmail API, historical cleanup script)
@@ -13,7 +13,7 @@ v0.9.0 (2026-03-30)
 - **Voice assistant**: Full voice loop via Tasker (STT, Claude, TTS)
 - **CLI wrapper** (v0.8.1): `aria_cli.py` — terminal conversation with ARIA, file input, optional audio playback
 - **SMS/MMS**: Inbound via Twilio, outbound via SMS-to-image redirect (A2P blocked)
-- **CLI Session Pool**: Two persistent Opus sessions (deep + fast) with API fallback
+- **CLI Session Pool**: Two persistent Opus sessions (deep + fast) with API fallback, background watchdog auto-respawn (v0.9.1)
 - **Data stores**: All backed by PostgreSQL (21 core tables + 5 new in v0.6.0)
 - **Context injection**: Tiered context (always + keyword-triggered) via build_request_context()
 - **ACTION blocks**: 21 action types, balanced-brace parser, claim detection
@@ -29,7 +29,7 @@ v0.9.0 (2026-03-30)
 - **Google Calendar sync** (v0.8.0): Bidirectional sync, Google as source of truth, incremental syncToken
 - **Phase 6 ambient audio pipeline** (v0.9.0): DJI Mic 3 → Bluetooth → slappy capture daemon (parecord, VAD, faster-whisper base CPU) → HTTP relay to beardos. Sliding window streaming (~1.5s latency to Redis). Wake word "ARIA" detection. Extraction engine (Opus 4.6 CLI auto effort, conversation grouping, commitment/person/topic extraction, daily summaries). Qdrant semantic search (sentence-transformers embeddings). Neo4j knowledge graph (person/conversation/topic/commitment relationships). Context injection (commitments in Tier 1, recall/person keywords in Tier 2). 5 new query.py subcommands. Debrief + briefing upgraded with ambient data.
 - **Swarm workers**: Action ARIA (Opus, complex tasks) + Amnesia pool (Sonnet, quick tasks)
-- **Morning briefing / evening debrief**: Full context aggregation
+- **Morning briefing / evening debrief**: Full context aggregation, marks Category A findings as delivered (v0.9.1)
 - **Autonomous timers/reminders**: Cron-driven, location-based, voice + SMS delivery
 - **Proactive nudges**: Cooldown-managed, frequency-capped, Haiku-composed
 - **System monitor**: Daemon/DB/Redis/backup/peer health checks with SVG phone alerts

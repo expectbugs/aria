@@ -191,3 +191,48 @@ class TestContextGapDetection:
         assert not _CONTEXT_GAP_PATTERNS.search("Your appointment is at 3pm")
         assert not _CONTEXT_GAP_PATTERNS.search("You ate 1,200 calories today")
         assert not _CONTEXT_GAP_PATTERNS.search("Sure, I set a timer for 30 minutes")
+
+
+# ---------------------------------------------------------------------------
+# _mark_category_a_delivered — briefing/debrief finding consumption
+# ---------------------------------------------------------------------------
+
+class TestMarkCategoryADelivered:
+    @patch("monitors.mark_delivered")
+    @patch("monitors.get_undelivered", return_value=[
+        {"id": 1, "check_key": "choline_low", "urgency": "normal"},
+        {"id": 2, "check_key": "sleep_deficit", "urgency": "normal"},
+        {"id": 3, "check_key": "email_urgent", "urgency": "high"},  # Category C
+    ])
+    @patch("monitors.classify_category",
+           side_effect=lambda k, source="finding": {
+               "choline_low": "A", "sleep_deficit": "A", "email_urgent": "C"
+           }.get(k, "C"))
+    def test_marks_only_category_a(self, mock_classify, mock_get, mock_mark):
+        from context import _mark_category_a_delivered
+        _mark_category_a_delivered("briefing")
+        mock_mark.assert_called_once_with([1, 2], "briefing")
+
+    @patch("monitors.mark_delivered")
+    @patch("monitors.get_undelivered", return_value=[
+        {"id": 5, "check_key": "email_urgent", "urgency": "high"},
+    ])
+    @patch("monitors.classify_category",
+           side_effect=lambda k, source="finding": "C")
+    def test_skips_when_no_category_a(self, mock_classify, mock_get, mock_mark):
+        from context import _mark_category_a_delivered
+        _mark_category_a_delivered("briefing")
+        mock_mark.assert_not_called()
+
+    @patch("monitors.mark_delivered")
+    @patch("monitors.get_undelivered", return_value=[])
+    def test_skips_when_no_findings(self, mock_get, mock_mark):
+        from context import _mark_category_a_delivered
+        _mark_category_a_delivered("briefing")
+        mock_mark.assert_not_called()
+
+    @patch("monitors.get_undelivered", side_effect=Exception("db down"))
+    def test_swallows_exceptions(self, mock_get):
+        from context import _mark_category_a_delivered
+        # Should not raise
+        _mark_category_a_delivered("briefing")

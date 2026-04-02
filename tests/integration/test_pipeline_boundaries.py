@@ -805,19 +805,23 @@ class TestExerciseRateLimit:
 class TestHealthPatternSignificance:
     """health_store: `count >= 3` (pattern significance)."""
 
+    def _day(self, ago: int) -> str:
+        """Return date string for N days ago."""
+        return (date.today() - timedelta(days=ago)).isoformat()
+
     def test_2_occurrences_not_significant(self):
         """2 pain entries over 7 days: below threshold, no pattern."""
-        seed_health("2026-03-27", category="pain", description="back pain")
-        seed_health("2026-03-26", category="pain", description="back pain")
+        seed_health(self._day(1), category="pain", description="back pain")
+        seed_health(self._day(2), category="pain", description="back pain")
         patterns = health_store.get_patterns(days=7)
         pain_patterns = [p for p in patterns if "back pain" in p and "reported" in p]
         assert len(pain_patterns) == 0
 
     def test_3_occurrences_significant(self):
         """3 pain entries over 7 days: at threshold, pattern detected."""
-        seed_health("2026-03-27", category="pain", description="back pain")
-        seed_health("2026-03-26", category="pain", description="back pain, mild")
-        seed_health("2026-03-25", category="pain", description="back pain, moderate")
+        seed_health(self._day(1), category="pain", description="back pain")
+        seed_health(self._day(2), category="pain", description="back pain, mild")
+        seed_health(self._day(3), category="pain", description="back pain, moderate")
         patterns = health_store.get_patterns(days=7)
         pain_patterns = [p for p in patterns if "back pain" in p and "reported" in p]
         assert len(pain_patterns) == 1
@@ -825,10 +829,10 @@ class TestHealthPatternSignificance:
 
     def test_4_occurrences_significant(self):
         """4 pain entries over 7 days: above threshold, pattern detected."""
-        seed_health("2026-03-27", category="pain", description="back pain")
-        seed_health("2026-03-26", category="pain", description="back pain, mild")
-        seed_health("2026-03-25", category="pain", description="back pain, moderate")
-        seed_health("2026-03-24", category="pain", description="back pain, severe")
+        seed_health(self._day(1), category="pain", description="back pain")
+        seed_health(self._day(2), category="pain", description="back pain, mild")
+        seed_health(self._day(3), category="pain", description="back pain, moderate")
+        seed_health(self._day(4), category="pain", description="back pain, severe")
         patterns = health_store.get_patterns(days=7)
         pain_patterns = [p for p in patterns if "back pain" in p and "reported" in p]
         assert len(pain_patterns) == 1
@@ -838,10 +842,13 @@ class TestHealthPatternSignificance:
 class TestSleepAverageWarning:
     """health_store: `avg < 6` (sleep warning)."""
 
+    def _day(self, ago: int) -> str:
+        return (date.today() - timedelta(days=ago)).isoformat()
+
     def test_avg_5_9_warns(self):
         """Average 5.9h sleep: below 6, triggers warning."""
-        seed_health("2026-03-27", category="sleep", description="sleep", sleep_hours=5.8)
-        seed_health("2026-03-26", category="sleep", description="sleep", sleep_hours=6.0)
+        seed_health(self._day(1), category="sleep", description="sleep", sleep_hours=5.8)
+        seed_health(self._day(2), category="sleep", description="sleep", sleep_hours=6.0)
         # avg = (5.8 + 6.0) / 2 = 5.9
         patterns = health_store.get_patterns(days=7)
         warnings = [p for p in patterns if "warning" in p.lower() and "sleep" in p]
@@ -849,16 +856,16 @@ class TestSleepAverageWarning:
 
     def test_avg_6_0_no_warning(self):
         """Average 6.0h sleep: not < 6, no warning."""
-        seed_health("2026-03-27", category="sleep", description="sleep", sleep_hours=6.0)
-        seed_health("2026-03-26", category="sleep", description="sleep", sleep_hours=6.0)
+        seed_health(self._day(1), category="sleep", description="sleep", sleep_hours=6.0)
+        seed_health(self._day(2), category="sleep", description="sleep", sleep_hours=6.0)
         patterns = health_store.get_patterns(days=7)
         warnings = [p for p in patterns if "warning" in p.lower() and "sleep" in p]
         assert len(warnings) == 0
 
     def test_avg_6_1_no_warning(self):
         """Average 6.1h sleep: above 6, no warning."""
-        seed_health("2026-03-27", category="sleep", description="sleep", sleep_hours=6.2)
-        seed_health("2026-03-26", category="sleep", description="sleep", sleep_hours=6.0)
+        seed_health(self._day(1), category="sleep", description="sleep", sleep_hours=6.2)
+        seed_health(self._day(2), category="sleep", description="sleep", sleep_hours=6.0)
         # avg = (6.2 + 6.0) / 2 = 6.1
         patterns = health_store.get_patterns(days=7)
         warnings = [p for p in patterns if "warning" in p.lower() and "sleep" in p]
