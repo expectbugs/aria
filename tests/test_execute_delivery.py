@@ -134,14 +134,30 @@ class TestImageDelivery:
     @patch("os.unlink")
     @patch("push_image.push_image", return_value=True)
     @patch("sms._render_sms_image", return_value="/tmp/test_img.png")
-    async def test_image_renders_and_pushes(self, mock_render, mock_push,
-                                              mock_unlink, _mock_engine):
+    async def test_image_automated_source_pushes_via_tasker(
+            self, mock_render, mock_push, mock_unlink, _mock_engine):
+        """Automated sources (nudge, timer, etc.) push via Tasker — free, no MMS."""
         _mock_engine["evaluate"].return_value = _decision("image")
-        result = await execute_delivery("Hello")
+        result = await execute_delivery("Hello", source="nudge")
 
         assert result["method"] == "image"
         mock_render.assert_called_once_with("Hello", header="ARIA")
-        mock_push.assert_called_once_with("/tmp/test_img.png", caption="ARIA")
+        mock_push.assert_called_once()
+        mock_unlink.assert_called_once_with("/tmp/test_img.png")
+
+    @pytest.mark.asyncio
+    @patch("os.unlink")
+    @patch("sms.send_image_mms", return_value="msg_test")
+    @patch("sms._render_sms_image", return_value="/tmp/test_img.png")
+    async def test_image_user_source_sends_mms(
+            self, mock_render, mock_mms, mock_unlink, _mock_engine):
+        """User-initiated conversation (sms, voice, file, cli) uses MMS."""
+        _mock_engine["evaluate"].return_value = _decision("image")
+        result = await execute_delivery("Hello", source="sms")
+
+        assert result["method"] == "image"
+        mock_render.assert_called_once_with("Hello", header="ARIA")
+        mock_mms.assert_called_once()
         mock_unlink.assert_called_once_with("/tmp/test_img.png")
 
     @pytest.mark.asyncio

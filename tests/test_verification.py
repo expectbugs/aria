@@ -92,6 +92,44 @@ class TestVerifyResponse:
         assert len(date_claims) >= 0  # may or may not match regex
 
 
+class TestCompletenessClaimsExpanded:
+    """Test expanded completeness claim detection (Lie #3 — negative schedule claims)."""
+
+    def test_no_work_today(self):
+        from verification import check_completeness_claims
+        claims = check_completeness_claims(
+            "You don't have work today, enjoy your day off!",
+            "today only — shown — use `query.py` for older"
+        )
+        assert len(claims) >= 1
+        assert any("completeness" in c.claim_type.lower()
+                    or "logged" in c.status for c in claims)
+
+    def test_day_off_detected(self):
+        from verification import check_completeness_claims
+        claims = check_completeness_claims(
+            "It's your day off, so no rush.",
+            "today only — shown — use `query.py` for older"
+        )
+        assert len(claims) >= 1
+
+    def test_schedule_clear_detected(self):
+        from verification import check_completeness_claims
+        claims = check_completeness_claims(
+            "Your schedule is clear for the rest of the day.",
+            "today only — shown — use `query.py` for older"
+        )
+        assert len(claims) >= 1
+
+    def test_no_false_positive_on_unscoped(self):
+        """Completeness claims ignored when context isn't scoped."""
+        from verification import check_completeness_claims
+        claims = check_completeness_claims(
+            "You don't have work today.", "full calendar data here"
+        )
+        assert len(claims) == 0
+
+
 class TestActionResult:
     def test_to_response_clean(self):
         r = make_action_result(clean_response="Hello!")

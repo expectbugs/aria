@@ -1,4 +1,4 @@
-"""Twilio SMS/MMS integration for ARIA."""
+"""Telnyx SMS/MMS integration for ARIA."""
 
 import logging
 import os
@@ -8,8 +8,7 @@ import textwrap
 import uuid
 from pathlib import Path
 
-from twilio.rest import Client
-from twilio.request_validator import RequestValidator
+from telnyx import Telnyx
 
 import config
 import db
@@ -20,15 +19,18 @@ log = logging.getLogger("aria.sms")
 MMS_OUTBOX = config.DATA_DIR / "mms_outbox"
 MMS_OUTBOX.mkdir(parents=True, exist_ok=True)
 
-# Lazy-initialized Twilio client
-_client: Client | None = None
+# Lazy-initialized Telnyx client
+_client: Telnyx | None = None
 
 
-def get_client() -> Client:
-    """Get or create the Twilio REST client."""
+def get_client() -> Telnyx:
+    """Get or create the Telnyx REST client."""
     global _client
     if _client is None:
-        _client = Client(config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN)
+        _client = Telnyx(
+            api_key=config.TELNYX_API_KEY,
+            public_key=getattr(config, "TELNYX_PUBLIC_KEY", None),
+        )
     return _client
 
 
@@ -36,7 +38,7 @@ def stage_media(local_path: str) -> str:
     """Copy a local file to the MMS outbox and return the public URL.
 
     The file is served via the /mms_media endpoint through Tailscale Funnel,
-    making it accessible to Twilio for MMS delivery.
+    making it accessible to Telnyx for MMS delivery.
     """
     src = Path(local_path)
     if not src.exists():
@@ -48,12 +50,12 @@ def stage_media(local_path: str) -> str:
     shutil.copy2(src, dest)
 
     # Build public URL via Tailscale Funnel
-    public_url = f"{config.TWILIO_WEBHOOK_URL.rsplit('/sms', 1)[0]}/mms_media/{dest.name}"
+    public_url = f"{config.TELNYX_WEBHOOK_URL.rsplit('/sms', 1)[0]}/mms_media/{dest.name}"
     log.info("Staged MMS media: %s -> %s", local_path, public_url)
     return public_url
 
 
-# --- SMS → Image Redirect (temporary — while A2P 10DLC is pending) ---
+# --- Image rendering (used for MMS image delivery) ---
 
 _FONT_REGULAR = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
 _FONT_BOLD = "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"
@@ -137,75 +139,20 @@ def _render_sms_image(body: str, header: str = "ARIA") -> str:
     return str(tmp_path)
 
 
-def _redirect_to_image(to: str, body: str, media_url: str | None = None) -> str:
-    """Redirect an outbound SMS to an image push. Returns a fake SID.
-
-    SID prefix indicates delivery outcome:
-    - IMG_xxxx: push succeeded (or body was empty/whitespace)
-    - IMG_FAIL_xxxx: push failed
-    """
-    uid = uuid.uuid4().hex[:8]
-    push_failed = False
-
-    if not body or not body.strip():
-        log.warning("SMS redirect: empty body to %s, skipping image push", to)
-    else:
-        try:
-            img_path = _render_sms_image(body)
-            try:
-                import push_image
-                success = push_image.push_image(img_path, caption="ARIA")
-                if not success:
-                    log.error("SMS redirect: push_image failed for message to %s", to)
-                    push_failed = True
-            finally:
-                # Archive rendered SMS image before removing temp file
-                try:
-                    from datetime import datetime as _dt
-                    archive_dir = config.DATA_DIR / "outbox_archive"
-                    archive_dir.mkdir(parents=True, exist_ok=True)
-                    ts = _dt.now().strftime("%Y%m%d_%H%M%S")
-                    shutil.copy2(img_path, archive_dir / f"sms_img_{ts}_{uid}.png")
-                    os.unlink(img_path)
-                except OSError:
-                    pass
-        except Exception as e:
-            log.error("SMS redirect: failed to render/push image for %s: %s", to, e)
-            push_failed = True
-
-    fake_sid = f"IMG_FAIL_{uid}" if push_failed else f"IMG_{uid}"
-
-    # Log to sms_outbound for audit trail
-    try:
-        with db.get_conn() as conn:
-            conn.execute(
-                """INSERT INTO sms_outbound (to_number, body, media_url, sid)
-                   VALUES (%s, %s, %s, %s)""",
-                (to, body, media_url, fake_sid),
-            )
-    except Exception as e:
-        log.error("Failed to log redirected SMS: %s", e)
-
-    log.info("SMS redirected to image push (to=%s, sid=%s)", to, fake_sid)
-    return fake_sid
-
-
 def send_sms(to: str, body: str, media_url: str | None = None) -> str:
-    """Send an SMS or MMS message. Returns the message SID."""
-    if getattr(config, "SMS_REDIRECT_TO_IMAGE", False):
-        return _redirect_to_image(to, body, media_url)
-
+    """Send an SMS or MMS message via Telnyx. Returns the message ID."""
     client = get_client()
-    kwargs = {
-        "messaging_service_sid": config.TWILIO_MESSAGING_SID,
+    kwargs: dict = {
+        "from_": config.TELNYX_PHONE_NUMBER,
         "to": to,
-        "body": body,
+        "text": body,
     }
     if media_url:
-        kwargs["media_url"] = [media_url]
+        kwargs["media_urls"] = [media_url]
 
-    message = client.messages.create(**kwargs)
-    log.info("SMS sent to %s (sid=%s)", to, message.sid)
+    response = client.messages.send(**kwargs)
+    message_id = response.data.id if response.data else "unknown"
+    log.info("SMS sent to %s (id=%s)", to, message_id)
 
     # Log every outbound message with its exact text
     try:
@@ -213,12 +160,12 @@ def send_sms(to: str, body: str, media_url: str | None = None) -> str:
             conn.execute(
                 """INSERT INTO sms_outbound (to_number, body, media_url, sid)
                    VALUES (%s, %s, %s, %s)""",
-                (to, body, media_url, message.sid),
+                (to, body, media_url, message_id),
             )
     except Exception as e:
         log.error("Failed to log outbound SMS: %s", e)
 
-    return message.sid
+    return message_id
 
 
 def split_sms(body: str, max_length: int = 1500) -> list[str]:
@@ -279,11 +226,7 @@ def _find_sentence_break(text: str, max_length: int) -> int:
 
 
 def send_long_sms(to: str, body: str, media_url: str | None = None) -> list[str]:
-    """Send a potentially long SMS as multiple messages. Returns list of SIDs."""
-    if getattr(config, "SMS_REDIRECT_TO_IMAGE", False):
-        # No splitting — render full message as one image
-        return [send_sms(to, body, media_url)]
-
+    """Send a potentially long SMS as multiple messages. Returns list of message IDs."""
     parts = split_sms(body)
     sids = []
     for i, part in enumerate(parts):
@@ -299,12 +242,7 @@ def send_long_to_owner(body: str, media_url: str | None = None) -> list[str]:
 
 
 def send_mms(to: str, body: str, local_path: str) -> str:
-    """Send an MMS with a local file. Stages the file and sends via Twilio."""
-    if getattr(config, "SMS_REDIRECT_TO_IMAGE", False):
-        import push_image as _pi
-        _pi.push_image(local_path, caption="Attachment")
-        return _redirect_to_image(to, body)
-
+    """Send an MMS with a local file. Stages the file and sends via Telnyx."""
     public_url = stage_media(local_path)
     return send_sms(to, body, media_url=public_url)
 
@@ -314,7 +252,55 @@ def send_to_owner(body: str, media_url: str | None = None) -> str:
     return send_sms(config.OWNER_PHONE_NUMBER, body, media_url)
 
 
-def validate_request(url: str, params: dict, signature: str) -> bool:
-    """Validate that an incoming webhook request is genuinely from Twilio."""
-    validator = RequestValidator(config.TWILIO_AUTH_TOKEN)
-    return validator.validate(url, params, signature)
+def validate_request(payload: str, headers: dict) -> bool:
+    """Validate that an incoming webhook request is genuinely from Telnyx.
+
+    Uses ED25519 signature verification. Telnyx signs "{timestamp}|{payload}"
+    with their private key; we verify with the public key from Mission Control.
+    Headers: webhook-id, webhook-timestamp, webhook-signature.
+    """
+    import base64
+    import time as _time
+
+    try:
+        from nacl.signing import VerifyKey
+        from nacl.exceptions import BadSignatureError
+
+        signature_b64 = headers.get("webhook-signature", "")
+        timestamp = headers.get("webhook-timestamp", "")
+        if not signature_b64 or not timestamp:
+            log.warning("Webhook missing signature or timestamp headers")
+            return False
+
+        # Reject timestamps older than 5 minutes (replay protection)
+        try:
+            ts_int = int(timestamp)
+            if abs(_time.time() - ts_int) > 300:
+                log.warning("Webhook timestamp too old/new: %s", timestamp)
+                return False
+        except ValueError:
+            log.warning("Webhook timestamp not an integer: %s", timestamp)
+            return False
+
+        # Verify ED25519 signature over "{timestamp}|{payload}"
+        public_key_bytes = base64.b64decode(config.TELNYX_PUBLIC_KEY)
+        verify_key = VerifyKey(public_key_bytes)
+        signed_payload = f"{timestamp}|{payload}".encode("utf-8")
+        signature_bytes = base64.b64decode(signature_b64)
+        verify_key.verify(signed_payload, signature_bytes)
+        return True
+    except BadSignatureError:
+        log.warning("Webhook ED25519 signature mismatch")
+        return False
+    except Exception as e:
+        log.warning("Webhook validation failed: %s", e)
+        return False
+
+
+def send_image_mms(to: str, image_path: str, body: str = "") -> str:
+    """Send a local image as MMS. Stages to public URL, sends via Telnyx.
+
+    Returns the message ID.
+    """
+    public_url = stage_media(image_path)
+    return send_sms(to, body, media_url=public_url)

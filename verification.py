@@ -173,7 +173,11 @@ _COMPLETENESS_CLAIMS = re.compile(
     r"|\b(?:nothing else (?:scheduled|planned|logged|in your))"
     r"|\b(?:your calendar is (?:empty|clear|free))"
     r"|\b(?:you (?:don'?t|do not) have any (?:other |more )?(?:events?|appointments?))"
-    r"|\b(?:no (?:other |more )?(?:events?|appointments?|entries) (?:scheduled|planned|found|logged))",
+    r"|\b(?:no (?:other |more )?(?:events?|appointments?|entries) (?:scheduled|planned|found|logged))"
+    # Negative schedule/work claims (Lie #3 — fabricated "no work today")
+    r"|\b(?:you (?:don'?t|do not) have (?:work|any work|a shift))"
+    r"|\b(?:no work|day off|off today|off tomorrow|not working)\b"
+    r"|\b(?:your (?:schedule|day) (?:is|looks) (?:clear|free|open|empty))",
     re.IGNORECASE,
 )
 
@@ -265,7 +269,11 @@ _FACTUAL_CLAIM_PATTERNS = re.compile(
     r"July|August|September|October|November|December) \d"
     r"|(?:^|\. )(?:There (?:are|is) \d|You have \d|Your \w+ (?:is|was|are) )"
     r"|\d[\d,]+ (?:calories|cal|steps|mg|mcg|grams?|hours?|minutes?)\b"
-    r"|(?:the only|no other|that'?s all|nothing else|your calendar is (?:empty|clear))",
+    r"|(?:the only|no other|that'?s all|nothing else|your calendar is (?:empty|clear))"
+    # Temporal claims — "last 2 hours", "about 30 minutes ago", etc.
+    r"|\b(?:last|past|about|roughly|around) \d[\d.]* (?:hours?|minutes?|days?)\b"
+    r"|\b(?:for|in) the (?:last|past) \d[\d.]* (?:hours?|minutes?|days?)\b"
+    r"|\b\d[\d.]* (?:hours?|minutes?) ago\b",
     re.IGNORECASE | re.MULTILINE,
 )
 

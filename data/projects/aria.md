@@ -1,7 +1,7 @@
 # ARIA — Project Status
 
 ## Current Version
-v0.9.1 (2026-04-02)
+v0.9.4 (2026-04-17)
 
 ## What's Working
 - **Email integration polish** (v0.8.7): Classification accuracy 35.5%→28.0% important rate, `check_subject_only` for per-sender overrides, shipping split by urgency, P1-P4 priority scoring, email surfacing tracker, Tier 3 AI upgraded to Sonnet, email body access via query.py, trash_email ACTION, stale finding cleanup, **junk auto-archive** (Tier 1 junk removed from Gmail inbox every tick, batch Gmail API, historical cleanup script)
@@ -12,7 +12,7 @@ v0.9.1 (2026-04-02)
 - **Personality** (v0.8.2): Snarky banter by default, context-gated seriousness, occasional image-gen humor
 - **Voice assistant**: Full voice loop via Tasker (STT, Claude, TTS)
 - **CLI wrapper** (v0.8.1): `aria_cli.py` — terminal conversation with ARIA, file input, optional audio playback
-- **SMS/MMS**: Inbound via Twilio, outbound via SMS-to-image redirect (A2P blocked)
+- **SMS/MMS (Telnyx, v0.9.2+)**: Full Twilio→Telnyx migration. ED25519 webhook verification. Number: +12624251337. `message.finalized` events captured to `sms_outbound`. Image delivery split (v0.9.4): automated triggers via Tasker `push_image.py` (free LAN); user-initiated via `send_image_mms()` / `send_mms.py` CLI (Telnyx MMS, works off-network). 10DLC campaign CY9XE15 registered.
 - **CLI Session Pool**: Two persistent Opus sessions (deep + fast) with API fallback, background watchdog auto-respawn (v0.9.1)
 - **Data stores**: All backed by PostgreSQL (21 core tables + 5 new in v0.6.0)
 - **Context injection**: Tiered context (always + keyword-triggered) via build_request_context()

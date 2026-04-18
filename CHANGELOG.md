@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.9.4] — 2026-04-17
+
+### Added
+
+- **`send_mms.py` CLI** — Parallel to `push_image.py`. Lets Action ARIA deliver user-requested images via Telnyx MMS (works on-network and off-network, unlike Tasker which is LAN-only). `python send_mms.py <image> [--to +15551234567] [--body "..."]`.
+- **`message.finalized` webhook capture** — `/sms` handler now processes `message.sent` and `message.finalized` event types in addition to `message.received`. Terminal delivery state logged to `sms_outbound.status` / `errors` / `finalized_at`. Finally tells us whether T-Mobile actually delivered or silently filtered.
+- **`sms_outbound` schema additions** — `status TEXT`, `errors TEXT`, `finalized_at TIMESTAMPTZ` columns, `idx_sms_outbound_sid` index.
+- **`MONITOR_SILENCED_CHECKS` config** — List of check names silenced from phone alerts (checks still run and log). Used to silence peer alerts when slappy is intentionally offline. Valid: `daemon`, `postgres`, `redis`, `backup`, `restore`, `peer`.
+- **MMS outbox 24h retention** — New `cleanup_mms_outbox` tick job archives + deletes files older than 24h. Previously files were auto-deleted 60s after first fetch, which could break delivery if carrier or phone re-fetched the media.
+
+### Changed
+
+- **Image delivery routing: automated vs user-initiated** — Automated triggers (nudges, monitor alerts, data quality alerts, TTS bug alerts, timer completions) push via `push_image.py` (Tasker, free LAN). Active conversation (user-initiated via SMS, voice, file share, CLI) uses `send_image_mms()` (Telnyx MMS, works off-network). `delivery_engine.execute_delivery()` branches on `source` for the `image` method; `tick.py _sync_deliver`, `monitor.push_alert`, `actions._push_data_quality_alert`, and `tts._prepare_for_speech` bug-alert path all reverted to Tasker since they're all automated.
+- **SMS channel guidance in system prompt** — ARIA now told: casual chat concise (~1-2 sentences, each ~153 chars adds a billable SMS segment), longer responses only when genuinely warranted (complex topics, actual data reporting), personality/humor/snark stays intact. Also forbidden from mentioning carrier brand names (Verizon, T-Mobile, Visible, Fi) in SMS/MMS content — carriers filter those as impersonation attempts.
+- **Action ARIA image delivery** — System prompt now documents both `send_mms.py` (user-requested, off-network capable) and `push_image.py` (automated, LAN only) with explicit rule for when to use each.
+- **Telnyx messaging profile: `mms_fall_back_to_sms: False`** — Was causing double-billing. Every MMS that failed silently at the handset (common for T-Mobile A2P filtering) triggered an SMS fallback, billing both. Disabled via Telnyx API.
+
+### Fixed
+
+- **MMS media 60s auto-delete race** — Files were deleted 60 seconds after first fetch by Telnyx, before carriers/phones in the delivery chain could re-fetch. Telnyx caches media for up to 1 hour; the 60s window was dangerously short. Now 24h retention with periodic cleanup.
+- **Invisible cost accumulation** — slappy peer alert was firing MMS every 30 minutes while slappy was offline. 20 MMS alerts × $0.025 = $0.50/day for no value. Silenced via `MONITOR_SILENCED_CHECKS`. Plus `mms_fall_back_to_sms: True` was silently doubling charges. Plus long conversational SMS replies were getting split into 10+ billable segments each (153 char/segment). All three stopped.
+
+### Operational notes
+
+- **Carrier-name MMS filtering** — Empirically verified: Verizon rejects MMS content mentioning carrier brand names ("Verizon", "T-Mobile", "Visible") as impersonation. Reproduced deterministically with identical content. Rule now baked into system prompts.
+- **Google Fi A2P MMS filtering** — Fi silently drops all A2P MMS at the Google relay layer, regardless of content. Telnyx gets a `delivered` DLR from T-Mobile's MMSC, but the MMS never reaches the handset. This is Fi-wide, not account-specific.
+- **T-Mobile silent MMS filtering** — T-Mobile proper (not just Fi) returns fake `delivered` DLRs for MMS that never reach handsets. Becky (T-Mobile direct) also didn't receive MMS despite Telnyx showing delivered. Verizon/Visible by contrast explicitly rejects with code 40008 when it won't deliver.
+
+---
+
+## [0.9.3] — 2026-04-12
+
+### Changed
+
+- **Personality reinforcement** — Added `PERSONALITY CHECK` bookend near end of system prompt (before verification, not after) to combat personality dilution under heavy context. Blunt, direct tone.
+- **Image gen humor** — Strengthened humorous image generation instruction. Replaced passive/hedged wording with direct encouragement ("you SHOULD", "don't talk yourself out of it").
+- **Qwen-Image support** — Action ARIA now knows about Qwen-Image (`~/qwen-image/generate_optimal_16x9.py`) as an alternative to FLUX.2. Qwen-Image is default for non-human subjects; FLUX.2 for portraits/speed.
+
+### Fixed
+
+- **Verification cascade bug** — `validate_tool_use()` no longer fires when ARIA successfully executed ACTION blocks. Previously, a tool-use false positive would trigger a retry that replaced the original response (destroying executed actions), then the action-claim verifier would see "I logged" + 0 actions on the retry → cascade of false corrections. Now: executed actions = verified, skip tool-use check.
+- **Verification retry channel** — Verification retries (tool-use and action-claim) now use `[SYSTEM CORRECTION — not from user]` prefix instead of `User says:`, preventing ARIA from interpreting corrections as user messages. New `system_correction` parameter on `_Session.query()` / `SessionPool.query_deep()` / `query_fast()`.
+- **Personality vs verification ordering** — `PERSONALITY CHECK` bookend placed BEFORE `VERIFY BEFORE CLAIMING` in system prompt so verification retains the final-instruction position. Personality removed from `_TOOL_USE_REMINDER` to prevent competing with tool verification.
+
+### Added
+
+- **Chicken/meat nutrient validation** — `_validate_nutrition()` now warns when chicken dishes are missing choline and when meat/grain/legume dishes are missing magnesium. Same pattern as existing fish→omega3 and egg→cholesterol checks. Addresses recurring omission (Lie #6).
+- **Temporal claim detection** — `_has_factual_claims()` now catches "last N hours", "N minutes ago", "past N days" as factual claims requiring tool verification. Addresses temporal guessing (Lie #1).
+- **Expanded completeness claims** — `_COMPLETENESS_CLAIMS` now detects "no work today", "day off", "schedule is clear" as unverified schedule claims (log-only, training data). Addresses fabricated negative claims (Lie #3).
+
+---
+
+## [0.9.2] — 2026-04-17
+
+### Changed
+
+- **SMS/MMS provider: Twilio → Telnyx** — Full migration. Telnyx owns carrier infrastructure with in-house 10DLC vetting (Twilio rejected A2P registration). `sms.py` rewritten for Telnyx SDK, webhook handler rewritten for JSON payloads. New `send_image_mms()` helper stages files to public URL + sends via Telnyx MMS.
+- **Webhook verification: ED25519** — Telnyx signs webhooks with ED25519 using the public key from Mission Control. Uses PyNaCl `VerifyKey` directly. Headers: `webhook-signature`, `webhook-timestamp`. Includes 5-minute timestamp replay protection. (The Telnyx SDK's `webhooks.unwrap()` expects Standard Webhooks HMAC-SHA256 format which doesn't match what Telnyx actually sends, so we verify directly.)
+
+### Removed
+
+- **`SMS_REDIRECT_TO_IMAGE`** — Temporary workaround for dead Twilio outbound no longer needed. All redirect machinery (`_redirect_to_image()`, config flag, per-function checks) deleted.
+- **Twilio SDK dependency** — `twilio==9.10.3` replaced with `telnyx==4.98.0` + `PyNaCl==1.6.2` + `standardwebhooks==1.0.1`.
+- **`tests/test_sms_redirect.py`** — All tests exercised removed redirect machinery.
+
+---
+
 ## [0.9.1] — 2026-04-02
 
 ### Fixed

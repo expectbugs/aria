@@ -62,7 +62,7 @@ def _block_real_subprocess(request):
 
 @pytest.fixture(autouse=True, scope="session")
 def _block_real_sms():
-    """Prevent any real Twilio SMS from being sent."""
+    """Prevent any real Telnyx SMS from being sent."""
     with patch("sms._client", MagicMock()):
         yield
 
@@ -86,16 +86,6 @@ def _block_real_phone_push(request):
          patch("push_audio.push_audio", return_value=True) as m_aud:
         yield m_img, m_aud
 
-
-@pytest.fixture(autouse=True)
-def _disable_sms_redirect():
-    """Ensure SMS redirect is off during tests — test actual SMS code paths.
-
-    The redirect tests in test_sms_redirect.py override this with their own
-    patch.object(sms.config, "SMS_REDIRECT_TO_IMAGE", True, create=True).
-    """
-    with patch("sms.config.SMS_REDIRECT_TO_IMAGE", False, create=True):
-        yield
 
 
 @pytest.fixture(autouse=True)

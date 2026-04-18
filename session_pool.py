@@ -201,7 +201,8 @@ class _Session:
                 return f"respawn_failed: {e}"
 
     async def query(self, user_text: str, extra_context: str = "",
-                    file_blocks: list[dict] | None = None) -> SessionResponse:
+                    file_blocks: list[dict] | None = None,
+                    system_correction: bool = False) -> SessionResponse:
         """Send a prompt to the persistent Claude process and return the response."""
         async with self._lock:
             await self._ensure_alive()
@@ -219,7 +220,11 @@ class _Session:
                 # Dedup large static sections (pantry, diet_ref, health)
                 deduped = _apply_context_dedup(extra_context, self._dedup_hashes)
                 parts.append(f"[CONTEXT]\n{deduped}\n[/CONTEXT]")
-            parts.append(f"User says: {user_text}")
+            if system_correction:
+                parts.append(
+                    f"[SYSTEM CORRECTION — not from user]\n{user_text}")
+            else:
+                parts.append(f"User says: {user_text}")
 
             # Tool use reminder — last item before generation
             parts.append(_TOOL_USE_REMINDER)
@@ -454,14 +459,18 @@ class SessionPool:
         log.info("Session pool stopped")
 
     async def query_deep(self, text: str, context: str = "",
-                         file_blocks: list[dict] | None = None) -> SessionResponse:
+                         file_blocks: list[dict] | None = None,
+                         system_correction: bool = False) -> SessionResponse:
         """Query the deep (max effort) session."""
-        return await self._deep.query(text, context, file_blocks)
+        return await self._deep.query(text, context, file_blocks,
+                                      system_correction)
 
     async def query_fast(self, text: str, context: str = "",
-                         file_blocks: list[dict] | None = None) -> SessionResponse:
+                         file_blocks: list[dict] | None = None,
+                         system_correction: bool = False) -> SessionResponse:
         """Query the fast (auto effort) session."""
-        return await self._fast.query(text, context, file_blocks)
+        return await self._fast.query(text, context, file_blocks,
+                                      system_correction)
 
     def get_status(self) -> dict:
         """Return status of both sessions for health checks."""

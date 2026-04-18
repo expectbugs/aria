@@ -34,6 +34,10 @@ PEER_NAME = "slappy" if config.HOST_NAME == "beardos" else "beardos"
 # Critical checks that bypass quiet hours (infrastructure failures)
 CRITICAL_CHECKS = {"daemon", "postgres"}
 
+# Checks silenced from alerting (still run and log, but no phone alert).
+# Useful when a host is intentionally offline (slappy powered down, etc.).
+SILENCED_CHECKS = set(getattr(config, "MONITOR_SILENCED_CHECKS", []))
+
 
 # --- Health Checks ---
 
@@ -174,8 +178,9 @@ def generate_svg(host: str, failures: list[str]) -> str:
 
 
 def push_alert(host: str, failures: list[str]) -> bool:
-    """Push SVG alert to phone, fall back to SMS.
+    """Push SVG alert to phone via Tasker (free), fall back to SMS text.
 
+    Automated infrastructure alerts — push via Tasker's HTTP server, not MMS.
     Returns True if any delivery succeeded, False if all failed.
     """
     # Generate and save SVG
@@ -183,16 +188,16 @@ def push_alert(host: str, failures: list[str]) -> bool:
     svg_path = config.DATA_DIR / "alert.svg"
     svg_path.write_text(svg)
 
-    # Try image push first
+    # Try Tasker image push first (free, local)
     try:
         from push_image import push_image
         if push_image(str(svg_path), caption=f"ARIA Alert: {host}"):
-            log.info("Alert pushed via image")
+            log.info("Alert pushed via image (Tasker)")
             return True
     except Exception as e:
         log.warning("Image push failed: %s", e)
 
-    # Fall back to SMS
+    # Fall back to SMS text (costs ~$0.004/segment)
     try:
         import sms
         text = f"ARIA ALERT ({host}):\n" + "\n".join(f"- {f}" for f in failures)
@@ -281,12 +286,18 @@ def main():
         try:
             result = check_fn()
             if result:
+                if name in SILENCED_CHECKS:
+                    log.info("FAIL %s (silenced): %s", name, result)
+                    continue
                 failures.append(result)
                 failed_check_names.append(name)
                 log.warning("FAIL %s: %s", name, result)
             else:
                 log.info("OK %s", name)
         except Exception as e:
+            if name in SILENCED_CHECKS:
+                log.info("CHECK CRASH %s (silenced): %s", name, e)
+                continue
             failures.append(f"{name} check crashed: {e}")
             failed_check_names.append(name)
             log.error("CHECK CRASH %s: %s", name, e)

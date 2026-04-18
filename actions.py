@@ -380,6 +380,15 @@ _EGG_KEYWORDS = re.compile(
 )
 _EGG_FALSE_POSITIVES = re.compile(r'\b(eggplant)\b', re.IGNORECASE)
 
+_CHICKEN_KEYWORDS = re.compile(
+    r'\b(chicken|poultry|hen|wing|thigh|breast|drumstick)\b', re.IGNORECASE
+)
+_CHICKEN_FALSE_POSITIVES = re.compile(r'\b(chickpea)\b', re.IGNORECASE)
+_MAGNESIUM_KEYWORDS = re.compile(
+    r'\b(chicken|pork|beef|rice|pasta|bean|lentil|grain)\b', re.IGNORECASE
+)
+_MAGNESIUM_FALSE_POSITIVES = re.compile(r'\b(rice paper|rice vinegar)\b', re.IGNORECASE)
+
 _CORE_NUTRIENTS = [
     "calories", "total_fat_g", "saturated_fat_g", "sodium_mg",
     "total_carb_g", "dietary_fiber_g", "total_sugars_g", "protein_g",
@@ -430,6 +439,26 @@ def _validate_nutrition(nutrition_actions: list[dict],
                     f"(critical for NAFLD, target 550mg/day)."
                 )
 
+        # 3c. Chicken dishes should have choline (~85mg per 4oz)
+        if (_CHICKEN_KEYWORDS.search(food)
+                and not _CHICKEN_FALSE_POSITIVES.search(food)):
+            choline = nutrients.get("choline_mg")
+            if choline is None:
+                warnings.append(
+                    f"Choline missing on '{food}' — chicken has ~85mg choline "
+                    f"per 4oz (critical for NAFLD, target 550mg/day)."
+                )
+
+        # 3d. Meat/grain/legume dishes should have magnesium
+        if (_MAGNESIUM_KEYWORDS.search(food)
+                and not _MAGNESIUM_FALSE_POSITIVES.search(food)):
+            mag = nutrients.get("magnesium_mg")
+            if mag is None:
+                warnings.append(
+                    f"Magnesium missing on '{food}' — estimate from USDA "
+                    f"(critical for NAFLD, target 400-420mg/day)."
+                )
+
         # 4. Label photos should have most core nutrients
         if source == "label_photo":
             present = sum(1 for f in _CORE_NUTRIENTS
@@ -456,7 +485,7 @@ def _validate_nutrition(nutrition_actions: list[dict],
 
 
 def _push_data_quality_alert(reason: str, context: str = ""):
-    """Push a LOUD data quality alert to the phone."""
+    """Push a LOUD data quality alert via Tasker (automated trigger — no Telnyx cost)."""
     try:
         from sms import _render_sms_image
         import push_image
@@ -465,8 +494,10 @@ def _push_data_quality_alert(reason: str, context: str = ""):
         if context:
             alert += f"\n\nContext: {context[:200]}"
         img_path = _render_sms_image(alert, header="ARIA DATA")
-        push_image.push_image(img_path, caption="Data Quality Alert")
-        os.unlink(img_path)
+        try:
+            push_image.push_image(img_path, caption="Data Quality Alert")
+        finally:
+            os.unlink(img_path)
     except Exception:
         pass  # Don't crash action processing over alert delivery
 

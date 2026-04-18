@@ -237,8 +237,12 @@ CREATE TABLE IF NOT EXISTS sms_outbound (
     to_number TEXT NOT NULL,
     body TEXT,
     media_url TEXT,
-    sid TEXT
+    sid TEXT,
+    status TEXT,
+    errors TEXT,
+    finalized_at TIMESTAMPTZ
 );
+CREATE INDEX IF NOT EXISTS idx_sms_outbound_sid ON sms_outbound(sid);
 
 -- Tick state (key-value)
 CREATE TABLE IF NOT EXISTS tick_state (
@@ -265,7 +269,7 @@ CREATE TABLE IF NOT EXISTS nudge_log (
 );
 CREATE INDEX IF NOT EXISTS idx_nudge_log_sent ON nudge_log(sent_at);
 
--- Webhook idempotency (prevents duplicate processing on Twilio retries)
+-- Webhook idempotency (prevents duplicate processing on Telnyx retries)
 CREATE TABLE IF NOT EXISTS processed_webhooks (
     message_sid TEXT PRIMARY KEY,
     processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

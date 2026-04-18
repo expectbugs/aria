@@ -190,7 +190,7 @@ class TestPrepareForSpeech:
         assert "Timer set" in result
         assert "ACTION" not in result
 
-    @patch("push_image.push_image", return_value=True)  # prevent real phone push
+    @patch("push_image.push_image", return_value=True)
     @patch("sms._render_sms_image", return_value="/tmp/fake.png")
     def test_action_block_triggers_warning_log(self, mock_render, mock_push, caplog):
         import logging
@@ -200,7 +200,7 @@ class TestPrepareForSpeech:
 
     @patch("push_image.push_image", return_value=True)
     @patch("sms._render_sms_image", return_value="/tmp/fake_alert.png")
-    def test_action_block_triggers_phone_alert(self, mock_render, mock_push):
+    def test_action_block_triggers_tasker_alert(self, mock_render, mock_push):
         tts._prepare_for_speech('Hi <!--ACTION::{"action":"test"}-->')
         mock_render.assert_called_once()
         assert "BUG" in mock_render.call_args[0][0]

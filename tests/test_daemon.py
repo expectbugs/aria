@@ -212,40 +212,77 @@ class TestNudgeEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestSmsWebhook:
+    def _telnyx_payload(self, from_number="+15551234567", text="Hello",
+                        media=None, event_type="message.received",
+                        message_id="msg_abc123"):
+        """Build a Telnyx-format webhook JSON payload."""
+        import json
+        return json.dumps({
+            "data": {
+                "event_type": event_type,
+                "payload": {
+                    "id": message_id,
+                    "text": text,
+                    "from": {"phone_number": from_number},
+                    "to": [{"phone_number": "+12624751990"}],
+                    "media": media or [],
+                }
+            }
+        })
+
     @patch("daemon.sms.validate_request")
     def test_stop_keyword(self, mock_validate, client):
         mock_validate.return_value = True
-        resp = client.post("/sms", data={
-            "From": "+15551234567", "Body": "STOP", "NumMedia": "0",
-        }, headers={"X-Twilio-Signature": "test"})
+        payload = self._telnyx_payload(text="STOP")
+        resp = client.post("/sms", content=payload,
+                           headers={"content-type": "application/json",
+                                    "webhook-id": "wh_1", "webhook-timestamp": "123",
+                                    "webhook-signature": "v1,test"})
         assert resp.status_code == 200
-        assert "<Response></Response>" in resp.text
 
+    @patch("daemon.sms.send_sms")
     @patch("daemon.sms.validate_request")
-    def test_help_keyword(self, mock_validate, client):
+    def test_help_keyword(self, mock_validate, mock_send, client):
         mock_validate.return_value = True
-        resp = client.post("/sms", data={
-            "From": "+15551234567", "Body": "HELP", "NumMedia": "0",
-        }, headers={"X-Twilio-Signature": "test"})
+        payload = self._telnyx_payload(text="HELP")
+        resp = client.post("/sms", content=payload,
+                           headers={"content-type": "application/json",
+                                    "webhook-id": "wh_1", "webhook-timestamp": "123",
+                                    "webhook-signature": "v1,test"})
         assert resp.status_code == 200
-        assert "ARIA" in resp.text
+        mock_send.assert_called_once()
+        assert "ARIA" in mock_send.call_args[0][1]
 
     @patch("daemon.sms.validate_request")
     def test_invalid_signature(self, mock_validate, client):
         mock_validate.return_value = False
-        resp = client.post("/sms", data={
-            "From": "+15551234567", "Body": "Hello", "NumMedia": "0",
-        }, headers={"X-Twilio-Signature": "bad"})
+        payload = self._telnyx_payload(text="Hello")
+        resp = client.post("/sms", content=payload,
+                           headers={"content-type": "application/json",
+                                    "webhook-id": "wh_1", "webhook-timestamp": "123",
+                                    "webhook-signature": "v1,bad"})
         assert resp.status_code == 403
 
     @patch("daemon.sms.validate_request")
     def test_unknown_sender_ignored(self, mock_validate, client):
         mock_validate.return_value = True
-        resp = client.post("/sms", data={
-            "From": "+19999999999", "Body": "Hello", "NumMedia": "0",
-        }, headers={"X-Twilio-Signature": "test"})
+        payload = self._telnyx_payload(from_number="+19999999999", text="Hello")
+        resp = client.post("/sms", content=payload,
+                           headers={"content-type": "application/json",
+                                    "webhook-id": "wh_1", "webhook-timestamp": "123",
+                                    "webhook-signature": "v1,test"})
         assert resp.status_code == 200
-        assert "<Response></Response>" in resp.text
+
+    @patch("daemon.sms.validate_request")
+    def test_delivery_receipt_ignored(self, mock_validate, client):
+        """Delivery receipts (non message.received) should return 200 without processing."""
+        mock_validate.return_value = True
+        payload = self._telnyx_payload(event_type="message.sent")
+        resp = client.post("/sms", content=payload,
+                           headers={"content-type": "application/json",
+                                    "webhook-id": "wh_1", "webhook-timestamp": "123",
+                                    "webhook-signature": "v1,test"})
+        assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------

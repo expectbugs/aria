@@ -285,7 +285,8 @@ class TestNutritionValidation:
             '"meal_type": "lunch", "source": "estimate", '
             '"nutrients": {"calories": 250, "protein_g": 40, "total_fat_g": 5, '
             '"saturated_fat_g": 1, "sodium_mg": 300, "total_carb_g": 0, '
-            '"dietary_fiber_g": 0, "total_sugars_g": 0}}-->'
+            '"dietary_fiber_g": 0, "total_sugars_g": 0, '
+            '"choline_mg": 85, "magnesium_mg": 30}}-->'
         )
         result = actions.process_actions_sync(response)
         assert "Nutrition check" not in result
@@ -387,6 +388,54 @@ class TestNutritionValidation:
         )
         result = actions.process_actions_sync(response)
         assert "Choline missing" not in result
+
+    @patch("actions.nutrition_store")
+    def test_warns_chicken_missing_choline(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Factor Queso Chicken", '
+            '"nutrients": {"calories": 550, "protein_g": 40}}-->'
+        )
+        result = actions.process_actions_sync(response)
+        assert "Choline missing" in result
+        assert "chicken" in result.lower() or "85mg" in result
+
+    @patch("actions.nutrition_store")
+    def test_no_chicken_choline_warning_when_present(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Grilled chicken breast", '
+            '"nutrients": {"calories": 280, "choline_mg": 85}}-->'
+        )
+        result = actions.process_actions_sync(response)
+        assert "Choline missing" not in result or "chicken" not in result.lower()
+
+    @patch("actions.nutrition_store")
+    def test_no_chicken_warning_for_chickpea(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Chickpea curry", '
+            '"nutrients": {"calories": 300}}-->'
+        )
+        result = actions.process_actions_sync(response)
+        choline_warnings = [w for w in (result.warnings if hasattr(result, 'warnings') else [])
+                            if "Choline" in w and "chicken" in w.lower()]
+        assert len(choline_warnings) == 0
+
+    @patch("actions.nutrition_store")
+    def test_warns_meat_missing_magnesium(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Pork ragu with rice", '
+            '"nutrients": {"calories": 440, "protein_g": 25}}-->'
+        )
+        result = actions.process_actions_sync(response)
+        assert "Magnesium missing" in result
+
+    @patch("actions.nutrition_store")
+    def test_no_magnesium_warning_when_present(self, mock_ns):
+        response = (
+            'Logged! <!--ACTION::{"action": "log_nutrition", "food_name": "Chicken and rice bowl", '
+            '"nutrients": {"calories": 500, "magnesium_mg": 60}}-->'
+        )
+        result = actions.process_actions_sync(response)
+        assert "Magnesium missing" not in result
 
     @patch("actions.nutrition_store")
     def test_warns_label_photo_incomplete(self, mock_ns):

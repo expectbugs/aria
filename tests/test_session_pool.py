@@ -192,6 +192,41 @@ class TestSessionQuery:
         assert "sunny" in content
 
     @pytest.mark.asyncio
+    @patch("session_pool.get_recent_turns", return_value=[])
+    async def test_system_correction_prefix(self, _):
+        """System corrections must NOT use 'User says:' prefix."""
+        s = session_pool._Session("deep", "max", 150)
+        mock_proc = make_mock_process()
+
+        with patch("session_pool.asyncio.create_subprocess_exec",
+                   new_callable=AsyncMock, return_value=mock_proc):
+            mock_proc.stdout.push_line({"type": "result", "result": "ok"})
+            await s.query("correction text", system_correction=True)
+
+        msgs = mock_proc.stdin.get_messages()
+        content = msgs[-1]["message"]["content"]
+        assert "User says:" not in content
+        assert "[SYSTEM CORRECTION" in content
+        assert "correction text" in content
+
+    @pytest.mark.asyncio
+    @patch("session_pool.get_recent_turns", return_value=[])
+    async def test_normal_query_uses_user_prefix(self, _):
+        """Normal queries must use 'User says:' prefix."""
+        s = session_pool._Session("deep", "max", 150)
+        mock_proc = make_mock_process()
+
+        with patch("session_pool.asyncio.create_subprocess_exec",
+                   new_callable=AsyncMock, return_value=mock_proc):
+            mock_proc.stdout.push_line({"type": "result", "result": "ok"})
+            await s.query("hello")
+
+        msgs = mock_proc.stdin.get_messages()
+        content = msgs[-1]["message"]["content"]
+        assert "User says: hello" in content
+        assert "[SYSTEM CORRECTION" not in content
+
+    @pytest.mark.asyncio
     @patch("session_pool.get_recent_turns", return_value=[
         {"role": "user", "content": "prev question"},
         {"role": "assistant", "content": "prev answer"},

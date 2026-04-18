@@ -1,6 +1,6 @@
-"""Tests for sms.py — Twilio SMS/MMS integration.
+"""Tests for sms.py — Telnyx SMS/MMS integration.
 
-SAFETY: All Twilio client operations are mocked. No real messages sent.
+SAFETY: All Telnyx client operations are mocked. No real messages sent.
 """
 
 from pathlib import Path
@@ -9,12 +9,12 @@ from unittest.mock import patch, MagicMock
 import sms
 
 
-def _mock_twilio():
-    """Create a mock Twilio client."""
+def _mock_telnyx():
+    """Create a mock Telnyx client with messages.send() returning a response."""
     mock_client = MagicMock()
-    mock_message = MagicMock()
-    mock_message.sid = "SM_test_sid_12345"
-    mock_client.messages.create.return_value = mock_message
+    mock_response = MagicMock()
+    mock_response.data.id = "msg_test_id_12345"
+    mock_client.messages.send.return_value = mock_response
     return mock_client
 
 
@@ -25,15 +25,16 @@ class TestSendSms:
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        mock_client = _mock_twilio()
+        mock_client = _mock_telnyx()
         sms._client = mock_client
 
-        sid = sms.send_sms("+15551234567", "Test message")
-        assert sid == "SM_test_sid_12345"
-        mock_client.messages.create.assert_called_once()
-        kwargs = mock_client.messages.create.call_args[1]
+        msg_id = sms.send_sms("+15551234567", "Test message")
+        assert msg_id == "msg_test_id_12345"
+        mock_client.messages.send.assert_called_once()
+        kwargs = mock_client.messages.send.call_args[1]
         assert kwargs["to"] == "+15551234567"
-        assert kwargs["body"] == "Test message"
+        assert kwargs["text"] == "Test message"
+        assert kwargs["from_"] == sms.config.TELNYX_PHONE_NUMBER
 
         sms._client = None
 
@@ -43,12 +44,12 @@ class TestSendSms:
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        mock_client = _mock_twilio()
+        mock_client = _mock_telnyx()
         sms._client = mock_client
 
-        sid = sms.send_sms("+15551234567", "Photo", media_url="https://example.com/img.jpg")
-        kwargs = mock_client.messages.create.call_args[1]
-        assert kwargs["media_url"] == ["https://example.com/img.jpg"]
+        msg_id = sms.send_sms("+15551234567", "Photo", media_url="https://example.com/img.jpg")
+        kwargs = mock_client.messages.send.call_args[1]
+        assert kwargs["media_urls"] == ["https://example.com/img.jpg"]
 
         sms._client = None
 
@@ -58,7 +59,7 @@ class TestSendSms:
         mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
 
-        mock_client = _mock_twilio()
+        mock_client = _mock_telnyx()
         sms._client = mock_client
 
         sms.send_sms("+15551234567", "Test")
@@ -71,12 +72,14 @@ class TestSendSms:
 class TestSendToOwner:
     @patch("sms.send_sms")
     def test_sends_to_owner_number(self, mock_send):
-        mock_send.return_value = "SM_123"
-        sid = sms.send_to_owner("Hello")
+        mock_send.return_value = "msg_123"
+        msg_id = sms.send_to_owner("Hello")
         mock_send.assert_called_once_with(sms.config.OWNER_PHONE_NUMBER, "Hello", None)
 
 
 class TestStageMedia:
+    @patch.object(sms.config, "TELNYX_WEBHOOK_URL",
+                  "https://example.tail.ts.net/webhook/sms", create=True)
     def test_stages_file(self, tmp_path):
         test_file = tmp_path / "test_image.png"
         test_file.write_bytes(b"fake png data")
@@ -90,6 +93,7 @@ class TestStageMedia:
             url = sms.stage_media(str(test_file))
             assert "mms_media" in url
             assert "test_image.png" in url
+            assert url.startswith("https://example.tail.ts.net/webhook/mms_media/")
             # File should be copied to outbox
             staged = list(sms.MMS_OUTBOX.iterdir())
             assert len(staged) == 1
@@ -107,9 +111,9 @@ class TestSendMms:
     @patch("sms.stage_media")
     def test_stages_and_sends(self, mock_stage, mock_send):
         mock_stage.return_value = "https://example.com/mms_media/img.png"
-        mock_send.return_value = "SM_456"
+        mock_send.return_value = "msg_456"
 
-        sid = sms.send_mms("+15551234567", "Photo", "/path/to/image.png")
+        msg_id = sms.send_mms("+15551234567", "Photo", "/path/to/image.png")
         mock_stage.assert_called_once_with("/path/to/image.png")
         mock_send.assert_called_once_with(
             "+15551234567", "Photo",
@@ -188,20 +192,20 @@ class TestSplitSms:
 
 
 class TestSendLongSms:
-    @patch("sms.send_sms", return_value="SM_sid")
+    @patch("sms.send_sms", return_value="msg_sid")
     def test_short_message_single_send(self, mock_send):
         sids = sms.send_long_sms("+15551234567", "Short message")
-        assert sids == ["SM_sid"]
+        assert sids == ["msg_sid"]
         mock_send.assert_called_once()
 
-    @patch("sms.send_sms", return_value="SM_sid")
+    @patch("sms.send_sms", return_value="msg_sid")
     def test_long_message_multiple_sends(self, mock_send):
         body = "First paragraph.\n\n" + "x" * 1600
         sids = sms.send_long_sms("+15551234567", body)
         assert len(sids) > 1
         assert mock_send.call_count > 1
 
-    @patch("sms.send_sms", return_value="SM_sid")
+    @patch("sms.send_sms", return_value="msg_sid")
     def test_media_url_only_on_first(self, mock_send):
         body = "A" * 800 + "\n\n" + "B" * 800
         sms.send_long_sms("+15551234567", body, media_url="https://example.com/img.jpg")
@@ -212,7 +216,7 @@ class TestSendLongSms:
 
 
 class TestSendLongToOwner:
-    @patch("sms.send_long_sms", return_value=["SM_sid"])
+    @patch("sms.send_long_sms", return_value=["msg_sid"])
     def test_delegates_to_send_long_sms(self, mock_send):
         sms.send_long_to_owner("Hello")
         mock_send.assert_called_once()
@@ -222,24 +226,74 @@ class TestSendLongToOwner:
 
 
 class TestValidateRequest:
-    @patch("sms.RequestValidator")
-    def test_valid_signature(self, mock_validator_cls):
-        mock_validator = MagicMock()
-        mock_validator.validate.return_value = True
-        mock_validator_cls.return_value = mock_validator
+    def test_valid_signature(self):
+        """Generate a real signature with a real keypair, verify it validates."""
+        import base64, time
+        from nacl.signing import SigningKey
 
-        result = sms.validate_request(
-            "https://example.com/sms", {"Body": "test"}, "valid_sig"
-        )
+        signing_key = SigningKey.generate()
+        public_key_b64 = base64.b64encode(bytes(signing_key.verify_key)).decode()
+        payload = '{"data": {}}'
+        timestamp = str(int(time.time()))
+        signed_payload = f"{timestamp}|{payload}".encode()
+        signature_b64 = base64.b64encode(signing_key.sign(signed_payload).signature).decode()
+
+        with patch.object(sms.config, "TELNYX_PUBLIC_KEY", public_key_b64, create=True):
+            result = sms.validate_request(
+                payload,
+                {"webhook-id": "msg_123", "webhook-timestamp": timestamp,
+                 "webhook-signature": signature_b64}
+            )
         assert result is True
 
-    @patch("sms.RequestValidator")
-    def test_invalid_signature(self, mock_validator_cls):
-        mock_validator = MagicMock()
-        mock_validator.validate.return_value = False
-        mock_validator_cls.return_value = mock_validator
+    def test_invalid_signature(self):
+        """Wrong signature should fail verification."""
+        import base64, time
+        from nacl.signing import SigningKey
 
+        signing_key = SigningKey.generate()
+        public_key_b64 = base64.b64encode(bytes(signing_key.verify_key)).decode()
+        timestamp = str(int(time.time()))
+
+        with patch.object(sms.config, "TELNYX_PUBLIC_KEY", public_key_b64, create=True):
+            result = sms.validate_request(
+                '{"data": {}}',
+                {"webhook-id": "msg_123", "webhook-timestamp": timestamp,
+                 "webhook-signature": base64.b64encode(b"\x00" * 64).decode()}
+            )
+        assert result is False
+
+    def test_stale_timestamp_rejected(self):
+        """Timestamps older than 5 minutes must be rejected (replay protection)."""
         result = sms.validate_request(
-            "https://example.com/sms", {"Body": "test"}, "bad_sig"
+            '{"data": {}}',
+            {"webhook-id": "msg_123", "webhook-timestamp": "123456",
+             "webhook-signature": "abc"}
         )
         assert result is False
+
+
+class TestSendImageMms:
+    @patch("sms.send_sms")
+    @patch("sms.stage_media")
+    def test_stages_and_sends(self, mock_stage, mock_send):
+        mock_stage.return_value = "https://example.com/mms_media/img.png"
+        mock_send.return_value = "msg_789"
+
+        msg_id = sms.send_image_mms("+15551234567", "/path/to/image.png")
+        mock_stage.assert_called_once_with("/path/to/image.png")
+        mock_send.assert_called_once_with("+15551234567", "", media_url="https://example.com/mms_media/img.png")
+
+    @patch("sms.send_sms")
+    @patch("sms.stage_media")
+    def test_with_body(self, mock_stage, mock_send):
+        mock_stage.return_value = "https://example.com/mms_media/img.png"
+        mock_send.return_value = "msg_789"
+
+        sms.send_image_mms("+15551234567", "/path/to/image.png", body="Alert!")
+        mock_send.assert_called_once_with("+15551234567", "Alert!", media_url="https://example.com/mms_media/img.png")
+
+    def test_file_not_found(self):
+        import pytest
+        with pytest.raises(FileNotFoundError):
+            sms.send_image_mms("+15551234567", "/nonexistent/image.png")

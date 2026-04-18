@@ -107,7 +107,8 @@ class TestSyncDeliverSms:
 
 
 class TestSyncDeliverImage:
-    def test_image_renders_and_pushes(self, _mock_sms):
+    def test_image_renders_and_pushes_via_tasker(self, _mock_sms):
+        """tick.py image deliveries are automated triggers → Tasker push_image (free)."""
         with patch("sms._render_sms_image", return_value="/tmp/test.png") as mock_render, \
              patch("push_image.push_image", return_value=True) as mock_push, \
              patch("os.unlink") as mock_unlink:

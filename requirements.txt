@@ -69,6 +69,7 @@ protobuf==7.34.0
 psycopg==3.3.3
 psycopg-binary==3.3.3
 psycopg-pool==3.3.0
+PyNaCl==1.6.2
 pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5
@@ -104,7 +105,8 @@ termcolor==3.3.0
 tinycss2==1.5.1
 tokenizers==0.22.2
 tqdm==4.67.3
-twilio==9.10.3
+telnyx==4.98.0
+standardwebhooks==1.0.1
 typer==0.24.1
 typing-inspection==0.4.2
 typing_extensions==4.15.0

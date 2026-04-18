@@ -859,16 +859,15 @@ class TestConfigEdgeCases:
         mock_redis.format_task_status.return_value = ""
         # sms.send_to_owner uses config.OWNER_PHONE_NUMBER directly
         # Just verify the SMS module handles the call without crashing
-        with patch("sms.config.SMS_REDIRECT_TO_IMAGE", False, create=True), \
-             patch("sms.get_client") as mock_client:
-            mock_msg = MagicMock()
-            mock_msg.sid = "SM_test"
-            mock_client.return_value.messages.create.return_value = mock_msg
+        with patch("sms.get_client") as mock_client:
+            mock_response = MagicMock()
+            mock_response.data.id = "msg_test"
+            mock_client.return_value.messages.send.return_value = mock_response
             # Test with various formats
             for num in ["+12624751990", "12624751990", "+1 (262) 475-1990"]:
                 with patch("sms.config.OWNER_PHONE_NUMBER", num):
-                    sid = sms.send_to_owner("Test message")
-                    assert sid == "SM_test"
+                    msg_id = sms.send_to_owner("Test message")
+                    assert msg_id == "msg_test"
 
 
 # ===========================================================================

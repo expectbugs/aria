@@ -416,12 +416,20 @@ async def execute_delivery(
             log.error("[DELIVERY] SMS delivery failed: %s", e)
 
     elif method == "image":
+        # Automated triggers push free via Tasker; active conversation uses MMS.
+        automated = source in ("timer", "nudge", "monitor_finding", "task_completion")
         try:
             from sms import _render_sms_image
-            import push_image as _pi
             img_path = _render_sms_image(response_text, header="ARIA")
-            _pi.push_image(img_path, caption="ARIA")
-            os.unlink(img_path)
+            try:
+                if automated:
+                    import push_image
+                    push_image.push_image(img_path, caption="ARIA")
+                else:
+                    from sms import send_image_mms
+                    send_image_mms(config.OWNER_PHONE_NUMBER, img_path)
+            finally:
+                os.unlink(img_path)
         except Exception as e:
             log.error("[DELIVERY] Image delivery failed: %s", e)
 

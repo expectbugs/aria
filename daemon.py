@@ -282,8 +282,14 @@ async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
                               log_verification, validate_tool_use)
 
     # --- Tool use validation ---
-    tool_ok, tool_reason = validate_tool_use(
-        result.clean_response, tool_calls or [])
+    # Skip when ARIA already executed actions — the action pipeline
+    # (parsing, validation, DB writes) IS verification. Retrying would
+    # destroy the executed actions and cascade into false claim violations.
+    if result.actions_found and not result.failures:
+        tool_ok, tool_reason = True, "actions_executed"
+    else:
+        tool_ok, tool_reason = validate_tool_use(
+            result.clean_response, tool_calls or [])
     if not tool_ok:
         log.warning("[TOOL_VERIFY] Factual response without tool use: %s",
                     text[:100])
@@ -294,7 +300,8 @@ async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
             "Use query.py or Bash to look up the actual data, then regenerate "
             "your response. Do not apologize or reference this correction."
         )
-        retry_resp = await pool.query_deep(retry_prompt, context)
+        retry_resp = await pool.query_deep(retry_prompt, context,
+                                              system_correction=True)
         result = await process_actions(
             retry_resp.text, metadata=result.metadata, log_fn=log_fn)
         # Update tool_calls from the retry
@@ -315,7 +322,8 @@ async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
     pool = get_session_pool()
     for attempt in range(1, 3):
         correction = verification.correction_prompt
-        retry_resp = await pool.query_deep(correction, "")
+        retry_resp = await pool.query_deep(correction, "",
+                                              system_correction=True)
         result = await process_actions(
             retry_resp.text, metadata=result.metadata, log_fn=log_fn)
         verification = verify_response(result.clean_response, result, context)
@@ -1503,9 +1511,7 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
             try:
                 import httpx
                 async with httpx.AsyncClient() as client:
-                    resp = await client.get(media_url, follow_redirects=True,
-                                            auth=(config.TWILIO_ACCOUNT_SID,
-                                                  config.TWILIO_AUTH_TOKEN))
+                    resp = await client.get(media_url, follow_redirects=True)
                     if resp.status_code == 200:
                         # Extract filename from URL or use a default
                         filename = media_url.split("/")[-1] or "attachment"
@@ -1579,7 +1585,7 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
                     """INSERT INTO sms_log
                        (from_number, to_number, inbound, media, response, duration_s)
                        VALUES (%s, %s, %s, %s, %s, %s)""",
-                    (from_number, config.TWILIO_PHONE_NUMBER, body,
+                    (from_number, config.TELNYX_PHONE_NUMBER, body,
                      media_list, response, round(duration, 2)),
                 )
         except Exception as e:
@@ -1630,82 +1636,116 @@ async def nudge(req: NudgeRequest, request: Request):
 
 @app.post("/sms")
 async def webhook_sms(request: Request):
-    """Twilio SMS/MMS webhook — receives incoming messages and responds via SMS."""
-    form = await request.form()
-    params = dict(form)
+    """Telnyx SMS/MMS webhook — receives incoming messages and responds via SMS.
 
-    # Validate the request is from Twilio
-    # Use the configured public webhook URL (not request.url which is the local proxy address)
-    signature = request.headers.get("X-Twilio-Signature", "")
-    url = config.TWILIO_WEBHOOK_URL
-    if not sms.validate_request(url, params, signature):
-        log.warning("Invalid Twilio signature on SMS webhook")
+    Telnyx sends JSON POST with Standard Webhooks signature verification.
+    """
+    raw_body = await request.body()
+    payload = raw_body.decode("utf-8")
+
+    # Validate the request is from Telnyx (Standard Webhooks HMAC-SHA256)
+    headers = dict(request.headers)
+    if not sms.validate_request(payload, headers):
+        log.warning("Invalid Telnyx webhook signature")
         raise HTTPException(status_code=403, detail="Invalid signature")
 
-    from_number = params.get("From", "")
-    body = params.get("Body", "").strip()
-    num_media = int(params.get("NumMedia", "0"))
+    # Parse the JSON payload
+    data = json.loads(payload)
+    event = data.get("data", {})
+    event_type = event.get("event_type", "")
+
+    # Handle outbound delivery status events (message.sent, message.finalized)
+    if event_type in ("message.sent", "message.finalized"):
+        try:
+            msg = event.get("payload", {})
+            msg_id = msg.get("id", "")
+            to_list = msg.get("to") or []
+            status = to_list[0].get("status") if to_list else None
+            errors = msg.get("errors") or []
+            errors_str = json.dumps(errors) if errors else None
+            is_final = (event_type == "message.finalized")
+            with db.get_conn() as conn:
+                conn.execute(
+                    """UPDATE sms_outbound
+                       SET status = %s, errors = %s,
+                           finalized_at = CASE WHEN %s THEN NOW() ELSE finalized_at END
+                       WHERE sid = %s""",
+                    (status, errors_str, is_final, msg_id),
+                )
+            log.info("MMS/SMS status update: id=%s event=%s status=%s errors=%s",
+                     msg_id, event_type, status, errors_str or "none")
+        except Exception as e:
+            log.warning("Failed to update outbound status: %s", e)
+        return Response(status_code=200)
+
+    # Only process inbound messages
+    if event_type != "message.received":
+        return Response(status_code=200)
+
+    msg = event.get("payload", {})
+    from_obj = msg.get("from", {})
+    from_number = from_obj.get("phone_number", "")
+    body = (msg.get("text") or "").strip()
+    media = msg.get("media") or []
+    message_id = msg.get("id", "")
 
     # Collect media URLs and types
-    media_urls = []
-    for i in range(num_media):
-        media_url = params.get(f"MediaUrl{i}", "")
-        content_type = params.get(f"MediaContentType{i}", "")
-        if media_url:
-            media_urls.append((media_url, content_type))
+    media_urls = [(m.get("url", ""), m.get("content_type", "")) for m in media if m.get("url")]
 
     # Handle STOP/HELP keywords (required by A2P compliance)
     if body.upper() == "STOP":
-        return Response(content="<Response></Response>", media_type="application/xml")
+        return Response(status_code=200)
     if body.upper() == "HELP":
         help_text = ("ARIA — personal AI assistant. "
                      "Text any message to interact. "
                      "Reply STOP to unsubscribe.")
-        return Response(
-            content=f'<Response><Message>{help_text}</Message></Response>',
-            media_type="application/xml",
-        )
+        try:
+            sms.send_sms(from_number, help_text)
+        except Exception:
+            pass
+        return Response(status_code=200)
 
     # Only process messages from the owner (STOP/HELP remain open for A2P compliance)
     if from_number != config.OWNER_PHONE_NUMBER:
         log.warning("SMS from unknown sender %s ignored", from_number)
-        return Response(content="<Response></Response>", media_type="application/xml")
+        return Response(status_code=200)
 
     if not body and not media_urls:
-        return Response(content="<Response></Response>", media_type="application/xml")
+        return Response(status_code=200)
 
-    # Webhook idempotency: prevent duplicate processing on Twilio retries
-    message_sid = params.get("MessageSid", "")
-    if message_sid:
+    # Webhook idempotency: prevent duplicate processing on Telnyx retries
+    if message_id:
         try:
             with db.get_conn() as conn:
                 existing = conn.execute(
                     "SELECT 1 FROM processed_webhooks WHERE message_sid = %s",
-                    (message_sid,),
+                    (message_id,),
                 ).fetchone()
                 if existing:
-                    log.info("Duplicate webhook ignored (MessageSid=%s)", message_sid)
-                    return Response(content="<Response></Response>", media_type="application/xml")
+                    log.info("Duplicate webhook ignored (id=%s)", message_id)
+                    return Response(status_code=200)
                 conn.execute(
                     "INSERT INTO processed_webhooks (message_sid) VALUES (%s)",
-                    (message_sid,),
+                    (message_id,),
                 )
         except Exception as e:
             log.warning("Webhook idempotency check failed: %s (proceeding anyway)", e)
 
-    # Process asynchronously — return empty TwiML immediately,
+    # Process asynchronously — return 200 immediately,
     # then send the response as a new outbound message
     asyncio.create_task(_process_sms(from_number, body, media_urls))
 
-    return Response(content="<Response></Response>", media_type="application/xml")
+    return Response(status_code=200)
 
 
 @app.get("/mms_media/{filename}")
 async def serve_mms_media(filename: str):
-    """Serve staged MMS media files for Twilio to fetch.
+    """Serve staged MMS media files for Telnyx + carrier to fetch.
 
-    Publicly accessible via Tailscale Funnel so Twilio can download
-    the image for MMS delivery. Files auto-clean after serving.
+    Publicly accessible via Tailscale Funnel. Files are NOT deleted after
+    first fetch — Telnyx caches media for 1 hour and carriers may re-fetch
+    during the MMS delivery chain. Cleanup runs via tick.py every minute
+    and deletes files older than 24 hours.
     """
     safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '', filename)
     path = sms.MMS_OUTBOX / safe_name
@@ -1714,21 +1754,6 @@ async def serve_mms_media(filename: str):
 
     mime_type, _ = mimetypes.guess_type(str(path))
     content = path.read_bytes()
-
-    # Archive to outbox_archive before cleaning staging copy
-    async def _archive_and_cleanup():
-        await asyncio.sleep(60)
-        try:
-            archive_dir = config.DATA_DIR / "outbox_archive"
-            archive_dir.mkdir(parents=True, exist_ok=True)
-            archive_path = archive_dir / safe_name
-            if not archive_path.exists():
-                import shutil
-                shutil.copy2(path, archive_path)
-            path.unlink(missing_ok=True)
-        except Exception:
-            pass
-    asyncio.create_task(_archive_and_cleanup())
 
     return Response(content=content, media_type=mime_type or "application/octet-stream")
 

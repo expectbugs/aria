@@ -11,6 +11,7 @@ Cron entry:
 
 import logging
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -184,13 +185,16 @@ def _sync_deliver(text: str, method: str,
             return False, "sms"
 
     elif method == "image":
+        # Tick deliveries are all automated triggers — push via Tasker (free).
         try:
             from sms import _render_sms_image
             import push_image
             import os
             img_path = _render_sms_image(text, header="ARIA")
-            push_image.push_image(img_path, caption="ARIA")
-            os.unlink(img_path)
+            try:
+                push_image.push_image(img_path, caption="ARIA")
+            finally:
+                os.unlink(img_path)
             return True, "image"
         except Exception as e:
             log.error("Image delivery failed: %s", e)
@@ -1358,6 +1362,41 @@ def cleanup_processed_webhooks():
         log.error("Webhook cleanup failed: %s", e)
 
 
+def cleanup_mms_outbox():
+    """Archive and delete MMS outbox files older than 24 hours.
+
+    Files must stay accessible long enough for Telnyx + carrier re-fetches.
+    Telnyx caches media for 1 hour; carriers may re-fetch during delivery.
+    24h retention is a safe margin.
+    """
+    import shutil
+    from pathlib import Path
+
+    try:
+        outbox = config.DATA_DIR / "mms_outbox"
+        archive_dir = config.DATA_DIR / "outbox_archive"
+        if not outbox.exists():
+            return
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        cutoff = time.time() - (24 * 3600)
+        removed = 0
+        for f in outbox.iterdir():
+            try:
+                if f.is_file() and f.stat().st_mtime < cutoff:
+                    archive_path = archive_dir / f.name
+                    if not archive_path.exists():
+                        shutil.copy2(f, archive_path)
+                    f.unlink()
+                    removed += 1
+            except OSError:
+                continue
+        if removed:
+            log.info("MMS outbox cleanup: archived %d files older than 24h", removed)
+    except Exception as e:
+        log.error("MMS outbox cleanup failed: %s", e)
+
+
 # --- Main ---
 
 def main():
@@ -1395,6 +1434,7 @@ def main():
         ("safety_net", process_safety_net),
         ("deferred_deliveries", process_deferred_deliveries),
         ("webhook_cleanup", cleanup_processed_webhooks),
+        ("mms_outbox_cleanup", cleanup_mms_outbox),
     ]:
         try:
             job_fn()

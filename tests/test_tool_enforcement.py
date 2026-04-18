@@ -129,6 +129,28 @@ class TestHasFactualClaims:
     def test_banter_no_claims(self):
         assert self.fn("Oh, you want ME to do the math? Bold.") is False
 
+    # --- Temporal claims (Lie #1) ---
+
+    def test_temporal_last_hours(self):
+        assert self.fn("You've been awake for the last 3 hours.") is True
+
+    def test_temporal_past_minutes(self):
+        assert self.fn("That was about 30 minutes ago.") is True
+
+    def test_temporal_hours_ago(self):
+        assert self.fn("You ate 2 hours ago.") is True
+
+    def test_temporal_last_hour_singular(self):
+        assert self.fn("In the last 1 hour you had two coffees.") is True
+
+    def test_temporal_past_days(self):
+        assert self.fn("Over the past 3 days your sleep averaged 5.8 hours.") is True
+
+    def test_temporal_no_false_positive(self):
+        """Vague temporal references without numbers shouldn't trigger."""
+        assert self.fn("You had coffee earlier today.") is False
+        assert self.fn("That was a while ago.") is False
+
 
 # --- validate_tool_use ---
 

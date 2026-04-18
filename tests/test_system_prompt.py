@@ -51,9 +51,20 @@ class TestPersonality:
 
     def test_image_gen_humor_instruction(self):
         prompt = _get_primary_prompt()
-        assert "image generation" in prompt.lower()
+        assert "generate images" in prompt.lower()
         assert "dispatch_action" in prompt
-        assert "facial expression" in prompt.lower() or "reaction image" in prompt.lower()
+        assert "reaction image" in prompt.lower()
+        assert "meme energy" in prompt.lower()
+
+    def test_personality_bookend(self):
+        """Personality reinforcement near end of system prompt, before verification."""
+        prompt = _get_primary_prompt()
+        assert "PERSONALITY CHECK" in prompt
+        # Bookend must appear BEFORE VERIFY BEFORE CLAIMING — verification
+        # gets the last word so personality doesn't override safety.
+        verify_pos = prompt.index("VERIFY BEFORE CLAIMING")
+        bookend_pos = prompt.index("PERSONALITY CHECK")
+        assert bookend_pos < verify_pos
 
     def test_no_trailing_questions(self):
         """Should instruct against 'would you like me to...' endings."""
@@ -126,6 +137,17 @@ class TestActionPrompt:
         importlib.reload(system_prompt)
         prompt = system_prompt.build_action_prompt()
         assert "Do not emit ACTION blocks" in prompt
+
+    def test_qwen_image_in_action_prompt(self):
+        """Action ARIA should know about both image gen models."""
+        import importlib
+        import system_prompt
+        importlib.reload(system_prompt)
+        prompt = system_prompt.build_action_prompt()
+        assert "Qwen-Image" in prompt
+        assert "FLUX.2" in prompt
+        assert "generate_optimal_16x9.py" in prompt
+        assert "Default to Qwen-Image" in prompt
 
 
 class TestAmnesiaPrompt:

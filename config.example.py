@@ -105,19 +105,12 @@ MAX_NUDGES_PER_DAY = 15           # unified cap: max deliveries per 24h (nudges 
 MAX_NUDGES_PER_HOUR = 2           # global cap: max deliveries per 1h
 STALE_REMINDER_DAYS = 3           # auto-expire reminders overdue by this many days
 
-# --- Twilio (SMS/MMS/Voice) ---
-TWILIO_ACCOUNT_SID = "your-twilio-account-sid"       # Basic Auth user for REST API
-TWILIO_AUTH_TOKEN = "your-twilio-auth-token"          # Basic Auth password for REST API
-TWILIO_API_SID = "your-twilio-api-sid"                # Revocable API key SID (alt auth user)
-TWILIO_API_KEY = "your-twilio-api-key"                # Revocable API key secret (alt auth password)
-TWILIO_MESSAGING_SID = "your-messaging-service-sid"   # Messaging Service for SMS/MMS
-TWILIO_PHONE_NUMBER = "+1XXXXXXXXXX"                  # ARIA's phone number
-TWILIO_WEBHOOK_URL = "https://host.tail.ts.net/webhook/sms"  # Public funnel URL for signature validation
-OWNER_PHONE_NUMBER = "+1XXXXXXXXXX"                   # Your personal phone number
-
-# --- SMS Redirect (temporary — remove when A2P 10DLC is approved) ---
-SMS_REDIRECT_TO_IMAGE = True   # True = render SMS as image + push to phone (SMS is dead)
-                                # False = normal Twilio SMS delivery
+# --- Telnyx (SMS/MMS) ---
+TELNYX_API_KEY = "KEYyour-telnyx-api-key"                    # API v2 key from Mission Control
+TELNYX_PUBLIC_KEY = "your-webhook-signing-secret"            # Webhook signing secret (whsec_ prefixed or base64)
+TELNYX_PHONE_NUMBER = "+1XXXXXXXXXX"                         # ARIA's Telnyx phone number
+TELNYX_WEBHOOK_URL = "https://host.tail.ts.net/webhook/sms"  # Public Funnel URL for webhook
+OWNER_PHONE_NUMBER = "+1XXXXXXXXXX"                          # Your personal phone number
 
 # --- Fitbit (Web API — Personal app, register at dev.fitbit.com) ---
 FITBIT_CLIENT_ID = "your-client-id"               # OAuth 2.0 Client ID
