@@ -1,9 +1,15 @@
 # ARIA — Project Status
 
 ## Current Version
-v0.9.4 (2026-04-17)
+v0.9.7 (2026-04-18)
 
 ## What's Working
+- **Webhook robustness + GSM-7 SMS normalization** (v0.9.7): `/sms` webhook now returns 200 for all error paths (invalid signature, malformed JSON, unknown events) to prevent Telnyx retry storms. Idempotency uses atomic `INSERT ON CONFLICT` instead of racy SELECT-then-INSERT. HELP handler validates `from_number` before sending. `sms._normalize_for_sms()` substitutes 49 non-GSM-7 characters (em-dash, smart quotes, backticks, bullets, ©/®/™/°, math, arrows, zero-width) with ASCII equivalents before send; `split_sms` auto-picks 1500-char chunks for GSM-7 vs 600 for UCS-2. Prevents the 22-segment 40302 silent-drop bug.
+- **Multi-confirmation** (v0.9.6): single "yes"/"no" now confirms/cancels ALL pending destructive actions for the speaker (not just the first). Cross-user deletes trigger ONE consolidated SMS to the affected owner. `confirm_destructive` accepts `"confirmation_id": "all"` for batch-confirm via ACTION.
+- **Beckaning polish** (v0.9.6): fixed 4 bugs found in audit — Becky's `set_delivery: image` now actually delivers MMS; unknown-owner reminders no longer silently consumed; cross-user write notification symmetric (Adam→Becky works); `query.py --user` removed from Adam-only subcommands (errors instead of silently returning Adam's data).
+- **The Beckaning — multi-user** (v0.9.5): Second authorized user Becky (girlfriend) via SMS. Isolated Claude Code subprocess, separate "Aria B" prompt (max snark, no diet framing, verification intact). `TRUSTED_USERS` registry + `user_key` threading through every layer. Session pool + Action Aria are per-user registries. `reminders`/`events`/`timers` gain `owner` column. Cross-user writes (Becky → Adam's reminders/calendar) consolidate into ONE notification SMS. Adam-exclusive writes (health, nutrition, vehicle, legal, Fitbit, Gmail, ambient) reject Becky. Per-user pending destructive confirmations. Becky's morning brief: Milwaukee weather, her calendar, her news feeds. `query.py --user` flag + new `reminders` subcommand. 25 new tests.
+- **Auto-reminder firing** (v0.9.5): New `process_reminders()` tick job fires time-based reminders for BOTH users. Adam gets image-push, Becky gets SMS. Quiet hours respected. `AUTO_REMINDER_FIRE_ENABLED` config flag.
+- **Nudges + safety net via image-push** (v0.9.5): Unified delivery pipeline renders to image via Tasker push (free), no longer SMS. Same visual format as data-quality alerts.
 - **Email integration polish** (v0.8.7): Classification accuracy 35.5%→28.0% important rate, `check_subject_only` for per-sender overrides, shipping split by urgency, P1-P4 priority scoring, email surfacing tracker, Tier 3 AI upgraded to Sonnet, email body access via query.py, trash_email ACTION, stale finding cleanup, **junk auto-archive** (Tier 1 junk removed from Gmail inbox every tick, batch Gmail API, historical cleanup script)
 - **Context dedup + injection** (v0.8.6): Hash-based dedup for static context (~15KB saved per turn), broader keywords, cross-domain triggers, gap detection
 - **Context scope annotations** (v0.8.5): Scope info on all injected context, completeness claim detection (log-only)

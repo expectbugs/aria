@@ -144,7 +144,11 @@ def _needs_action_aria(brief: str) -> bool:
 
 
 async def _handle_agentic(task_id: str):
-    """Handle an agentic mode task — route to Action ARIA or Amnesia pool."""
+    """Handle an agentic mode task — route to Action ARIA or Amnesia pool.
+
+    Reads user_key from the task payload (default "adam") and routes to
+    that user's Action ARIA. Amnesia pool is shared (stateless).
+    """
     prefix = getattr(config, "REDIS_KEY_PREFIX", "aria:")
     client = redis_client.get_client()
     if not client:
@@ -154,20 +158,22 @@ async def _handle_agentic(task_id: str):
     task_data = client.hgetall(f"{prefix}task:{task_id}")
     brief = task_data.get("task_brief", "")
     context = task_data.get("context", "")
+    user_key = task_data.get("user_key", "adam")
 
     if not brief:
         redis_client.complete_task(task_id, error="No task brief specified")
         return
 
-    # Route: complex tasks → Action ARIA, quick tasks → Amnesia pool
+    # Route: complex tasks → per-user Action ARIA, quick tasks → shared Amnesia pool
     if _needs_action_aria(brief):
-        log.info("Routing task %s to Action ARIA (complex)", task_id)
-        action = get_action_aria()
+        log.info("Routing task %s to Action ARIA[%s] (complex)", task_id, user_key)
+        action = get_action_aria(user_key)
         result = await action.execute(task_id, brief, context)
     else:
-        log.info("Routing task %s to Amnesia pool (quick)", task_id)
+        log.info("Routing task %s to Amnesia pool (quick, user=%s)",
+                 task_id, user_key)
         pool = get_pool()
-        result = await pool.run_agentic(task_id, brief, context)
+        result = await pool.run_agentic(task_id, brief, context, user_key=user_key)
 
     if result.get("error"):
         redis_client.complete_task(task_id, error=result["error"])

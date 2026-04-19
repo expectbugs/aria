@@ -213,24 +213,46 @@ def fire_timer(timer: dict):
     Marks timer complete BEFORE delivery attempt. If delivery fails,
     logs loudly but does not retry (prevents infinite retry loops).
     Handles all delivery methods via _sync_deliver().
+
+    Becky's timers (owner='becky') skip the delivery engine entirely —
+    she has SMS only, no voice/glasses/defer. Always delivered to her phone.
     """
     import delivery_engine as _de
+    owner = timer.get("owner", "adam")
     hint = timer.get("delivery", "sms")
     message = timer.get("message", timer.get("label", "Timer fired"))
     priority = timer.get("priority", "gentle")
-    state = _de.get_user_state()
-    decision = _de.evaluate("timer", priority, "timer", hint, _state=state)
-    _de.log_decision(decision, "timer", "timer", hint, _state=state)
-    delivery = decision.method
 
-    # Skip quiet hours unless urgent
+    # Skip quiet hours unless urgent (applies to both users)
     if is_quiet_hours() and priority != "urgent":
         log.info("Timer %s deferred (quiet hours): %s", timer["id"], timer["label"])
         return False
 
     # C8: Mark complete BEFORE delivery to prevent retry storms
     timer_store.complete_timer(timer["id"])
-    log.info("Timer fired [%s] %s: %s", delivery, timer["id"], timer["label"])
+
+    if owner == "becky":
+        becky_phone = getattr(config, "BECKY_PHONE_NUMBER", None)
+        if not becky_phone:
+            log.error("Timer %s for becky but no phone configured", timer["id"])
+            return False
+        try:
+            sms.send_long_sms(becky_phone, message)
+            log.info("Timer fired [sms/becky] %s: %s", timer["id"], timer["label"])
+            return True
+        except Exception as e:
+            log.error("Timer delivery FAILED for becky %s: %s "
+                      "(already marked complete)", timer["id"], e)
+            return False
+
+    # Adam: full delivery-engine path
+    state = _de.get_user_state()
+    decision = _de.evaluate("timer", priority, "timer", hint, _state=state)
+    _de.log_decision(decision, "timer", "timer", hint, _state=state)
+    delivery = decision.method
+
+    log.info("Timer fired [%s/adam] %s: %s",
+             delivery, timer["id"], timer["label"])
 
     if delivery == "defer":
         _de.queue_deferred(message, "timer", priority, "timer", decision.reason)
@@ -249,6 +271,78 @@ def process_timers():
         fire_timer(timer)
 
 
+def process_reminders():
+    """Auto-fire due reminders by SMSing the owner's phone + marking done.
+
+    New in v0.9.5 — applies to BOTH users. Non-location reminders whose due
+    date has arrived get delivered via image-push (for Adam, same channel as
+    nudges) or SMS (for Becky). Skips quiet hours. Location reminders keep
+    their existing path in check_location_reminders.
+    """
+    if not getattr(config, "AUTO_REMINDER_FIRE_ENABLED", True):
+        return
+    if is_quiet_hours():
+        return
+
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, text, due, owner FROM reminders
+               WHERE done = FALSE AND location IS NULL
+               AND due IS NOT NULL AND due <= CURRENT_DATE"""
+        ).fetchall()
+
+    if not rows:
+        return
+
+    today = datetime.now().date()
+    for row in rows:
+        owner = row.get("owner", "adam")
+
+        # Validate owner BEFORE marking done — otherwise unknown-owner rows
+        # get silently marked done with no delivery (silent data loss).
+        if owner not in ("adam", "becky"):
+            log.warning("Reminder %s has unknown owner %r — skipping "
+                        "(left pending for manual review)", row["id"], owner)
+            continue
+
+        # For Becky: also verify her phone is configured before we mark done.
+        # Otherwise her reminder gets consumed with no hope of delivery.
+        if owner == "becky":
+            becky_phone = getattr(config, "BECKY_PHONE_NUMBER", None)
+            if not becky_phone:
+                log.error("Reminder fired for becky but no phone configured: %s "
+                          "(left pending)", row["id"])
+                continue
+
+        due = row.get("due")
+        due_note = ""
+        if due and due < today:
+            due_note = f" (was due {due.isoformat() if hasattr(due, 'isoformat') else due})"
+        message = f"Reminder: {row['text']}{due_note}"
+
+        # Mark done BEFORE delivery to prevent retry storms on failure
+        # (mirrors the fire_timer/check_location_reminders pattern)
+        if not calendar_store.complete_reminder(row["id"]):
+            log.error("Failed to mark reminder %s done; skipping fire", row["id"])
+            continue
+
+        if owner == "adam":
+            # Same channel as nudges — image push via Tasker, not SMS
+            success, actual = _sync_deliver(message, "image")
+            if success:
+                log.info("Reminder fired (adam, %s): %s", actual, row["id"])
+            else:
+                log.error("Reminder delivery FAILED for adam: %s (reminder marked done)",
+                          row["id"])
+        else:  # owner == "becky"
+            try:
+                sms.send_long_sms(becky_phone, message)
+                log.info("Reminder fired (becky, sms): %s", row["id"])
+            except Exception as e:
+                log.error("Reminder SMS FAILED for becky %s: %s (already marked done)",
+                          row["id"], e)
+
+
 # --- Location-Based Reminders ---
 
 def check_location_reminders():
@@ -265,7 +359,8 @@ def check_location_reminders():
         return
 
     current_location = loc.get("location", "").lower()
-    reminders = calendar_store.get_reminders()
+    # Location reminders are Adam-only — Becky has no location tracking.
+    reminders = calendar_store.get_reminders(owner="adam")
     state = load_state()
     state_changed = False
 
@@ -678,11 +773,10 @@ def run_unified_delivery():
                    all_descriptions, "", "compose_failed")
         return
 
-    # --- Deliver ---
-    try:
-        sms.send_long_to_owner(message)
-    except Exception as e:
-        log.error("Unified delivery failed: %s", e)
+    # --- Deliver (rendered to image + pushed via Tasker — free, not SMS) ---
+    success, actual = _sync_deliver(message, "image")
+    if not success:
+        log.error("Unified delivery failed")
         _log_nudge([t for t, _ in final_nudges],
                    all_descriptions, message, "delivery_failed")
         return
@@ -700,7 +794,7 @@ def run_unified_delivery():
 
     if final_findings:
         finding_ids = [f["id"] for f in final_findings]
-        mark_delivered(finding_ids, "sms")
+        mark_delivered(finding_ids, actual)
 
     state["last_unified_delivery"] = now_str
     save_state(state)
@@ -1296,15 +1390,21 @@ def process_safety_net():
             save_state(state)
             return
 
-        sms.send_long_to_owner(message)
+        success, actual = _sync_deliver(message, "image")
+        if not success:
+            log.error("Safety net delivery failed")
+            _log_nudge(["safety_net"], cat_a_descriptions, message, "delivery_failed")
+            state["last_safety_net"] = now.isoformat()
+            save_state(state)
+            return
 
         _log_nudge(["safety_net"], cat_a_descriptions, message, "sent")
 
         if cat_a_finding_ids:
             from monitors import mark_delivered
-            mark_delivered(cat_a_finding_ids, "sms_safety_net")
+            mark_delivered(cat_a_finding_ids, f"{actual}_safety_net")
 
-        log.info("Safety net delivered: %d items", len(cat_a_descriptions))
+        log.info("Safety net delivered (%s): %d items", actual, len(cat_a_descriptions))
 
     except Exception as e:
         log.error("Safety net delivery failed: %s", e)
@@ -1420,6 +1520,7 @@ def main():
     for job_name, job_fn in [
         ("timers", process_timers),
         ("location_reminders", check_location_reminders),
+        ("auto_reminders", process_reminders),
         ("exercise", process_exercise_tick),
         ("fitbit_poll", process_fitbit_poll),
         ("google_poll", process_google_poll),

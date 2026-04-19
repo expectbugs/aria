@@ -34,6 +34,11 @@ import ambient_store
 import commitment_store
 import person_store
 
+# User scope for subcommands. "adam" is always valid. "becky" is valid for
+# calendar / reminders / conversations; other Adam-exclusive subcommands
+# ignore --user becky (or log a gentle note).
+_USER_CHOICES = ["adam", "becky"]
+
 
 # ---------------------------------------------------------------------------
 # Format functions — output identical to aria_api._handle_tool_call()
@@ -178,29 +183,79 @@ def cmd_legal(args):
 
 
 def cmd_calendar(args):
-    events = calendar_store.get_events(start=args.start, end=args.end)
+    owner = getattr(args, "user", "adam")
+    events = calendar_store.get_events(start=args.start, end=args.end, owner=owner)
     return format_calendar(events, args.start, args.end)
+
+
+def format_reminders(rems: list[dict], user: str) -> str:
+    if not rems:
+        return f"No reminders for {user}."
+    lines = [f"Reminders for {user} ({len(rems)}):"]
+    for r in rems:
+        line = f"  [id={r['id']}] {r['text']}"
+        if r.get("due"):
+            line += f" (due {r['due']})"
+        if r.get("recurring"):
+            line += f" [recurring: {r['recurring']}]"
+        if r.get("location"):
+            line += f" @ {r['location']} ({r.get('location_trigger', 'arrive')})"
+        if r.get("done"):
+            line += " [DONE]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def cmd_reminders(args):
+    owner = getattr(args, "user", "adam")
+    # Default behavior: pending-only (exclude done). --all includes done.
+    include_done = bool(getattr(args, "all", False))
+    rems = calendar_store.get_reminders(include_done=include_done, owner=owner)
+    # Limit for display
+    limit = getattr(args, "limit", None)
+    if limit:
+        rems = rems[:limit]
+    return format_reminders(rems, owner)
 
 
 def cmd_conversations(args):
     days = args.days
     search = args.search or ""
+    user = getattr(args, "user", "adam")
+    becky_phone = getattr(config, "BECKY_PHONE_NUMBER", None)
+
+    # User filter via channel prefix stored in request_log.input:
+    #   becky: only rows where input starts with [sms:+BECKY_PHONE]
+    #   adam:  only rows NOT starting with that prefix (covers voice/file/cli/
+    #          Adam's SMS — all his channels)
+    user_filter_sql = ""
+    user_filter_args: tuple = ()
+    if becky_phone:
+        if user == "becky":
+            user_filter_sql = "AND input LIKE %s"
+            user_filter_args = (f"[sms:{becky_phone}]%",)
+        elif user == "adam":
+            user_filter_sql = "AND input NOT LIKE %s"
+            user_filter_args = (f"[sms:{becky_phone}]%",)
+
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     with db.get_conn() as conn:
         if search:
             rows = conn.execute(
-                """SELECT timestamp, input, response FROM request_log
-                   WHERE timestamp >= %s AND status = 'ok'
-                   AND (input ILIKE %s OR response ILIKE %s)
-                   ORDER BY timestamp DESC LIMIT 50""",
-                (cutoff, f"%{search}%", f"%{search}%"),
+                f"""SELECT timestamp, input, response FROM request_log
+                    WHERE timestamp >= %s AND status = 'ok'
+                    AND (input ILIKE %s OR response ILIKE %s)
+                    {user_filter_sql}
+                    ORDER BY timestamp DESC LIMIT 50""",
+                (cutoff, f"%{search}%", f"%{search}%") + user_filter_args,
             ).fetchall()
         else:
             rows = conn.execute(
-                """SELECT timestamp, input, response FROM request_log
-                   WHERE timestamp >= %s AND status = 'ok'
-                   ORDER BY timestamp DESC LIMIT 30""",
-                (cutoff,),
+                f"""SELECT timestamp, input, response FROM request_log
+                    WHERE timestamp >= %s AND status = 'ok'
+                    {user_filter_sql}
+                    ORDER BY timestamp DESC LIMIT 30""",
+                (cutoff,) + user_filter_args,
             ).fetchall()
     return format_conversations(rows, days, search)
 
@@ -411,35 +466,46 @@ def main(argv=None):
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # health
-    p_health = subparsers.add_parser("health", help="Query health log")
+    # health (Adam-only store — no --user flag; always returns Adam's data)
+    p_health = subparsers.add_parser("health", help="Query health log (Adam-only store)")
     p_health.add_argument("--days", type=int, default=None)
     p_health.add_argument("--category", type=str, default=None)
 
-    # nutrition
-    p_nutr = subparsers.add_parser("nutrition", help="Query nutrition log")
+    # nutrition (Adam-only)
+    p_nutr = subparsers.add_parser("nutrition", help="Query nutrition log (Adam-only store)")
     p_nutr.add_argument("--date", type=str, required=True)
 
-    # vehicle
-    p_veh = subparsers.add_parser("vehicle", help="Query vehicle log")
+    # vehicle (Adam-only)
+    p_veh = subparsers.add_parser("vehicle", help="Query vehicle log (Adam-only store)")
     p_veh.add_argument("--limit", type=int, default=20)
 
-    # legal
-    p_legal = subparsers.add_parser("legal", help="Query legal log")
+    # legal (Adam-only)
+    p_legal = subparsers.add_parser("legal", help="Query legal log (Adam-only store)")
     p_legal.add_argument("--limit", type=int, default=20)
 
-    # calendar
+    # calendar (both users)
     p_cal = subparsers.add_parser("calendar", help="Query calendar events")
+    p_cal.add_argument("--user", choices=_USER_CHOICES, default="adam")
     p_cal.add_argument("--start", type=str, required=True)
     p_cal.add_argument("--end", type=str, required=True)
 
-    # conversations
+    # reminders (both users) — new subcommand in v0.9.5
+    p_rem = subparsers.add_parser("reminders",
+                                   help="Query reminders (default: pending only)")
+    p_rem.add_argument("--user", choices=_USER_CHOICES, default="adam")
+    p_rem.add_argument("--all", action="store_true",
+                       help="Include completed reminders (default excludes them)")
+    p_rem.add_argument("--limit", type=int, default=None,
+                       help="Limit display to N reminders")
+
+    # conversations (both users, via channel-prefix filter)
     p_conv = subparsers.add_parser("conversations", help="Search conversations")
+    p_conv.add_argument("--user", choices=_USER_CHOICES, default="adam")
     p_conv.add_argument("--days", type=int, default=7)
     p_conv.add_argument("--search", type=str, default=None)
 
-    # email
-    p_email = subparsers.add_parser("email", help="Search emails")
+    # email (Adam-only store)
+    p_email = subparsers.add_parser("email", help="Search emails (Adam-only store)")
     p_email.add_argument("--id", dest="email_id", type=str, default=None,
                          help="Get full email by message ID")
     p_email.add_argument("--search", type=str, default=None)
@@ -447,29 +513,29 @@ def main(argv=None):
     p_email.add_argument("--days", type=int, default=7)
     p_email.add_argument("--limit", type=int, default=20)
 
-    # Phase 6 — Ambient audio pipeline
-    p_ambient = subparsers.add_parser("ambient", help="Search ambient transcripts")
+    # Phase 6 — Ambient audio pipeline (Adam-only)
+    p_ambient = subparsers.add_parser("ambient", help="Search ambient transcripts (Adam-only)")
     p_ambient.add_argument("--search", type=str, default=None)
     p_ambient.add_argument("--days", type=int, default=7)
     p_ambient.add_argument("--limit", type=int, default=20)
 
-    p_recall = subparsers.add_parser("recall", help="Semantic recall search")
+    p_recall = subparsers.add_parser("recall", help="Semantic recall search (Adam-only)")
     p_recall.add_argument("query", nargs="*", help="Natural language recall query")
     p_recall.add_argument("--days", type=int, default=30)
     p_recall.add_argument("--limit", type=int, default=5)
 
-    p_commits = subparsers.add_parser("commitments", help="Query commitments/promises")
+    p_commits = subparsers.add_parser("commitments", help="Query commitments/promises (Adam-only)")
     p_commits.add_argument("--status", type=str, default=None,
                            help="Filter by status: open, done, overdue")
     p_commits.add_argument("--person", type=str, default=None)
     p_commits.add_argument("--days", type=int, default=30)
 
-    p_people = subparsers.add_parser("people", help="Query person profiles")
+    p_people = subparsers.add_parser("people", help="Query person profiles (Adam-only)")
     p_people.add_argument("--name", type=str, default=None)
     p_people.add_argument("--limit", type=int, default=20)
 
     p_aconv = subparsers.add_parser("ambient-conversations",
-                                     help="List ambient conversations")
+                                     help="List ambient conversations (Adam-only)")
     p_aconv.add_argument("--days", type=int, default=7)
     p_aconv.add_argument("--limit", type=int, default=20)
 
@@ -481,6 +547,7 @@ def main(argv=None):
         "vehicle": cmd_vehicle,
         "legal": cmd_legal,
         "calendar": cmd_calendar,
+        "reminders": cmd_reminders,
         "conversations": cmd_conversations,
         "email": cmd_email,
         "ambient": cmd_ambient,

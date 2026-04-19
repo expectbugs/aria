@@ -95,11 +95,15 @@ class AmnesiaPool:
                 return i
         return None
 
-    async def run_agentic(self, task_id: str, brief: str, context: str = "") -> dict:
+    async def run_agentic(self, task_id: str, brief: str, context: str = "",
+                          user_key: str = "adam") -> dict:
         """Execute a one-shot agentic task using a pool instance.
 
         Finds an idle instance, sends the task brief, captures the result,
         then kills and replaces the instance.
+
+        user_key is carried for logging only — the amnesia pool is shared
+        (stateless) so no per-user state affects behavior.
 
         Returns: {"result": "...", "error": None} or {"result": None, "error": "..."}
         """
@@ -118,7 +122,8 @@ class AmnesiaPool:
                     return {"result": None, "error": "Failed to spawn amnesia instance"}
 
             self._states[index] = "busy"
-            log.info("Amnesia instance %d handling task %s", index, task_id)
+            log.info("Amnesia instance %d handling task %s[%s]",
+                     index, task_id, user_key)
 
             try:
                 # Build the prompt from the task brief

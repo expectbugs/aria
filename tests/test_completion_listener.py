@@ -228,7 +228,7 @@ class TestActionBlockProcessing:
 
         await completion_listener._on_completion("t1", "completed", "result")
 
-        mock_pa.assert_called_once_with(raw)
+        mock_pa.assert_called_once_with(raw, user_key="adam")
 
     @pytest.mark.asyncio
     @patch("completion_listener.sms")

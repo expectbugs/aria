@@ -97,10 +97,14 @@ class _Session:
     history injection on spawn/recycle.
     """
 
-    def __init__(self, name: str, effort: str, max_requests: int):
+    def __init__(self, name: str, effort: str, max_requests: int,
+                 user_key: str = "adam",
+                 system_prompt: str | None = None):
         self.name = name              # "deep" or "fast"
+        self.user_key = user_key      # "adam" or "becky" — for logging + history filter
         self._effort = effort         # "max" or "auto"
         self._max_requests = max_requests
+        self._system_prompt = system_prompt  # if None, resolved lazily in _spawn
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._request_count = 0
@@ -117,6 +121,14 @@ class _Session:
     def _is_alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
+    def _resolve_system_prompt(self) -> str:
+        """Lazy-resolve the system prompt so subclass changes or user-specific
+        prompts are picked up each spawn (recycle re-reads)."""
+        if self._system_prompt is not None:
+            return self._system_prompt
+        # Default: Adam's prompt. Becky's pool passes system_prompt explicitly.
+        return build_primary_prompt()
+
     async def _spawn(self):
         """Spawn a fresh Claude CLI process."""
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
@@ -131,7 +143,7 @@ class _Session:
             "--verbose",
             "--model", "opus",
             "--dangerously-skip-permissions",
-            "--system-prompt", build_primary_prompt(),
+            "--system-prompt", self._resolve_system_prompt(),
             "--settings", '{"claudeMdExcludes": ["/home/user/aria/CLAUDE.md"]}',
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -144,8 +156,8 @@ class _Session:
         self._context_bytes = 0
         self._dedup_hashes = {}  # fresh session — re-inject everything
         self._spawned_at = datetime.now()
-        log.info("Session '%s' spawned (pid=%s, effort=%s)",
-                 self.name, self._proc.pid, self._effort)
+        log.info("Session '%s:%s' spawned (pid=%s, effort=%s)",
+                 self.user_key, self.name, self._proc.pid, self._effort)
 
     async def _kill(self):
         """Kill the current process if alive."""
@@ -388,13 +400,15 @@ class _Session:
 
         Returns verbatim recent turns (10) plus a Haiku-generated summary
         of older turns (11-30) for continuity across context window recycles.
+        Filters by user_key so Becky's session only sees her SMS history
+        (and vice versa).
         """
-        recent = get_recent_turns(10)
+        recent = get_recent_turns(10, user_key=self.user_key)
         verbatim = _format_history_for_injection(recent)
 
         # Try to summarize older conversation via Haiku
         try:
-            all_turns = get_recent_turns(30)
+            all_turns = get_recent_turns(30, user_key=self.user_key)
             older = all_turns[:-10] if len(all_turns) > 10 else []
             if older:
                 from aria_api import ask_haiku
@@ -431,32 +445,58 @@ class _Session:
         }
 
 
+_UNSET = object()  # sentinel distinguishing "not passed" from "explicitly None"
+
+
 class SessionPool:
-    """Managed pool of deep + fast Claude CLI sessions.
+    """Managed pool of deep + fast Claude CLI sessions for ONE user.
 
     Deep session: Opus with max effort — default for all user requests.
     Fast session: Opus with auto effort — for _is_simple_query() matches.
+                  Pass fast_effort=None to skip the fast session entirely
+                  (Becky's pool uses this — she has lower message volume).
+
+    Default (no args) behaves like the legacy singleton: Adam's config,
+    both sessions present. The registry factory `_build_pool` passes
+    explicit values for each user.
     """
 
-    def __init__(self):
+    def __init__(self, user_key: str = "adam",
+                 deep_effort=_UNSET,
+                 fast_effort=_UNSET,
+                 system_prompt: str | None = None):
         recycle = getattr(config, "SESSION_RECYCLE_AFTER", 150)
-        deep_effort = getattr(config, "SESSION_DEEP_EFFORT", "max")
-        fast_effort = getattr(config, "SESSION_FAST_EFFORT", "auto")
+        if deep_effort is _UNSET:
+            deep_effort = getattr(config, "SESSION_DEEP_EFFORT", "max")
+        if fast_effort is _UNSET:
+            fast_effort = getattr(config, "SESSION_FAST_EFFORT", "auto")
 
-        self._deep = _Session("deep", deep_effort, recycle)
-        self._fast = _Session("fast", fast_effort, recycle)
+        self.user_key = user_key
+        self._deep = _Session("deep", deep_effort, recycle,
+                              user_key=user_key,
+                              system_prompt=system_prompt)
+        if fast_effort is not None:
+            self._fast = _Session("fast", fast_effort, recycle,
+                                  user_key=user_key,
+                                  system_prompt=system_prompt)
+        else:
+            self._fast = None
 
     async def start(self):
-        """Pre-warm both sessions. Called from daemon lifespan."""
+        """Pre-warm sessions. Called from daemon lifespan."""
         await self._deep._spawn()
-        await self._fast._spawn()
-        log.info("Session pool started (deep + fast)")
+        if self._fast is not None:
+            await self._fast._spawn()
+        log.info("Session pool '%s' started (%s)",
+                 self.user_key,
+                 "deep + fast" if self._fast else "deep only")
 
     async def stop(self):
-        """Kill both sessions. Called from daemon lifespan shutdown."""
+        """Kill sessions. Called from daemon lifespan shutdown."""
         await self._deep._kill()
-        await self._fast._kill()
-        log.info("Session pool stopped")
+        if self._fast is not None:
+            await self._fast._kill()
+        log.info("Session pool '%s' stopped", self.user_key)
 
     async def query_deep(self, text: str, context: str = "",
                          file_blocks: list[dict] | None = None,
@@ -468,32 +508,84 @@ class SessionPool:
     async def query_fast(self, text: str, context: str = "",
                          file_blocks: list[dict] | None = None,
                          system_correction: bool = False) -> SessionResponse:
-        """Query the fast (auto effort) session."""
+        """Query the fast (auto effort) session.
+
+        If this pool has no fast session (e.g. Becky's), falls back to deep.
+        """
+        if self._fast is None:
+            return await self._deep.query(text, context, file_blocks,
+                                          system_correction)
         return await self._fast.query(text, context, file_blocks,
                                       system_correction)
 
     def get_status(self) -> dict:
         """Return status of both sessions for health checks."""
-        return {
-            "deep": self._deep.get_status(),
-            "fast": self._fast.get_status(),
-        }
+        result = {"user_key": self.user_key, "deep": self._deep.get_status()}
+        if self._fast is not None:
+            result["fast"] = self._fast.get_status()
+        else:
+            result["fast"] = {"name": "fast", "alive": False, "absent": True}
+        return result
 
     async def ensure_healthy(self) -> dict:
-        """Check both sessions and respawn any that have died."""
+        """Check sessions and respawn any that have died."""
         deep_status = await self._deep._heal()
-        fast_status = await self._fast._heal()
+        if self._fast is not None:
+            fast_status = await self._fast._heal()
+        else:
+            fast_status = "absent"
         return {"deep": deep_status, "fast": fast_status}
 
 
-# --- Singleton ---
+# --- Registry ---
 
-_pool: SessionPool | None = None
+_SESSION_POOLS: dict[str, SessionPool] = {}
 
 
-def get_session_pool() -> SessionPool:
-    """Get or create the global session pool."""
-    global _pool
-    if _pool is None:
-        _pool = SessionPool()
-    return _pool
+def _build_pool(user_key: str) -> SessionPool:
+    """Construct a pool for user_key with the appropriate config + prompt.
+
+    Kept separate so tests can monkey-patch pool construction easily.
+    """
+    # Lazy import — avoids circular import at module load time. system_prompt
+    # imports config, which itself might import from places that need this module
+    # in the future.
+    from system_prompt import build_primary_prompt, build_becky_primary_prompt
+
+    if user_key == "adam":
+        return SessionPool(
+            user_key="adam",
+            deep_effort=getattr(config, "SESSION_DEEP_EFFORT", "max"),
+            fast_effort=getattr(config, "SESSION_FAST_EFFORT", "auto"),
+            system_prompt=build_primary_prompt(),
+        )
+    if user_key == "becky":
+        return SessionPool(
+            user_key="becky",
+            deep_effort=getattr(config, "BECKY_SESSION_DEEP_EFFORT", "max"),
+            fast_effort=getattr(config, "BECKY_SESSION_FAST_EFFORT", None),
+            system_prompt=build_becky_primary_prompt(),
+        )
+    raise ValueError(f"Unknown user_key: {user_key}")
+
+
+def get_session_pool(user_key: str = "adam") -> SessionPool:
+    """Get or create the session pool for a specific user."""
+    if user_key not in _SESSION_POOLS:
+        _SESSION_POOLS[user_key] = _build_pool(user_key)
+    return _SESSION_POOLS[user_key]
+
+
+async def shutdown_all():
+    """Stop every pool that has been started. Called from daemon lifespan."""
+    for pool in list(_SESSION_POOLS.values()):
+        try:
+            await pool.stop()
+        except Exception as e:
+            log.error("Failed to stop pool '%s': %s", pool.user_key, e)
+    _SESSION_POOLS.clear()
+
+
+def get_all_pools() -> dict[str, SessionPool]:
+    """Return all active pools — used by the watchdog."""
+    return dict(_SESSION_POOLS)

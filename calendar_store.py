@@ -101,24 +101,31 @@ async def _google_delete_event(google_id: str) -> bool:
 # --- Calendar Events ---
 
 async def add_event(title: str, event_date: str, time: Optional[str] = None,
-                    notes: Optional[str] = None) -> dict:
-    """Add a calendar event. Writes to Google first, then local.
+                    notes: Optional[str] = None, owner: str = "adam") -> dict:
+    """Add a calendar event. Writes to Google first (for Adam only), then local.
 
-    If Google fails, stores locally with google_id=NULL (synced on next cycle).
+    owner: "adam" (syncs to his Google Calendar) or "becky" (local-only, no Google
+    account for her in v0.9.5). If Google fails for Adam, stores locally with
+    google_id=NULL (synced on next cycle).
     """
     event_id = str(uuid.uuid4())[:8]
 
-    # Write to Google first
-    google_id, etag = await _google_create_event(title, event_date, time, notes)
+    # Write to Google first — but only for Adam (he's the Google account owner).
+    # Becky's events are local-only; she has no Google OAuth in v0.9.5.
+    if owner == "adam":
+        google_id, etag = await _google_create_event(title, event_date, time, notes)
+    else:
+        google_id, etag = None, None
 
     with db.get_conn() as conn:
         row = conn.execute(
-            """INSERT INTO events (id, title, date, time, notes, google_id, google_etag, last_synced)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """INSERT INTO events (id, title, date, time, notes, google_id, google_etag, last_synced, owner)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING *""",
             (event_id, title, event_date, time, notes,
              google_id, etag,
-             datetime.now().isoformat() if google_id else None),
+             datetime.now().isoformat() if google_id else None,
+             owner),
         ).fetchone()
     return db.serialize_row(row)
 
@@ -164,8 +171,12 @@ async def delete_event(event_id: str) -> bool:
     return cur.rowcount > 0
 
 
-def get_events(start: Optional[str] = None, end: Optional[str] = None) -> list[dict]:
-    """Get calendar events, optionally filtered by date range (YYYY-MM-DD)."""
+def get_events(start: Optional[str] = None, end: Optional[str] = None,
+               owner: Optional[str] = None) -> list[dict]:
+    """Get calendar events, optionally filtered by date range (YYYY-MM-DD).
+
+    owner: filter to a specific user ("adam" or "becky"). None returns all users.
+    """
     clauses = []
     params = []
     if start:
@@ -174,6 +185,9 @@ def get_events(start: Optional[str] = None, end: Optional[str] = None) -> list[d
     if end:
         clauses.append("date <= %s")
         params.append(end)
+    if owner:
+        clauses.append("owner = %s")
+        params.append(owner)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     with db.get_conn() as conn:
         rows = conn.execute(
@@ -283,15 +297,24 @@ def get_sync_token() -> str | None:
 
 # --- Reminders (local-only, no Google sync) ---
 
-def get_reminders(include_done: bool = False) -> list[dict]:
-    """Get all reminders. By default only returns active ones."""
-    if include_done:
-        where = ""
-    else:
-        where = "WHERE NOT done"
+def get_reminders(include_done: bool = False,
+                  owner: Optional[str] = None) -> list[dict]:
+    """Get all reminders. By default only returns active ones.
+
+    owner: filter to a specific user ("adam" or "becky"). None returns all users.
+    """
+    clauses = []
+    params = []
+    if not include_done:
+        clauses.append("NOT done")
+    if owner:
+        clauses.append("owner = %s")
+        params.append(owner)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
     with db.get_conn() as conn:
         rows = conn.execute(
             f"SELECT * FROM reminders {where} ORDER BY COALESCE(due, '9999-12-31')",
+            params,
         ).fetchall()
     return [db.serialize_row(r) for r in rows]
 
@@ -299,16 +322,21 @@ def get_reminders(include_done: bool = False) -> list[dict]:
 def add_reminder(text: str, due: Optional[str] = None,
                  recurring: Optional[str] = None,
                  location: Optional[str] = None,
-                 location_trigger: Optional[str] = None) -> dict:
-    """Add a reminder. due format: YYYY-MM-DD or YYYY-MM-DD HH:MM."""
+                 location_trigger: Optional[str] = None,
+                 owner: str = "adam") -> dict:
+    """Add a reminder. due format: YYYY-MM-DD or YYYY-MM-DD HH:MM.
+
+    owner: "adam" (default) or "becky". Becky's reminders never have
+    location triggers (she has no location tracking in v0.9.5).
+    """
     reminder_id = str(uuid.uuid4())[:8]
     trigger = location_trigger or ("arrive" if location else None)
     with db.get_conn() as conn:
         row = conn.execute(
-            """INSERT INTO reminders (id, text, due, recurring, location, location_trigger)
-               VALUES (%s, %s, %s, %s, %s, %s)
+            """INSERT INTO reminders (id, text, due, recurring, location, location_trigger, owner)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
                RETURNING *""",
-            (reminder_id, text, due, recurring, location, trigger),
+            (reminder_id, text, due, recurring, location, trigger, owner),
         ).fetchone()
     return db.serialize_row(row)
 
@@ -331,19 +359,30 @@ def delete_reminder(reminder_id: str) -> bool:
     return cur.rowcount > 0
 
 
-def auto_expire_stale_reminders(max_overdue_days: int = 3) -> list[dict]:
-    """Auto-expire non-location reminders that are overdue by more than max_overdue_days."""
+def auto_expire_stale_reminders(max_overdue_days: int = 3,
+                                owner: Optional[str] = None) -> list[dict]:
+    """Auto-expire non-location reminders overdue by > max_overdue_days.
+
+    owner: if provided, scope expiry to a single user. None = all users.
+    """
     cutoff = (date.today() - timedelta(days=max_overdue_days)).isoformat()
+    clauses = ["due < %s", "NOT done", "location IS NULL"]
+    params = [cutoff]
+    if owner:
+        clauses.append("owner = %s")
+        params.append(owner)
+    where = " AND ".join(clauses)
     with db.get_conn() as conn:
         rows = conn.execute(
-            """UPDATE reminders
-               SET done = TRUE, completed_at = NOW(), auto_expired_at = NOW()
-               WHERE due < %s AND NOT done AND location IS NULL
-               RETURNING *""",
-            (cutoff,),
+            f"""UPDATE reminders
+                SET done = TRUE, completed_at = NOW(), auto_expired_at = NOW()
+                WHERE {where}
+                RETURNING *""",
+            params,
         ).fetchall()
     expired = [db.serialize_row(r) for r in rows]
     if expired:
-        log.info("Auto-expired %d stale reminders (overdue > %d days)",
-                 len(expired), max_overdue_days)
+        log.info("Auto-expired %d stale reminders (overdue > %d days%s)",
+                 len(expired), max_overdue_days,
+                 f", owner={owner}" if owner else "")
     return expired

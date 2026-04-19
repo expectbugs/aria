@@ -28,7 +28,10 @@ import redis_client
 import sms
 
 from actions import process_actions, ActionResult
-from session_pool import get_session_pool, SessionResponse
+from session_pool import (
+    get_session_pool, get_all_pools, shutdown_all as shutdown_session_pools,
+    SessionResponse,
+)
 from aria_api import _is_simple_query, ask_aria as _ask_aria_fallback, ask_haiku
 from claude_session import ClaudeSession  # kept for Action ARIA (Step 6)
 from version import __version__
@@ -54,7 +57,7 @@ _watchdog_task: asyncio.Task | None = None
 
 
 async def _session_watchdog():
-    """Background task: periodically check session health and respawn dead sessions."""
+    """Background task: periodically check session health for ALL user pools."""
     interval = getattr(config, "SESSION_WATCHDOG_INTERVAL", 30)
     if not interval:
         return
@@ -62,11 +65,12 @@ async def _session_watchdog():
     while True:
         await asyncio.sleep(interval)
         try:
-            pool = get_session_pool()
-            result = await pool.ensure_healthy()
-            for name, status in result.items():
-                if status != "ok":
-                    log.warning("Session watchdog: %s → %s", name, status)
+            for user_key, pool in get_all_pools().items():
+                result = await pool.ensure_healthy()
+                for session_name, status in result.items():
+                    if status not in ("ok", "absent"):
+                        log.warning("Session watchdog: %s:%s → %s",
+                                    user_key, session_name, status)
         except Exception as e:
             log.error("Session watchdog error: %s", e)
 
@@ -80,7 +84,13 @@ async def lifespan(app: FastAPI):
     task_dispatcher.start_dispatcher()  # background task queue consumer
     completion_listener.start_listener()  # Pub/Sub for task result delivery
     await get_amnesia_pool().start()  # pre-warm Claude Code instances for agentic tasks
-    await get_session_pool().start()  # pre-warm deep + fast CLI sessions
+    # Pre-warm session pools for all configured trusted users so first
+    # message doesn't pay the cold-spawn latency.
+    trusted_user_keys = {
+        info["user"] for info in getattr(config, "TRUSTED_USERS", {}).values()
+    } or {"adam"}
+    for user_key in sorted(trusted_user_keys):
+        await get_session_pool(user_key).start()
     _watchdog_task = asyncio.create_task(_session_watchdog())
     yield
     if _watchdog_task and not _watchdog_task.done():
@@ -89,7 +99,7 @@ async def lifespan(app: FastAPI):
             await _watchdog_task
         except asyncio.CancelledError:
             pass
-    await get_session_pool().stop()  # stop CLI sessions first (may be serving requests)
+    await shutdown_session_pools()  # stop all user pools (may be serving requests)
     task_dispatcher.stop_dispatcher()
     completion_listener.stop_listener()
     await get_amnesia_pool().stop()
@@ -206,34 +216,70 @@ def _is_cancellation(text: str) -> bool:
     return len(t) < 40 and t in _CANCELLATION_PHRASES
 
 
-async def _check_pending_confirmation(text: str) -> SessionResponse | None:
-    """If user is confirming/cancelling a pending destructive action, handle it.
+def _compose_confirm_summary(result: dict) -> str:
+    """Compose a human-readable summary of a batch confirmation result.
+
+    result shape (from actions.execute_all_pending):
+        {"executed": [desc, ...], "failed": [(desc, msg), ...], "cross_user": {...}}
+    """
+    executed = result.get("executed", [])
+    failed = result.get("failed", [])
+    n_ok = len(executed)
+    n_fail = len(failed)
+
+    if n_ok and not n_fail:
+        if n_ok == 1:
+            return f"Done — {executed[0]}."
+        return f"Done — {n_ok} things: " + "; ".join(executed) + "."
+
+    if n_ok and n_fail:
+        ok_part = "; ".join(executed)
+        fail_part = "; ".join(f"{d} ({m})" for d, m in failed)
+        return f"Done: {ok_part}. Failed: {fail_part}."
+
+    if n_fail and not n_ok:
+        fail_part = "; ".join(f"{d} ({m})" for d, m in failed)
+        if n_fail == 1:
+            return f"Couldn't complete that: {fail_part}."
+        return f"Couldn't complete any of those: {fail_part}."
+
+    # Both empty — shouldn't happen if we checked pending beforehand
+    return "Nothing to confirm — the pending actions may have expired."
+
+
+async def _check_pending_confirmation(text: str,
+                                       user_key: str = "adam") -> SessionResponse | None:
+    """If user is confirming/cancelling pending destructive action(s), handle it.
+
+    Per-user: Adam and Becky each only see/confirm their own pending actions.
+    Single "yes" confirms ALL pending for this user; single "no" cancels ALL.
+    For selective confirmation, the user says something longer than the short
+    confirmation phrases — falls through to ARIA, who emits per-ID
+    confirm_destructive actions.
 
     Returns SessionResponse if handled (caller should use it and skip ARIA),
     or None if this isn't a confirmation/cancellation (proceed normally).
     """
-    from actions import get_pending_confirmations, execute_pending, clear_all_pending
+    from actions import (get_pending_confirmations, execute_all_pending,
+                         clear_all_pending)
 
-    pending = get_pending_confirmations()
+    pending = get_pending_confirmations(user_key=user_key)
     if not pending:
         return None
 
     if _is_cancellation(text):
-        clear_all_pending()
+        n = len(pending)
+        clear_all_pending(user_key=user_key)
+        word = "action" if n == 1 else "actions"
         return SessionResponse(
-            text="Cancelled — no changes made.", tool_calls=[])
+            text=f"Cancelled — {n} pending {word}. No changes made.",
+            tool_calls=[])
 
     if _is_confirmation(text):
-        # Execute the most recent pending action
-        conf_id = pending[0]["confirmation_id"]
-        desc = pending[0]["description"]
-        ok, msg = await execute_pending(conf_id)
-        if ok:
-            return SessionResponse(
-                text=f"Done — {desc}.", tool_calls=[])
-        else:
-            return SessionResponse(
-                text=f"Couldn't complete that: {msg}", tool_calls=[])
+        result = await execute_all_pending(user_key=user_key)
+        return SessionResponse(
+            text=_compose_confirm_summary(result),
+            tool_calls=[])
 
     return None  # Not a simple confirmation — let ARIA handle it
 
@@ -241,30 +287,37 @@ async def _check_pending_confirmation(text: str) -> SessionResponse | None:
 # --- Query Routing ---
 
 async def _route_query(text: str, context: str = "",
-                       file_blocks: list[dict] | None = None) -> SessionResponse:
-    """Route a query through the CLI session pool, with API fallback.
+                       file_blocks: list[dict] | None = None,
+                       user_key: str = "adam") -> SessionResponse:
+    """Route a query through the per-user CLI session pool, with API fallback.
 
-    Simple queries (timers, greetings, weather) go to the fast session.
-    Everything else goes to the deep session. If the session pool fails,
-    falls back to the Anthropic API (ask_aria).
+    Simple queries (timers, greetings, weather) go to the fast session when
+    available. Becky's pool has no fast session so those also run on deep.
+    If the session pool fails, falls back to the Anthropic API (ask_aria) —
+    Adam only, since Becky's prompt + permission model differ.
 
     Returns SessionResponse with text and tool call metadata.
     """
-    pool = get_session_pool()
+    pool = get_session_pool(user_key)
     try:
         if _is_simple_query(text):
             return await pool.query_fast(text, context, file_blocks)
         return await pool.query_deep(text, context, file_blocks)
     except Exception as e:
-        log.warning("Session pool failed, falling back to API: %s", e)
+        log.warning("Session pool[%s] failed, falling back to API: %s",
+                    user_key, e)
         asyncio.create_task(pool.ensure_healthy())  # trigger immediate respawn
-        fallback_text = await _ask_aria_fallback(text, context, file_blocks)
-        return SessionResponse(text=fallback_text, tool_calls=[])
+        if user_key == "adam":
+            fallback_text = await _ask_aria_fallback(text, context, file_blocks)
+            return SessionResponse(text=fallback_text, tool_calls=[])
+        # No API fallback for Becky yet — propagate so caller can surface a graceful error.
+        raise
 
 
 async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
                                    log_fn=None,
-                                   tool_calls: list[str] | None = None) -> ActionResult:
+                                   tool_calls: list[str] | None = None,
+                                   user_key: str = "adam") -> ActionResult:
     """Verify claims in response. Retry up to 2x on action claim violations.
 
     Also checks tool use: if the response contains factual claims but ARIA
@@ -293,7 +346,7 @@ async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
     if not tool_ok:
         log.warning("[TOOL_VERIFY] Factual response without tool use: %s",
                     text[:100])
-        pool = get_session_pool()
+        pool = get_session_pool(user_key)
         retry_prompt = (
             "[INTERNAL — do not acknowledge] Your previous response contained "
             "factual claims but you didn't use any tools to verify them. "
@@ -303,7 +356,8 @@ async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
         retry_resp = await pool.query_deep(retry_prompt, context,
                                               system_correction=True)
         result = await process_actions(
-            retry_resp.text, metadata=result.metadata, log_fn=log_fn)
+            retry_resp.text, metadata=result.metadata, log_fn=log_fn,
+            user_key=user_key)
         # Update tool_calls from the retry
         tool_calls = retry_resp.tool_calls
 
@@ -319,13 +373,14 @@ async def _verify_and_maybe_retry(text: str, context: str, result: ActionResult,
         return result
 
     log.warning("[VERIFY] Claim violation detected, retrying: %s", text[:100])
-    pool = get_session_pool()
+    pool = get_session_pool(user_key)
     for attempt in range(1, 3):
         correction = verification.correction_prompt
         retry_resp = await pool.query_deep(correction, "",
                                               system_correction=True)
         result = await process_actions(
-            retry_resp.text, metadata=result.metadata, log_fn=log_fn)
+            retry_resp.text, metadata=result.metadata, log_fn=log_fn,
+            user_key=user_key)
         verification = verify_response(result.clean_response, result, context)
         log_verification(verification, retry_attempt=attempt,
                          request_text=text, response_text=result.clean_response)
@@ -406,17 +461,34 @@ async def health():
     except Exception:
         checks["database"] = "error"
 
-    # Session Pool (ARIA Primary)
+    # Session Pools (per-user ARIA Primary instances)
     try:
-        pool_status = get_session_pool().get_status()
-        deep_ok = pool_status["deep"]["alive"]
-        fast_ok = pool_status["fast"]["alive"]
-        if deep_ok and fast_ok:
-            checks["session_pool"] = "ok"
-        elif deep_ok or fast_ok:
-            checks["session_pool"] = "degraded"
-        else:
+        all_pools = get_all_pools()
+        per_user = {}
+        any_alive = False
+        all_deep_ok = True
+        for user_key, pool in all_pools.items():
+            status = pool.get_status()
+            deep_ok = status["deep"]["alive"]
+            fast = status.get("fast") or {}
+            fast_alive = fast.get("alive", False)
+            fast_absent = fast.get("absent", False)
+            # A pool is "ok" when its deep session is alive AND its fast
+            # session is either alive or intentionally absent.
+            if deep_ok and (fast_alive or fast_absent):
+                per_user[user_key] = "ok"
+            elif deep_ok:
+                per_user[user_key] = "degraded"
+            else:
+                per_user[user_key] = "error"
+                all_deep_ok = False
+            any_alive = any_alive or deep_ok or fast_alive
+        checks["session_pool"] = per_user or "no pools"
+        if not any_alive and all_pools:
             checks["session_pool"] = "error"
+        elif not all_deep_ok:
+            # Flag the aggregate too, for the degraded flag below.
+            pass
     except Exception as e:
         checks["session_pool"] = f"error: {e}"
 
@@ -446,7 +518,13 @@ async def health():
         except Exception:
             checks["whisper"] = "error"
 
-    degraded = checks.get("database") != "ok" or checks.get("session_pool") not in ("ok",)
+    # "degraded" if DB isn't ok or any pool is not-ok
+    pool_check = checks.get("session_pool")
+    pool_ok = (
+        isinstance(pool_check, dict)
+        and all(v == "ok" for v in pool_check.values())
+    )
+    degraded = checks.get("database") != "ok" or not pool_ok
 
     return {
         "status": "degraded" if degraded else "ok",
@@ -1500,8 +1578,14 @@ async def ws_stt(websocket: WebSocket):
 
 # --- SMS/MMS Webhook ---
 
-async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, str]]):
-    """Background worker for incoming SMS/MMS processing."""
+async def _process_sms(from_number: str, body: str,
+                       media_urls: list[tuple[str, str]],
+                       user_key: str = "adam"):
+    """Background worker for incoming SMS/MMS processing.
+
+    user_key determines which Aria session pool handles the message and
+    which data stores it can write to.
+    """
     try:
         start = time.time()
         file_blocks = []
@@ -1535,20 +1619,20 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
         # Build context — same unified context as voice/file, plus SMS channel note
         user_text = body if body else "The user sent a file via SMS."
 
-        # Destructive action confirmation shortcut
-        shortcut = await _check_pending_confirmation(user_text)
+        # Destructive action confirmation shortcut (scoped to this user)
+        shortcut = await _check_pending_confirmation(user_text, user_key=user_key)
         if shortcut:
             duration = time.time() - start
             log_request(f"[sms:{from_number}] {user_text}", "ok",
                         response=shortcut.text, duration=duration)
             await delivery_engine.execute_delivery(
                 shortcut.text, source="sms", push_voice=True,
-                sms_target=from_number)
+                sms_target=from_number, user_key=user_key)
             return
         has_media = bool(file_blocks)
 
         extra_context = await _get_context_for_text(
-            user_text, is_image=has_media
+            user_text, is_image=has_media, user_key=user_key
         )
 
         # SMS channel note — affects RESPONSE FORMAT only, not available context
@@ -1559,19 +1643,24 @@ async def _process_sms(from_number: str, body: str, media_urls: list[tuple[str, 
             extra_context = sms_note
 
         query_result = await _route_query(user_text, extra_context,
-                                         file_blocks if file_blocks else None)
+                                         file_blocks if file_blocks else None,
+                                         user_key=user_key)
         delivery_meta = {"channel": "sms"}
-        result = await process_actions(query_result.text, metadata=delivery_meta, log_fn=log_request)
+        result = await process_actions(
+            query_result.text, metadata=delivery_meta, log_fn=log_request,
+            user_key=user_key,
+        )
         result = await _verify_and_maybe_retry(
             user_text, extra_context, result, log_fn=log_request,
-            tool_calls=query_result.tool_calls)
+            tool_calls=query_result.tool_calls, user_key=user_key)
         response = result.to_response()
 
         # Delivery routing — SMS source, push voice (phone doesn't poll for SMS requests)
         hint = delivery_meta.get("delivery")
         await delivery_engine.execute_delivery(
             response, source="sms", hint=hint,
-            push_voice=True, sms_target=from_number)
+            push_voice=True, sms_target=from_number,
+            user_key=user_key)
 
         duration = time.time() - start
         log_request(f"[sms:{from_number}] {user_text}", "ok",
@@ -1638,19 +1727,31 @@ async def nudge(req: NudgeRequest, request: Request):
 async def webhook_sms(request: Request):
     """Telnyx SMS/MMS webhook — receives incoming messages and responds via SMS.
 
-    Telnyx sends JSON POST with Standard Webhooks signature verification.
+    Telnyx sends JSON POST with ED25519 signature verification.
+
+    Always returns 200 (even for invalid signatures or malformed payloads)
+    because Telnyx uses Standard Webhooks retry semantics: any non-2xx
+    response triggers exponential-backoff retries. Dropping malformed
+    inputs silently is safer than getting retry-hammered.
     """
     raw_body = await request.body()
     payload = raw_body.decode("utf-8")
 
-    # Validate the request is from Telnyx (Standard Webhooks HMAC-SHA256)
+    # Validate the request is from Telnyx (ED25519 via PyNaCl)
     headers = dict(request.headers)
     if not sms.validate_request(payload, headers):
-        log.warning("Invalid Telnyx webhook signature")
-        raise HTTPException(status_code=403, detail="Invalid signature")
+        log.critical(
+            "SECURITY: Invalid Telnyx webhook signature — possible spoofing or misconfiguration"
+        )
+        return Response(status_code=200)
 
-    # Parse the JSON payload
-    data = json.loads(payload)
+    # Parse the JSON payload (return 200 on malformed JSON to prevent retries)
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as e:
+        log.warning("Invalid JSON in Telnyx webhook: %s", e)
+        return Response(status_code=200)
+
     event = data.get("data", {})
     event_type = event.get("event_type", "")
 
@@ -1699,41 +1800,56 @@ async def webhook_sms(request: Request):
         help_text = ("ARIA — personal AI assistant. "
                      "Text any message to interact. "
                      "Reply STOP to unsubscribe.")
-        try:
-            sms.send_sms(from_number, help_text)
-        except Exception:
-            pass
+        if from_number:
+            try:
+                sms.send_sms(from_number, help_text)
+            except Exception as e:
+                log.error("Failed to send HELP response to %s: %s", from_number, e)
+        else:
+            log.warning("HELP keyword with missing from_number — ignoring")
         return Response(status_code=200)
 
-    # Only process messages from the owner (STOP/HELP remain open for A2P compliance)
-    if from_number != config.OWNER_PHONE_NUMBER:
-        log.warning("SMS from unknown sender %s ignored", from_number)
-        return Response(status_code=200)
+    # Authorization gate — look up sender in TRUSTED_USERS. STOP/HELP above
+    # remain open for A2P compliance regardless of sender.
+    trusted_users = getattr(config, "TRUSTED_USERS", None)
+    if trusted_users:
+        user_info = trusted_users.get(from_number)
+        if not user_info:
+            log.warning("SMS from unknown sender %s ignored", from_number)
+            return Response(status_code=200)
+        user_key = user_info["user"]
+    else:
+        # Backward compat: no TRUSTED_USERS in config → owner-only gate.
+        if from_number != config.OWNER_PHONE_NUMBER:
+            log.warning("SMS from unknown sender %s ignored", from_number)
+            return Response(status_code=200)
+        user_key = "adam"
 
     if not body and not media_urls:
         return Response(status_code=200)
 
-    # Webhook idempotency: prevent duplicate processing on Telnyx retries
+    # Webhook idempotency: prevent duplicate processing on Telnyx retries.
+    # Atomic INSERT ON CONFLICT DO NOTHING — if rowcount is 0, we lost the race
+    # to another concurrent webhook for the same message_id. Safer than
+    # SELECT-then-INSERT which has a classic TOCTOU race window.
     if message_id:
         try:
             with db.get_conn() as conn:
-                existing = conn.execute(
-                    "SELECT 1 FROM processed_webhooks WHERE message_sid = %s",
-                    (message_id,),
-                ).fetchone()
-                if existing:
-                    log.info("Duplicate webhook ignored (id=%s)", message_id)
-                    return Response(status_code=200)
-                conn.execute(
-                    "INSERT INTO processed_webhooks (message_sid) VALUES (%s)",
+                result = conn.execute(
+                    """INSERT INTO processed_webhooks (message_sid) VALUES (%s)
+                       ON CONFLICT (message_sid) DO NOTHING""",
                     (message_id,),
                 )
+                if result.rowcount == 0:
+                    log.info("Duplicate webhook ignored (id=%s)", message_id)
+                    return Response(status_code=200)
         except Exception as e:
             log.warning("Webhook idempotency check failed: %s (proceeding anyway)", e)
 
     # Process asynchronously — return 200 immediately,
     # then send the response as a new outbound message
-    asyncio.create_task(_process_sms(from_number, body, media_urls))
+    asyncio.create_task(_process_sms(from_number, body, media_urls,
+                                      user_key=user_key))
 
     return Response(status_code=200)
 

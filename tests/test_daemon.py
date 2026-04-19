@@ -254,14 +254,20 @@ class TestSmsWebhook:
         assert "ARIA" in mock_send.call_args[0][1]
 
     @patch("daemon.sms.validate_request")
-    def test_invalid_signature(self, mock_validate, client):
+    def test_invalid_signature_returns_200(self, mock_validate, client):
+        """Invalid signature returns 200 (not 403) to prevent Telnyx retry loops.
+
+        Telnyx uses Standard Webhooks retry semantics — any non-2xx triggers
+        exponential-backoff retries, so malformed/spoofed webhooks would get
+        hammered back at us. Silent drop + critical log is safer.
+        """
         mock_validate.return_value = False
         payload = self._telnyx_payload(text="Hello")
         resp = client.post("/sms", content=payload,
                            headers={"content-type": "application/json",
                                     "webhook-id": "wh_1", "webhook-timestamp": "123",
                                     "webhook-signature": "v1,bad"})
-        assert resp.status_code == 403
+        assert resp.status_code == 200
 
     @patch("daemon.sms.validate_request")
     def test_unknown_sender_ignored(self, mock_validate, client):
@@ -283,6 +289,55 @@ class TestSmsWebhook:
                                     "webhook-id": "wh_1", "webhook-timestamp": "123",
                                     "webhook-signature": "v1,test"})
         assert resp.status_code == 200
+
+    @patch("daemon.sms.validate_request")
+    def test_malformed_json_returns_200(self, mock_validate, client):
+        """Invalid JSON body returns 200, not 500 (which would cause retry storm)."""
+        mock_validate.return_value = True
+        resp = client.post("/sms", content="not valid json at all {",
+                           headers={"content-type": "application/json",
+                                    "webhook-id": "wh_1", "webhook-timestamp": "123",
+                                    "webhook-signature": "v1,test"})
+        assert resp.status_code == 200
+
+    @patch("daemon.sms.send_sms")
+    @patch("daemon.sms.validate_request")
+    def test_help_with_empty_from_number_no_send(self, mock_validate, mock_send, client):
+        """HELP with missing from_number must NOT attempt to send to empty string."""
+        mock_validate.return_value = True
+        payload = self._telnyx_payload(from_number="", text="HELP")
+        resp = client.post("/sms", content=payload,
+                           headers={"content-type": "application/json",
+                                    "webhook-id": "wh_1", "webhook-timestamp": "123",
+                                    "webhook-signature": "v1,test"})
+        assert resp.status_code == 200
+        mock_send.assert_not_called()
+
+    @patch("daemon.db.get_conn")
+    @patch("daemon.sms.validate_request")
+    def test_idempotency_duplicate_webhook_ignored(self, mock_validate,
+                                                     mock_get_conn, client):
+        """Duplicate message_id (ON CONFLICT DO NOTHING → rowcount=0) short-circuits."""
+        mock_validate.return_value = True
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.rowcount = 0  # ON CONFLICT hit — row already existed
+        mock_conn.execute.return_value = mock_result
+        mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+
+        payload = self._telnyx_payload(text="Hello", from_number=config.OWNER_PHONE_NUMBER)
+        with patch("daemon.asyncio.create_task") as mock_task:
+            resp = client.post("/sms", content=payload,
+                               headers={"content-type": "application/json",
+                                        "webhook-id": "wh_1", "webhook-timestamp": "123",
+                                        "webhook-signature": "v1,test"})
+        assert resp.status_code == 200
+        # Duplicate should NOT trigger _process_sms task
+        mock_task.assert_not_called()
+        # Verify we used ON CONFLICT, not SELECT-then-INSERT
+        sql = mock_conn.execute.call_args[0][0]
+        assert "ON CONFLICT" in sql
 
 
 # ---------------------------------------------------------------------------

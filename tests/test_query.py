@@ -227,7 +227,8 @@ class TestMainCLI:
         with patch("query._log_trace"):
             with patch("builtins.print") as mock_print:
                 query.main(["calendar", "--start", "2026-03-25", "--end", "2026-04-01"])
-        mock_cs.get_events.assert_called_once_with(start="2026-03-25", end="2026-04-01")
+        mock_cs.get_events.assert_called_once_with(
+            start="2026-03-25", end="2026-04-01", owner="adam")
 
     @patch("query.db.get_conn")
     def test_conversations_command(self, mock_gc):

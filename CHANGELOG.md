@@ -6,6 +6,131 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.9.7] — 2026-04-18
+
+### Fixed
+
+- **Webhook idempotency race (bug #1 from code review)** — `/sms` handler's duplicate-webhook detection was using SELECT-then-INSERT, which is not atomic. Two concurrent webhooks for the same message_id could both pass the SELECT, both attempt the INSERT, and the second would hit the primary key constraint. The exception handler caught it generically and logged "proceeding anyway" — meaning the duplicate WAS processed. Replaced with atomic `INSERT ... ON CONFLICT (message_sid) DO NOTHING` + `rowcount == 0` check. Two concurrent webhooks now deterministically result in exactly one processing.
+- **Webhook 403 triggered Telnyx retry storm (bug #2)** — `/sms` was raising `HTTPException(status_code=403)` on invalid signatures. Telnyx uses Standard Webhooks retry semantics: any non-2xx response triggers exponential-backoff retries. A spoofed webhook would get hammered back at us indefinitely. Changed to return `Response(status_code=200)` with a `log.critical` security event instead. Same pattern for malformed JSON and unknown event types.
+- **Malformed JSON crashed handler (bug #3)** — `json.loads(payload)` had no try/except. Bad JSON → 500 → Telnyx retries. Now caught as `json.JSONDecodeError` with warning log, returns 200.
+- **Empty `from_number` in HELP handler (bug #6)** — if Telnyx sent a payload with missing phone number, the HELP responder called `sms.send_sms("", help_text)` which attempted to send to empty string. Exception was swallowed silently. Now validates `from_number` before attempting, logs warning if missing, logs error with exception detail if send fails. `except Exception: pass` removed.
+- **22-segment 40302 "message too large" error (silent SMS drops)** — when Aria's response contained non-GSM-7 characters (em-dash, smart quotes, backticks are the biggest offenders), the whole message was encoded as UCS-2, which fits only 67 chars per concat segment. Our `split_sms` was splitting at 1500 chars assuming GSM-7, producing 22-segment chunks, which Telnyx rejects (max 10 per API call). The error was logged at ERROR level and silently swallowed — `sms_log` still recorded the response text but no SMS was ever sent. User got nothing, Aria had no idea. Today this hit Adam's "Oh even better then..." BLE response which contained em-dash + backticks.
+
+### Added
+
+- **`sms._normalize_for_sms(text)`** — aggressive GSM-7 normalization. 49 character substitutions covering typography (em/en dash → hyphen, smart quotes → straight, ellipsis → "...", bullets → "*"), common symbols (© → "(c)", ® → "(R)", ™ → "(TM)", ° → "deg"), math (× → "x", ÷ → "/", ± → "+/-"), arrows (→, ←, ⇒ → ASCII), checkmarks, zero-width characters (stripped), non-breaking spaces (→ regular), and the infamous backtick (→ apostrophe — backtick is ASCII 0x60 but NOT in GSM-7's default alphabet).
+- **`sms.split_sms()` auto-sizing** — now auto-picks max_length based on encoding: 1500 chars if all-GSM-7 after normalization, 600 chars if anything unsubstitutable (emoji, CJK) survives. Either stays under Telnyx's 10-segment-per-call ceiling. Explicit `max_length` parameter still honored for callers with specific size requirements.
+- **`sms.send_sms()`** now normalizes body before the Telnyx API call — defense in depth for callers that bypass `send_long_sms`/`split_sms`. Normalization is idempotent; callers that already went through split_sms are unaffected.
+
+### Tests
+
+- **18 new tests** in `test_sms.py`:
+  - `TestNormalizeForSms` × 14 — em-dash, en-dash, smart quotes, ellipsis, backtick, zero-width chars, non-breaking space, copyright/trademark/degree, math symbols, arrows, emoji survives as UCS-2, CJK survives as UCS-2, exact reproduction of today's BLE failure
+  - `TestSplitSmsWithNormalization` × 4 — GSM-7 uses 1500 default, UCS-2 uses 600 default, em-dash text stays GSM-7 after normalization, explicit max_length still respected
+- **4 new `/sms` webhook tests** in `test_daemon.py`:
+  - `test_invalid_signature_returns_200` (replaces `test_invalid_signature` which expected 403)
+  - `test_malformed_json_returns_200`
+  - `test_help_with_empty_from_number_no_send`
+  - `test_idempotency_duplicate_webhook_ignored` (verifies `ON CONFLICT` SQL)
+
+### Trade-offs noted
+
+- Aria's SMS typography signature softens slightly — em-dashes become hyphens, smart quotes become straight, backticks become apostrophes in SMS output. Voice, CLI, and rendered MMS images retain the originals. Acceptable since deliverability is the higher-order concern and the prose still reads natural.
+- Messages containing actual emoji or CJK content fall through to UCS-2 and split at 600 chars. They still ship; just in smaller chunks.
+
+---
+
+## [0.9.6] — 2026-04-18
+
+### Fixed
+
+- **Multi-confirmation:** a single "yes" or "no" now confirms or cancels ALL pending destructive actions for the speaker, not just the first. Previously if ARIA emitted 3 deletes in one response, only one executed and the other two silently expired after 10 minutes. New `actions.execute_all_pending(user_key)` runs the whole batch in insertion order, continues past individual failures, and returns a structured result. The daemon's `_check_pending_confirmation` composes a summary: "Done — 3 things: …" / "Done: X. Failed: Y (…)." / "Cancelled — 3 pending actions. No changes made." Cross-user deletes trigger ONE consolidated SMS to the affected owner per batch.
+- **`confirm_destructive` ACTION block** — new shorthand: `{"action": "confirm_destructive", "confirmation_id": "all"}` batch-confirms every pending for the requester. ARIA can still confirm individual items by ID for selective cases.
+- **B1 — Becky's `set_delivery: image` now actually delivers as MMS.** Previously the method label said "image" but the code called `send_long_sms` (text). The delivery engine now renders the response via `_render_sms_image` and MMSes it via `send_image_mms`. Falls back to SMS on render/send failure.
+- **B2 — Unknown-owner reminders no longer silently consumed.** `tick.process_reminders` now validates owner BEFORE marking done; rows with `owner` outside `{adam, becky}` are logged and left pending for manual review. Same for Becky-owned rows when `BECKY_PHONE_NUMBER` is unset.
+- **B3 — Cross-user write notification is now symmetric.** Direct `add_event`/`add_reminder`/`set_timer` with `"owner": "<other_user>"` emitted by either Aria instance triggers the consolidated SMS. Previously only Becky→Adam was tracked; Adam→Becky was silent.
+- **B4 — `query.py --user` flag removed from Adam-only subcommands.** Passing `--user becky` to `health`/`nutrition`/`vehicle`/`legal`/`email`/`ambient`/`recall`/`commitments`/`people`/`ambient-conversations` now errors rather than silently returning Adam's data. `--user` is retained on `calendar`/`reminders`/`conversations` (the shared stores). Becky's prompt updated to reflect this.
+
+### Added
+
+- **`actions.execute_all_pending(user_key)`** — batch confirmation with cross-user delete notification.
+- **`actions._get_target_owner(action)`** — DB lookup helper for `delete_event` / `delete_reminder` owner. Used by the multi-confirm engine to decide when a cross-user SMS is needed.
+- **`actions._notify_cross_user_delete(target_owner, requester, descriptions)`** — symmetric helper for consolidated delete notifications.
+- **`actions.execute_pending(user_key=...)`** — optional defense-in-depth owner check; rejects with "belongs to another user" if the confirmation_id doesn't match the caller's user_key. Restores the pending entry on mismatch (doesn't consume it).
+- **`delivery_engine._becky_state()`** — synthetic `UserState` used by the Becky branch so `log_decision` can record her delivery choices without pulling Adam's location/Fitbit/device data. Fixes the previously missing delivery_log coverage for Becky (I6).
+- **Cross-user notification failure surfaces in `ActionResult.warnings`** (I8). Requester sees "Cross-user notification failed (…) — the writes were saved but the other party wasn't notified." Previously failed silently.
+- **`user_key` forwarded to amnesia pool** (I7 — cosmetic). `AmnesiaPool.run_agentic` accepts `user_key` for logs. No behavior change (amnesia is stateless).
+
+### Cleaned up
+
+- Removed dead `target_name` variable in the relay action handler (I3).
+- Removed no-op `--pending` flag from `query.py reminders` argparse (I4). `--all` still opts into including done reminders; default stays pending-only.
+- Context prompt guidance for pending confirmations updated: explains that a plain "yes"/"no" batches everything, with `confirm_destructive` + `confirmation_id` for selective cases.
+
+### Tests
+
+- `tests/test_beckaning.py` — 34 new tests (59 total in the file):
+  - Multi-confirmation: all-succeed, partial-failure, cancel-all, single-item, multi-item, empty-pending, cross-user delete notification, own-delete no-notify, user_key mismatch rejects, `"all"` confirmation_id.
+  - Symmetric cross-user: Adam→Becky reminder/event notification.
+  - Parameterized: all 14 Adam-exclusive action types rejected for Becky (log/delete across health, nutrition, vehicle, legal + exercise + 4 email ops).
+  - Becky image hint renders and MMSes; falls back to SMS on error.
+  - `--user` flag errors on Adam-only subcommands; works on shared ones.
+  - Unknown-owner reminder NOT marked done; no-phone Becky reminder NOT marked done.
+- Full suite: **1558 passing** (up from 1524 in v0.9.5).
+
+---
+
+## [0.9.5] — 2026-04-18
+
+### Added — The Beckaning (multi-user)
+
+- **Second authorized user: Becky** — Adam's girlfriend now has her own fully isolated Aria instance reachable via SMS/MMS from her phone (`BECKY_PHONE_NUMBER` in config). Separate Claude Code CLI subprocess, separate system prompt ("Aria B"), separate conversation history filter, separate pending-confirmations scope. Unknown senders still silently dropped.
+- **`TRUSTED_USERS` registry in config.py** — single source of truth keyed by phone number. `webhook_sms` looks up the sender and extracts `user_key` ("adam" or "becky") which threads through every layer: context builder, session pool router, action permission gate, delivery engine, completion listener, task dispatcher.
+- **Session pool registry** — `_SESSION_POOLS: dict[str, SessionPool]` keyed by user_key. `get_session_pool("adam")` and `get_session_pool("becky")` return distinct pools. Daemon lifespan eagerly spawns both so first message doesn't wait for cold start. Becky's pool has deep only (no fast session — lower volume).
+- **Action ARIA registry** — `_ACTION_ARIAS: dict[str, ActionAria]` per user. Task dispatcher reads `user_key` from the Redis task payload and routes to the matching instance.
+- **Aria B system prompt** — `build_becky_primary_prompt()` in `system_prompt.py`. Max snark, swearing allowed when tone calls for it, no diet/nutrition/pantry framing. Integrity + VERIFY-BEFORE-CLAIMING rules preserved verbatim (positional rule: personality check precedes verification reminder).
+- **Cross-user actions** — `relay_to_adam` / `relay_to_becky` ACTION block handlers with methods `sms`, `mms`, `push_image`, `reminder`, `event`. Requester validation: `relay_to_adam` requires Becky, `relay_to_becky` requires Adam.
+- **Cross-user writes to each other's stores** — Becky's Aria can emit `add_event` / `add_reminder` with `"owner": "adam"` (and vice versa). After the action loop, ONE consolidated SMS notifies the other party: "Becky added 2 things to your lists: …". No confirmation required.
+- **Auto-reminder firing (new for both users)** — `process_reminders()` in `tick.py` auto-delivers any reminder whose due date has arrived. Adam's reminders push-image via Tasker (same channel as nudges). Becky's reminders SMS her phone. Skips quiet hours, marks done before delivery to prevent retry storms. `AUTO_REMINDER_FIRE_ENABLED` config flag (default True).
+- **Owner column on `reminders`, `events`, `timers`** — `TEXT NOT NULL DEFAULT 'adam'`. Compound indexes `idx_reminders_owner_done`, `idx_events_owner_date`, `idx_timers_owner_status_fire`. Existing rows backfill as 'adam' automatically via DEFAULT.
+- **Becky morning brief** — `gather_briefing_context_becky()` in `context.py`. Milwaukee weather (NWS with `BECKY_WEATHER_LAT`/`LON`), her calendar, her reminders due today, her news feeds. Keyword-triggered same as Adam's brief. No auto-fire, no debrief.
+- **`news.get_news_digest(feeds=…)` param** — refactored to accept a dict per call instead of hardcoding `config.NEWS_FEEDS`. Becky's brief passes `config.BECKY_NEWS_FEEDS` (5 feeds: Milwaukee local, BBC World, NPR general, NASA, marine/oceanography).
+- **`query.py --user` flag on every subcommand + new `reminders` subcommand** — Aria B reads Adam's data via `query.py calendar --user adam` etc. `conversations --user becky` uses the SMS channel-prefix filter in `request_log.input`. New `reminders` subcommand (missing before) with `--user` / `--pending` / `--all` / `--limit` flags.
+- **Becky's pool in `/health`** — session_pool check reports per-user status `{"adam": "ok", "becky": "ok"}`. Degraded when any pool's deep session is down.
+
+### Changed
+
+- **Nudges + safety net now deliver as image-push, not SMS** — `run_unified_delivery()` and `process_safety_net()` in `tick.py` render the composed message via `sms._render_sms_image` and push via Tasker `push_image.py`. Free delivery, no Telnyx cost, same visual format as data-quality alerts. SMS path removed from these two flows.
+- **Delivery engine Becky branch** — `execute_delivery(user_key="becky", …)` short-circuits to SMS-only. Respects `hint="image"` for MMS (her Aria can deliver generated images). Voice/glasses/defer collapse to SMS. Adam's flow unchanged.
+- **`process_actions(user_key=…)` permission gate** — Becky cannot emit Adam-exclusive writes: `log_health`, `log_nutrition`, `log_vehicle`, `log_legal`, `start_exercise`, `end_exercise`, `send_email`, `trash_email`, `watch_email`, `cancel_watch`, and `delete_*` for those stores. Blocked before execution; surfaces as a failure in the response with "offer to relay a message" guidance.
+- **Pending destructive confirmations are per-user** — `_pending_confirmations` entries carry a `user_key` field. `get_pending_confirmations(user_key)` and `clear_all_pending(user_key)` scope by user so Adam's pending never surfaces in Becky's context and vice versa.
+- **`gather_always_context(user_key)`** — Adam sees his full Tier 1 data (timers, reminders, location, battery, exercise, monitor findings, commitments, ambient status). Becky sees her timers + reminders only — no Adam Fitbit / location / nutrition / monitors / ambient leak into her prompt.
+- **`build_request_context(user_key)`** — Becky's path returns after calendar. All Adam-specific keyword-triggered injections (health, vehicle, legal, email, projects, location, ambient) are skipped — she reads them on demand via `query.py --user adam`.
+- **Timer firing owner-aware** — `fire_timer()` checks `timer.get("owner")`. Becky's timers short-circuit to SMS on her phone (no delivery-engine evaluation; she has SMS only). Adam's path unchanged.
+- **Location reminders scope to Adam** — `check_location_reminders()` filters to `owner='adam'`. Becky has no location tracking.
+- **Adam's system prompt gains a PEOPLE section** — brief awareness of Becky, her own Aria instance, `relay_to_becky` vocabulary, `query.py conversations --user becky` for when it's relevant (don't snoop).
+
+### Database
+
+- `ALTER TABLE reminders ADD COLUMN owner TEXT NOT NULL DEFAULT 'adam';`
+- `ALTER TABLE events ADD COLUMN owner TEXT NOT NULL DEFAULT 'adam';`
+- `ALTER TABLE timers ADD COLUMN owner TEXT NOT NULL DEFAULT 'adam';`
+- New compound indexes on all three (owner + existing hot path).
+- Existing 62 rows (58 events, 3 timers, 1 reminder) backfilled to 'adam' via DEFAULT.
+
+### Tests
+
+- `tests/test_beckaning.py` — 25 new tests covering auth registry, session pool isolation, per-user pending, permission gate, cross-user writes, consolidated notification, relay handlers, delivery engine Becky branch, conversation history user filter, store owner-awareness.
+- All 1524 unit tests green after migration.
+
+### Documentation
+
+- `MEMORY.md` — architecture summary updated with multi-user section.
+- `CLAUDE.md` — added user_key threading rule (new functions accepting per-user state must add the parameter with `"adam"` default).
+- This changelog entry.
+
+---
+
 ## [0.9.4] — 2026-04-17
 
 ### Added

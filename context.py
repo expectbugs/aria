@@ -137,17 +137,21 @@ import redis_client
 import monitors
 
 
-def gather_always_context() -> str:
+def gather_always_context(user_key: str = "adam") -> str:
     """Tier 1 context — always injected on every call regardless of query.
 
-    Returns a compact string with data ARIA should always have:
-    datetime, active timers, active reminders, location/battery, exercise state.
+    Adam: datetime, his timers, his reminders, his location, his battery,
+          exercise state, active background tasks, monitor findings,
+          commitments, ambient capture status, pending destructive actions.
+    Becky: datetime, her timers, her reminders, active background tasks
+           scoped to her, her pending destructive actions. Nothing else —
+           she has no location/battery/Fitbit/monitors/ambient.
     """
     now = datetime.now()
     parts = [f"Current date and time: {now.strftime('%A, %B %d, %Y at %I:%M %p')}"]
 
-    # Active timers
-    active_timers = timer_store.get_active()
+    # Active timers — owner-filtered
+    active_timers = timer_store.get_active(owner=user_key)
     if active_timers:
         parts.append(f"Active timers ({len(active_timers)} total): " + "; ".join(
             f"[id={t['id']}] {t['label']} — fires at {t['fire_at'][11:16]}"
@@ -155,8 +159,8 @@ def gather_always_context() -> str:
             for t in active_timers
         ))
 
-    # Active reminders
-    reminders = calendar_store.get_reminders()
+    # Active reminders — owner-filtered
+    reminders = calendar_store.get_reminders(owner=user_key)
     if reminders:
         parts.append(f"Active reminders ({len(reminders)} total): " + "; ".join(
             f"[id={r['id']}] {r['text']}"
@@ -164,84 +168,92 @@ def gather_always_context() -> str:
             for r in reminders
         ))
 
-    # Latest location + battery
-    loc = location_store.get_latest()
-    if loc:
-        loc_name = loc.get("location", f"{loc['lat']:.4f}, {loc['lon']:.4f}")
-        parts.append(
-            f"Location: {loc_name} (as of {loc['timestamp'][11:16]})"
-        )
-        if loc.get("battery_pct") is not None:
-            parts.append(f"Phone battery: {loc['battery_pct']}%")
-
-    # Exercise mode
-    exercise = fitbit_store.get_exercise_state()
-    if exercise:
-        coaching = fitbit_store.get_exercise_coaching_context(state=exercise)
-        if coaching:
-            parts.append(coaching)
-
-    # Active background tasks (from Redis — swarm task status)
-    active_tasks = redis_client.get_active_tasks()
-    task_status = redis_client.format_task_status(active_tasks)
-    if task_status:
-        parts.append(task_status)
-
-    # Undelivered monitor findings (Tier 1 — ARIA should see these)
-    try:
-        findings = monitors.get_undelivered(min_urgency="low")
-        if findings:
-            parts.append("Monitor alerts: " + "; ".join(
-                f"[{f['urgency']}] {f['summary']}" for f in findings[:5]
-            ))
-    except Exception:
-        pass  # monitors table may not exist yet during migration
-
-    # Open commitments (Phase 6 — ambient promise tracker)
-    try:
-        import commitment_store
-        open_commitments = commitment_store.get_open(limit=5)
-        if open_commitments:
-            parts.append("Open commitments: " + "; ".join(
-                f"{c['who']} → {c['what']}"
-                + (f" (to {c['to_whom']})" if c.get("to_whom") else "")
-                + (f" [due {c['due_date']}]" if c.get("due_date") else "")
-                for c in open_commitments
-            ))
-        overdue = commitment_store.get_overdue()
-        if overdue:
-            parts.append(f"OVERDUE commitments ({len(overdue)}): " + "; ".join(
-                f"{c['who']} → {c['what']} (due {c['due_date']})"
-                for c in overdue[:3]
-            ))
-    except Exception:
-        pass
-
-    # Ambient capture status (Phase 6)
-    try:
-        import ambient_store
-        today_count = ambient_store.get_today_count()
-        if today_count > 0:
-            today_dur = ambient_store.get_today_duration()
-            dur_min = today_dur / 60
+    # Adam-only Tier 1 data — skipped entirely for Becky since she has none
+    if user_key == "adam":
+        # Latest location + battery
+        loc = location_store.get_latest()
+        if loc:
+            loc_name = loc.get("location", f"{loc['lat']:.4f}, {loc['lon']:.4f}")
             parts.append(
-                f"Ambient capture: {today_count} segments today ({dur_min:.0f} min recorded)"
+                f"Location: {loc_name} (as of {loc['timestamp'][11:16]})"
             )
-    except Exception:
-        pass
+            if loc.get("battery_pct") is not None:
+                parts.append(f"Phone battery: {loc['battery_pct']}%")
 
-    # Pending destructive actions awaiting confirmation
+        # Exercise mode
+        exercise = fitbit_store.get_exercise_state()
+        if exercise:
+            coaching = fitbit_store.get_exercise_coaching_context(state=exercise)
+            if coaching:
+                parts.append(coaching)
+
+        # Active background tasks (from Redis — swarm task status)
+        active_tasks = redis_client.get_active_tasks()
+        task_status = redis_client.format_task_status(active_tasks)
+        if task_status:
+            parts.append(task_status)
+
+        # Undelivered monitor findings (Tier 1 — ARIA should see these)
+        try:
+            findings = monitors.get_undelivered(min_urgency="low")
+            if findings:
+                parts.append("Monitor alerts: " + "; ".join(
+                    f"[{f['urgency']}] {f['summary']}" for f in findings[:5]
+                ))
+        except Exception:
+            pass  # monitors table may not exist yet during migration
+
+        # Open commitments (Phase 6 — ambient promise tracker)
+        try:
+            import commitment_store
+            open_commitments = commitment_store.get_open(limit=5)
+            if open_commitments:
+                parts.append("Open commitments: " + "; ".join(
+                    f"{c['who']} → {c['what']}"
+                    + (f" (to {c['to_whom']})" if c.get("to_whom") else "")
+                    + (f" [due {c['due_date']}]" if c.get("due_date") else "")
+                    for c in open_commitments
+                ))
+            overdue = commitment_store.get_overdue()
+            if overdue:
+                parts.append(f"OVERDUE commitments ({len(overdue)}): " + "; ".join(
+                    f"{c['who']} → {c['what']} (due {c['due_date']})"
+                    for c in overdue[:3]
+                ))
+        except Exception:
+            pass
+
+        # Ambient capture status (Phase 6)
+        try:
+            import ambient_store
+            today_count = ambient_store.get_today_count()
+            if today_count > 0:
+                today_dur = ambient_store.get_today_duration()
+                dur_min = today_dur / 60
+                parts.append(
+                    f"Ambient capture: {today_count} segments today ({dur_min:.0f} min recorded)"
+                )
+        except Exception:
+            pass
+
+    # Pending destructive actions awaiting confirmation — per-user filter
     try:
         from actions import get_pending_confirmations
-        pending = get_pending_confirmations()
+        pending = get_pending_confirmations(user_key=user_key)
         if pending:
             parts.append("PENDING ACTIONS (awaiting your confirmation):")
             for p in pending:
-                parts.append(f"  - {p['description']}")
+                parts.append(f"  - [{p['confirmation_id']}] {p['description']}")
             parts.append(
-                "If the user confirms, emit: "
+                "If the user says a simple 'yes' or 'no' alone, the system "
+                "automatically confirms or cancels ALL pending actions at "
+                "once — you don't need to emit anything in that case. "
+                "For selective confirmation (e.g. 'yes to the delete but keep "
+                "the reminder'), emit one confirm_destructive ACTION per "
+                "approved item: "
                 '<!--ACTION::{"action": "confirm_destructive", '
-                '"confirmation_id": "<id>"}-->')
+                '"confirmation_id": "<id>"}--> '
+                '(or use confirmation_id "all" to confirm every pending.)')
     except Exception:
         pass
 
@@ -276,12 +288,16 @@ def _briefing_delivered_today() -> bool:
     return row is not None
 
 
-async def build_request_context(text: str, is_image: bool = False) -> str:
+async def build_request_context(text: str, is_image: bool = False,
+                                user_key: str = "adam") -> str:
     """Build keyword-triggered context for ANY ARIA request.
 
-    This is the single unified context builder. Called from /ask, /ask/file,
-    and /sms to ensure identical behavior regardless of input channel.
-    Handles briefings, debriefs, and all keyword-triggered data injection.
+    Adam: full keyword-triggered behavior (weather, calendar, health,
+          vehicle, legal, email, projects, location, ambient).
+    Becky: narrower set — Milwaukee weather on weather keywords, her own
+           calendar on calendar keywords. Adam-only data (health, vehicle,
+           legal, email, ambient, projects, location) is SKIPPED from
+           injection — she reads it on demand via query.py --user adam.
 
     Returns the context string.
     """
@@ -291,17 +307,30 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     # Multi-domain triggers: inject health + calendar + email together
     multi_domain = any(kw in text_lower for kw in _MULTI_DOMAIN_SUBSTRINGS)
 
-    # --- Tier 1: Always-inject ---
-    always_ctx = gather_always_context()
+    # --- Tier 1: Always-inject (per-user) ---
+    always_ctx = gather_always_context(user_key=user_key)
     if always_ctx:
         ctx_parts.append(always_ctx)
+
+    # Becky's weather is Milwaukee; Adam's uses his default coords
+    if user_key == "becky":
+        weather_lat = getattr(config, "BECKY_WEATHER_LAT", None)
+        weather_lon = getattr(config, "BECKY_WEATHER_LON", None)
+    else:
+        weather_lat = getattr(config, "WEATHER_LAT", None)
+        weather_lon = getattr(config, "WEATHER_LON", None)
 
     # --- Weather ---
     if _match_keywords(text_lower, _WEATHER_SUBSTRINGS, _WEATHER_REGEX):
         try:
-            current = await weather.get_current_conditions()
-            forecast = await weather.get_forecast()
-            alerts = await weather.get_alerts()
+            if weather_lat is not None and weather_lon is not None:
+                current = await weather.get_current_conditions(lat=weather_lat, lon=weather_lon)
+                forecast = await weather.get_forecast(lat=weather_lat, lon=weather_lon)
+                alerts = await weather.get_alerts(lat=weather_lat, lon=weather_lon)
+            else:
+                current = await weather.get_current_conditions()
+                forecast = await weather.get_forecast()
+                alerts = await weather.get_alerts()
             ctx_parts.append(
                 f"Current weather: {current['description']}, "
                 f"{current['temperature_f']}°F, "
@@ -322,15 +351,15 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
         except Exception as e:
             ctx_parts.append(f"Weather data unavailable: {e}")
 
-    # --- Calendar (reminders are in Tier 1) ---
+    # --- Calendar (reminders are in Tier 1) — owner-filtered per user ---
     today = datetime.now().strftime("%Y-%m-%d")
     week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
     calendar_expanded = _match_keywords(text_lower, _CALENDAR_SUBSTRINGS, _CALENDAR_REGEX) or multi_domain
     if calendar_expanded:
-        events = calendar_store.get_events(start=today, end=week_end)
+        events = calendar_store.get_events(start=today, end=week_end, owner=user_key)
     else:
-        events = calendar_store.get_events(start=today, end=today)
+        events = calendar_store.get_events(start=today, end=today, owner=user_key)
 
     if events:
         scope = "next 7 days" if calendar_expanded else "today only"
@@ -342,6 +371,12 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
                 for e in events
             )
         )
+
+    # Everything below this point is Adam-only context injection.
+    # Becky reads Adam's health/nutrition/vehicle/legal/email/ambient/etc.
+    # on demand via `query.py --user adam` — not eagerly injected.
+    if user_key != "adam":
+        return "\n".join(ctx_parts) if ctx_parts else ""
 
     # --- Vehicle ---
     if _match_keywords(text_lower, _VEHICLE_SUBSTRINGS, _VEHICLE_REGEX):
@@ -525,16 +560,17 @@ async def build_request_context(text: str, is_image: bool = False) -> str:
     return "\n".join(ctx_parts) if ctx_parts else ""
 
 
-async def _get_context_for_text(text: str, is_image: bool = False) -> str:
-    """Route text to the right context builder.
+async def _get_context_for_text(text: str, is_image: bool = False,
+                                user_key: str = "adam") -> str:
+    """Route text to the right context builder for a specific user.
 
     Detects morning briefings and evening debriefs, otherwise uses
     keyword-triggered context. Single source of truth — used by /ask,
     /ask/voice, and /sms instead of repeating detection logic.
 
-    Tier 1 (always-inject) data is included on every path:
-    - Regular requests: build_request_context() calls gather_always_context()
-    - Briefing/debrief: prepended here before the specialized context
+    Becky: briefing triggers call gather_briefing_context_becky()
+           (Milwaukee weather, her calendar, her reminders, her news feeds);
+           debriefs not supported in v1 — fall through to regular context.
     """
     text_lower = text.lower()
     briefing_triggers = ["good morning", "morning brief", "briefing", "start my day"]
@@ -543,24 +579,29 @@ async def _get_context_for_text(text: str, is_image: bool = False) -> str:
         repeat_words = ["again", "repeat", "one more time", "redo"]
         is_repeat = any(w in text_lower for w in repeat_words)
         if is_repeat or not _briefing_delivered_today():
-            always = gather_always_context()
-            briefing = await gather_briefing_context()
-            _mark_category_a_delivered("briefing")
+            always = gather_always_context(user_key=user_key)
+            if user_key == "becky":
+                briefing = await gather_briefing_context_becky()
+            else:
+                briefing = await gather_briefing_context()
+                _mark_category_a_delivered("briefing")
             ctx = always + "\n" + briefing if always else briefing
-            log.info("Context: %d chars, path=briefing", len(ctx))
+            log.info("Context[%s]: %d chars, path=briefing", user_key, len(ctx))
             return ctx
         # Already delivered today — fall through to normal context
     if any(text_lower.startswith(p)
            for p in ["good night", "end my day", "nightly debrief",
                       "evening debrief", "wrap up my day"]):
-        always = gather_always_context()
-        debrief = await gather_debrief_context()
-        _mark_category_a_delivered("debrief")
-        ctx = always + "\n" + debrief if always else debrief
-        log.info("Context: %d chars, path=debrief", len(ctx))
-        return ctx
-    ctx = await build_request_context(text, is_image=is_image)
-    log.info("Context: %d chars, path=regular", len(ctx))
+        # Debrief is Adam-only in v0.9.5. For Becky, fall through.
+        if user_key == "adam":
+            always = gather_always_context(user_key="adam")
+            debrief = await gather_debrief_context()
+            _mark_category_a_delivered("debrief")
+            ctx = always + "\n" + debrief if always else debrief
+            log.info("Context[adam]: %d chars, path=debrief", len(ctx))
+            return ctx
+    ctx = await build_request_context(text, is_image=is_image, user_key=user_key)
+    log.info("Context[%s]: %d chars, path=regular", user_key, len(ctx))
     return ctx
 
 
@@ -820,6 +861,83 @@ async def gather_debrief_context() -> str:
             parts.append(f"\nDaily ambient summary:\n{summary['summary']}")
     except Exception:
         pass
+
+    return "\n".join(parts)
+
+
+async def gather_briefing_context_becky() -> str:
+    """Morning brief for Becky — Milwaukee weather, her calendar, her
+    reminders, her news feeds. No Adam data unless she asks.
+
+    Note: datetime, her timers, her reminders, and pending confirmations
+    come from Tier 1 (gather_always_context('becky')), prepended by
+    _get_context_for_text().
+    """
+    parts = []
+    today = datetime.now().strftime("%Y-%m-%d")
+    week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+    lat = getattr(config, "BECKY_WEATHER_LAT", None)
+    lon = getattr(config, "BECKY_WEATHER_LON", None)
+
+    # Milwaukee weather
+    try:
+        if lat is not None and lon is not None:
+            current = await weather.get_current_conditions(lat=lat, lon=lon)
+            forecast = await weather.get_forecast(lat=lat, lon=lon)
+            alerts = await weather.get_alerts(lat=lat, lon=lon)
+            parts.append(f"\nMilwaukee weather: {current['description']}, "
+                         f"{current['temperature_f']}°F, "
+                         f"humidity {current['humidity']}%, "
+                         f"wind {current['wind_mph']} mph")
+            parts.append("\nForecast:")
+            for p in forecast:
+                parts.append(f"  {p['name']}: {p['temperature']}°{p['unit']} — {p['summary']}")
+            if alerts:
+                parts.append("\nWeather Alerts:")
+                for a in alerts:
+                    parts.append(f"  {a['severity']}: {a['headline']}")
+    except Exception as e:
+        log.warning("Becky brief weather failed: %s", e)
+
+    # Becky's calendar — today through 7 days
+    try:
+        events = calendar_store.get_events(start=today, end=week_end, owner="becky")
+        if events:
+            parts.append("\nYour calendar (next 7 days):")
+            for e in events:
+                time_str = f" at {e['time']}" if e.get("time") else ""
+                parts.append(f"  - [id={e['id']}] {e['date']} {e['title']}{time_str}")
+        else:
+            parts.append("\nNothing on your calendar the next 7 days.")
+    except Exception as e:
+        log.warning("Becky brief calendar failed: %s", e)
+
+    # Becky's reminders — due today or earlier (still not done)
+    try:
+        reminders = calendar_store.get_reminders(owner="becky")
+        due_now = [r for r in reminders if r.get("due") and r["due"] <= today]
+        if due_now:
+            parts.append("\nReminders due today (or overdue):")
+            for r in due_now:
+                parts.append(f"  - [id={r['id']}] {r['text']} (due {r['due']})")
+    except Exception as e:
+        log.warning("Becky brief reminders failed: %s", e)
+
+    # Becky's news feeds
+    try:
+        feeds = getattr(config, "BECKY_NEWS_FEEDS", None)
+        if feeds:
+            digest = await news.get_news_digest(max_per_feed=3, feeds=feeds)
+            if digest:
+                parts.append("\nNews headlines:")
+                for category, items in digest.items():
+                    parts.append(f"  {category.title()}:")
+                    for item in items:
+                        summary = f" — {item['summary']}" if item.get("summary") else ""
+                        parts.append(f"    - {item['title']}{summary}")
+    except Exception as e:
+        log.warning("Becky brief news failed: %s", e)
 
     return "\n".join(parts)
 

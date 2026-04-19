@@ -112,6 +112,53 @@ TELNYX_PHONE_NUMBER = "+1XXXXXXXXXX"                         # ARIA's Telnyx pho
 TELNYX_WEBHOOK_URL = "https://host.tail.ts.net/webhook/sms"  # Public Funnel URL for webhook
 OWNER_PHONE_NUMBER = "+1XXXXXXXXXX"                          # Your personal phone number
 
+# --- Multi-user (v0.9.5+) ---
+# ARIA supports multiple authorized SMS users. Each gets their own
+# isolated Claude Code session (separate subprocess, separate conversation
+# memory) and owner-filtered data (reminders, events, timers scoped by
+# TEXT 'owner' column). Leave the example below populated with placeholders;
+# the daemon treats any phone not in TRUSTED_USERS as an unknown sender
+# (silent drop). Remove the Becky entry entirely if single-user.
+#
+# BECKY_NAME = "Becky"
+# BECKY_PHONE_NUMBER = "+1XXXXXXXXXX"
+# BECKY_RELATIONSHIP = "girlfriend"
+# BECKY_PRONOUNS = "she/her"
+# BECKY_TIMEZONE = "US Central"
+# BECKY_WEATHER_LAT = 43.04
+# BECKY_WEATHER_LON = -87.91
+# BECKY_NEWS_FEEDS = {
+#     "wisconsin": "https://www.tmj4.com/news.rss",
+#     "world":     "https://feeds.bbci.co.uk/news/world/rss.xml",
+#     "general":   "https://feeds.npr.org/1001/rss.xml",
+#     "nasa":      "https://www.nasa.gov/news-release/feed/",
+#     "marine":    "https://www.sciencedaily.com/rss/earth_climate/oceanography.xml",
+# }
+# BECKY_SESSION_DEEP_EFFORT = "max"
+# BECKY_SESSION_FAST_EFFORT = None    # None = no fast session
+
+TRUSTED_USERS = {
+    OWNER_PHONE_NUMBER: {
+        "user": "adam",
+        "name": OWNER_NAME,
+        "role": "owner",
+        "pronouns": "he/him",
+    },
+    # Second user example (uncomment and fill in BECKY_* above):
+    # BECKY_PHONE_NUMBER: {
+    #     "user": "becky",
+    #     "name": BECKY_NAME,
+    #     "role": "trusted",
+    #     "relationship": BECKY_RELATIONSHIP,
+    #     "pronouns": BECKY_PRONOUNS,
+    # },
+}
+
+# Auto-fire reminders when their due date arrives (v0.9.5+ — new).
+# Previously only location-triggered reminders auto-fired; this extends
+# that to all time-based reminders. Respects quiet hours.
+AUTO_REMINDER_FIRE_ENABLED = True
+
 # --- Fitbit (Web API — Personal app, register at dev.fitbit.com) ---
 FITBIT_CLIENT_ID = "your-client-id"               # OAuth 2.0 Client ID
 FITBIT_CLIENT_SECRET = "your-client-secret"         # Client Secret

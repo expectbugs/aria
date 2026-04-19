@@ -548,16 +548,17 @@ class TestRunUnifiedDelivery:
     @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
-    @patch("tick.sms.send_long_to_owner")
+    @patch("tick._sync_deliver", return_value=(True, "image"))
     @patch("tick._get_nudge_counts", return_value=(0, 0))
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
     @patch("tick.is_quiet_hours", return_value=False)
-    def test_sends_nudge_sms(self, mock_quiet, mock_cooldowns,
-                              mock_nudges, mock_counts, mock_send,
-                              mock_save_cd, mock_log_nudge, mock_classify,
-                              mock_get_undelivered, mock_mark, mock_load_state,
-                              mock_save_state):
+    def test_sends_nudge_image(self, mock_quiet, mock_cooldowns,
+                                mock_nudges, mock_counts, mock_send,
+                                mock_save_cd, mock_log_nudge, mock_classify,
+                                mock_get_undelivered, mock_mark, mock_load_state,
+                                mock_save_state):
+        """Nudges render to image and push via Tasker (not SMS)."""
         mock_nudges.return_value = [("meal_reminder", "No meals today")]
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -565,7 +566,7 @@ class TestRunUnifiedDelivery:
 
         with patch("httpx.post", return_value=mock_resp):
             tick.run_unified_delivery()
-        mock_send.assert_called_once_with("Hey, grab some food!")
+        mock_send.assert_called_once_with("Hey, grab some food!", "image")
         mock_save_cd.assert_called_once()
         mock_log_nudge.assert_called_once()
         assert mock_log_nudge.call_args[0][3] == "sent"
@@ -580,7 +581,7 @@ class TestRunUnifiedDelivery:
     @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
-    @patch("tick.sms.send_long_to_owner")
+    @patch("tick._sync_deliver", return_value=(True, "image"))
     @patch("tick._get_nudge_counts", return_value=(0, 0))
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
@@ -609,7 +610,7 @@ class TestRunUnifiedDelivery:
     @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
-    @patch("tick.sms.send_long_to_owner", side_effect=Exception("SMS failed"))
+    @patch("tick._sync_deliver", return_value=(False, "image"))
     @patch("tick._get_nudge_counts", return_value=(0, 0))
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
@@ -637,7 +638,7 @@ class TestRunUnifiedDelivery:
     @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
-    @patch("tick.sms.send_long_to_owner")
+    @patch("tick._sync_deliver", return_value=(True, "image"))
     @patch("tick._get_nudge_counts", return_value=(15, 0))
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
@@ -662,7 +663,7 @@ class TestRunUnifiedDelivery:
     @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
-    @patch("tick.sms.send_long_to_owner")
+    @patch("tick._sync_deliver", return_value=(True, "image"))
     @patch("tick._get_nudge_counts", return_value=(0, 2))
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
@@ -688,7 +689,7 @@ class TestRunUnifiedDelivery:
     @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "C")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
-    @patch("tick.sms.send_long_to_owner")
+    @patch("tick._sync_deliver", return_value=(True, "image"))
     @patch("tick._get_nudge_counts", return_value=(0, 0))
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
@@ -712,7 +713,7 @@ class TestRunUnifiedDelivery:
 
     @patch("monitors.get_undelivered", return_value=[])
     @patch("monitors.classify_category", side_effect=lambda k, source="nudge": "A")
-    @patch("tick.sms.send_long_to_owner")
+    @patch("tick._sync_deliver", return_value=(True, "image"))
     @patch("tick._get_nudge_counts", return_value=(0, 0))
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
@@ -732,7 +733,7 @@ class TestRunUnifiedDelivery:
     @patch("monitors.classify_category")
     @patch("tick._log_nudge")
     @patch("tick.save_cooldowns")
-    @patch("tick.sms.send_long_to_owner")
+    @patch("tick._sync_deliver", return_value=(True, "image"))
     @patch("tick._get_nudge_counts", return_value=(0, 0))
     @patch("tick.evaluate_nudges")
     @patch("tick.load_cooldowns", return_value={})
@@ -762,10 +763,10 @@ class TestRunUnifiedDelivery:
         call_args = mock_httpx.call_args
         triggers = call_args[1]["json"]["triggers"]
         assert len(triggers) == 2
-        # One SMS delivery
+        # One image delivery
         mock_send.assert_called_once()
-        # Findings marked delivered
-        mock_mark.assert_called_once_with([1], "sms")
+        # Findings marked delivered via the actual method returned by _sync_deliver
+        mock_mark.assert_called_once_with([1], "image")
 
 
 # ---------------------------------------------------------------------------

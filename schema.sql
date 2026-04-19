@@ -11,10 +11,14 @@ CREATE TABLE IF NOT EXISTS events (
     google_id TEXT,
     google_etag TEXT,
     last_synced TIMESTAMPTZ,
+    owner TEXT NOT NULL DEFAULT 'adam',
     created TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
 CREATE INDEX IF NOT EXISTS idx_events_google_id ON events(google_id);
+CREATE INDEX IF NOT EXISTS idx_events_owner_date ON events(owner, date);
+-- Backfill for existing deployments (idempotent)
+ALTER TABLE events ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT 'adam';
 
 -- Reminders
 CREATE TABLE IF NOT EXISTS reminders (
@@ -27,9 +31,13 @@ CREATE TABLE IF NOT EXISTS reminders (
     done BOOLEAN NOT NULL DEFAULT FALSE,
     completed_at TIMESTAMPTZ,
     auto_expired_at TIMESTAMPTZ,
+    owner TEXT NOT NULL DEFAULT 'adam',
     created TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_done ON reminders(done);
+CREATE INDEX IF NOT EXISTS idx_reminders_owner_done ON reminders(owner, done);
+-- Backfill for existing deployments (idempotent)
+ALTER TABLE reminders ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT 'adam';
 
 -- Health entries
 CREATE TABLE IF NOT EXISTS health_entries (
@@ -79,11 +87,15 @@ CREATE TABLE IF NOT EXISTS timers (
     message TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'user',
     status TEXT NOT NULL DEFAULT 'pending',
+    owner TEXT NOT NULL DEFAULT 'adam',
     created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     fired_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_timers_status_fire ON timers(status, fire_at);
+CREATE INDEX IF NOT EXISTS idx_timers_owner_status_fire ON timers(owner, status, fire_at);
+-- Backfill for existing deployments (idempotent)
+ALTER TABLE timers ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT 'adam';
 
 -- Nutrition tracking
 CREATE TABLE IF NOT EXISTS nutrition_entries (

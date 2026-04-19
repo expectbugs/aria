@@ -64,9 +64,9 @@ def make_mock_process():
 
 @pytest.fixture(autouse=True)
 def _reset_singleton():
-    session_pool._pool = None
+    session_pool._SESSION_POOLS.clear()
     yield
-    session_pool._pool = None
+    session_pool._SESSION_POOLS.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -487,17 +487,30 @@ class TestSessionPool:
 # Singleton
 # ---------------------------------------------------------------------------
 
-class TestSingleton:
-    def test_get_session_pool_returns_singleton(self):
-        p1 = session_pool.get_session_pool()
-        p2 = session_pool.get_session_pool()
+class TestRegistry:
+    def test_get_session_pool_returns_same_per_user(self):
+        p1 = session_pool.get_session_pool("adam")
+        p2 = session_pool.get_session_pool("adam")
         assert p1 is p2
 
-    def test_singleton_reset(self):
-        p1 = session_pool.get_session_pool()
-        session_pool._pool = None
-        p2 = session_pool.get_session_pool()
+    def test_different_users_get_different_pools(self):
+        with patch("system_prompt.build_becky_primary_prompt",
+                   return_value="becky prompt"):
+            p_adam = session_pool.get_session_pool("adam")
+            p_becky = session_pool.get_session_pool("becky")
+        assert p_adam is not p_becky
+        assert p_adam.user_key == "adam"
+        assert p_becky.user_key == "becky"
+
+    def test_registry_reset(self):
+        p1 = session_pool.get_session_pool("adam")
+        session_pool._SESSION_POOLS.clear()
+        p2 = session_pool.get_session_pool("adam")
         assert p1 is not p2
+
+    def test_unknown_user_raises(self):
+        with pytest.raises(ValueError, match="Unknown user_key"):
+            session_pool.get_session_pool("alice")
 
 
 # ---------------------------------------------------------------------------

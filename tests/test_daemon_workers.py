@@ -31,7 +31,8 @@ def reset_tasks():
 def _bypass_verification():
     """Worker tests focus on delivery/task mechanics, not verification.
     Make _verify_and_maybe_retry a passthrough that returns its input."""
-    async def _passthrough(text, context, result, log_fn=None, tool_calls=None):
+    async def _passthrough(text, context, result, log_fn=None, tool_calls=None,
+                           user_key="adam"):
         return result
     with patch("daemon._verify_and_maybe_retry", new=_passthrough):
         yield

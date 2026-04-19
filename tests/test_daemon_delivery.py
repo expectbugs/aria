@@ -40,7 +40,8 @@ def _mock_execute_delivery():
 @pytest.fixture(autouse=True)
 def _bypass_verification():
     """Delivery tests focus on routing, not verification."""
-    async def _passthrough(text, context, result, log_fn=None, tool_calls=None):
+    async def _passthrough(text, context, result, log_fn=None, tool_calls=None,
+                           user_key="adam"):
         return result
     with patch("daemon._verify_and_maybe_retry", new=_passthrough):
         yield

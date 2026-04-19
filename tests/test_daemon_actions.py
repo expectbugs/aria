@@ -29,7 +29,8 @@ class TestProcessActions:
             response = 'Got it! <!--ACTION::{"action": "add_event", "title": "Dentist", "date": "2026-03-20", "time": "14:30"}-->'
             result = actions.process_actions_sync(response)
             mock_cal.add_event.assert_called_once_with(
-                title="Dentist", event_date="2026-03-20", time="14:30", notes=None,
+                title="Dentist", event_date="2026-03-20", time="14:30",
+                notes=None, owner="adam",
             )
             assert "<!--ACTION" not in result
         finally:
@@ -47,7 +48,7 @@ class TestProcessActions:
         actions.process_actions_sync(response)
         mock_cal.add_reminder.assert_called_once_with(
             text="Check mail", due=None, recurring=None,
-            location="home", location_trigger="arrive",
+            location="home", location_trigger="arrive", owner="adam",
         )
 
     @patch("actions.calendar_store")

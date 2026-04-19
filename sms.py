@@ -139,8 +139,119 @@ def _render_sms_image(body: str, header: str = "ARIA") -> str:
     return str(tmp_path)
 
 
+# --- GSM-7 encoding normalization ---
+#
+# SMS has two encodings: GSM-7 (160 chars/single segment, 153 chars/concat
+# segment) and UCS-2 (70/67). Any single non-GSM-7 char in the message forces
+# UCS-2 for the whole message, shrinking capacity ~2.3x. Telnyx rejects any
+# single API call that would produce >10 segments (error 40302), so a UCS-2
+# message over ~670 chars fails entirely unless split.
+#
+# We aggressively substitute common typography/symbol chars with ASCII
+# equivalents to keep messages in GSM-7 when possible. Anything that survives
+# (emoji, CJK text, rare symbols) legitimately belongs in UCS-2, and split_sms
+# uses a smaller chunk size in that case.
+
+# The GSM-7 default alphabet + extension table (right side). Extension chars
+# cost 2 septets each but are still GSM-7 (don't force UCS-2).
+_GSM7_CHARSET = frozenset(
+    "@\n\r "
+    "!\"#$%&'()*+,-./0123456789:;<=>?"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "£¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ"
+    "¡¿ÄÖÑÜ§äöñüà¤"
+    "\f^{}\\[~]|€"
+)
+
+_GSM7_SUBSTITUTIONS = {
+    # Dashes
+    "\u2014": "-",    # em dash (—)
+    "\u2013": "-",    # en dash (–)
+    "\u2212": "-",    # minus sign (−)
+    # Smart quotes → straight
+    "\u2018": "'",    # ‘
+    "\u2019": "'",    # ’
+    "\u201A": "'",    # ‚
+    "\u201B": "'",    # ‛
+    "\u201C": '"',    # “
+    "\u201D": '"',    # ”
+    "\u201E": '"',    # „
+    "\u201F": '"',    # ‟
+    "\u00AB": '"',    # «
+    "\u00BB": '"',    # »
+    # Typography
+    "\u2026": "...",  # ellipsis …
+    "\u2022": "*",    # bullet •
+    "\u00B7": ".",    # middle dot ·
+    "\u2032": "'",    # prime ′
+    "\u2033": '"',    # double prime ″
+    # Backtick — ASCII 0x60 but NOT in GSM-7
+    "`": "'",
+    # Spaces → regular space (or stripped for zero-width)
+    "\u00A0": " ",    # non-breaking space
+    "\u2009": " ",    # thin space
+    "\u202F": " ",    # narrow no-break space
+    "\u2002": " ",    # en space
+    "\u2003": " ",    # em space
+    "\u2007": " ",    # figure space
+    "\u200B": "",     # zero-width space
+    "\u200C": "",     # zero-width non-joiner
+    "\u200D": "",     # zero-width joiner
+    "\uFEFF": "",     # BOM / zero-width no-break
+    # Common symbols
+    "\u00A9": "(c)",  # ©
+    "\u00AE": "(R)",  # ®
+    "\u2122": "(TM)", # ™
+    "\u00B0": "deg",  # °
+    # Math
+    "\u00D7": "x",    # ×
+    "\u00F7": "/",    # ÷
+    "\u00B1": "+/-",  # ±
+    # Arrows
+    "\u2192": "->",   # →
+    "\u2190": "<-",   # ←
+    "\u2194": "<->",  # ↔
+    "\u21D2": "=>",   # ⇒
+    "\u21D0": "<=",   # ⇐
+    # Checkmarks
+    "\u2713": "[x]",  # ✓
+    "\u2714": "[x]",  # ✔
+    "\u2717": "[ ]",  # ✗
+    "\u2718": "[ ]",  # ✘
+    # Bullets/shapes
+    "\u25CF": "*",    # ●
+    "\u25E6": "o",    # ◦
+    "\u25A0": "*",    # ■
+    "\u25A1": "[]",   # □
+}
+
+
+def _normalize_for_sms(text: str) -> tuple[str, bool]:
+    """Substitute non-GSM-7 chars with ASCII equivalents where possible.
+
+    Returns: (normalized_text, is_fully_gsm7)
+
+    If is_fully_gsm7 is True, the message can use the larger 1500-char
+    split size (10 concat segments). If False, anything survived that can't
+    be substituted (emoji, CJK text, etc.) and we must use the 600-char
+    UCS-2-safe split size.
+    """
+    for src, dst in _GSM7_SUBSTITUTIONS.items():
+        if src in text:
+            text = text.replace(src, dst)
+    is_gsm7 = all(c in _GSM7_CHARSET for c in text)
+    return text, is_gsm7
+
+
 def send_sms(to: str, body: str, media_url: str | None = None) -> str:
-    """Send an SMS or MMS message via Telnyx. Returns the message ID."""
+    """Send an SMS or MMS message via Telnyx. Returns the message ID.
+
+    Body is normalized for GSM-7 before sending (em dash → hyphen, smart
+    quotes → straight, backticks → apostrophes, etc.) to avoid triggering
+    UCS-2 encoding that would require shorter segments or reject at >10.
+    """
+    body, _ = _normalize_for_sms(body)
     client = get_client()
     kwargs: dict = {
         "from_": config.TELNYX_PHONE_NUMBER,
@@ -168,14 +279,30 @@ def send_sms(to: str, body: str, media_url: str | None = None) -> str:
     return message_id
 
 
-def split_sms(body: str, max_length: int = 1500) -> list[str]:
+def split_sms(body: str, max_length: int | None = None) -> list[str]:
     """Split a long message into chunks at natural break points.
+
+    Normalizes non-GSM-7 chars first (em dashes → hyphens, etc.), then picks
+    a chunk size based on the resulting encoding:
+    - GSM-7 (all chars substituted or native): 1500 chars (≤10 segments × 153)
+    - UCS-2 (unicode survived substitution, e.g. emoji): 600 chars (≤9 × 67)
+
+    Either stays under Telnyx's 10-segment-per-API-call limit.
+
+    If max_length is passed explicitly, normalization still happens but the
+    caller's ceiling is respected (used by tests and callers with specific
+    size constraints).
 
     Splitting priority: paragraph boundaries > sentence boundaries >
     word boundaries > hard cut.
     """
     if not body:
         return [""]
+
+    body, is_gsm7 = _normalize_for_sms(body)
+    if max_length is None:
+        max_length = 1500 if is_gsm7 else 600
+
     if len(body) <= max_length:
         return [body]
 

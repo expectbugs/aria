@@ -33,6 +33,9 @@ ARIA_Project_Plan.md
 # Personal notes
 notes/
 
+# Design docs with personal info (The Beckaning)
+docs/beckaning.md
+
 # Test cache
 .hypothesis/
 .pytest_cache/

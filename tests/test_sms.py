@@ -121,6 +121,125 @@ class TestSendMms:
         )
 
 
+class TestNormalizeForSms:
+    """GSM-7 normalization prevents 22-segment UCS-2 explosions."""
+
+    def test_plain_ascii_unchanged_and_gsm7(self):
+        text, is_gsm7 = sms._normalize_for_sms("Hello, world!")
+        assert text == "Hello, world!"
+        assert is_gsm7 is True
+
+    def test_em_dash_to_hyphen(self):
+        text, is_gsm7 = sms._normalize_for_sms("Hey \u2014 how are you?")
+        assert text == "Hey - how are you?"
+        assert is_gsm7 is True
+
+    def test_en_dash_to_hyphen(self):
+        text, is_gsm7 = sms._normalize_for_sms("Range: 5\u201310")
+        assert text == "Range: 5-10"
+        assert is_gsm7 is True
+
+    def test_smart_quotes_to_straight(self):
+        text, is_gsm7 = sms._normalize_for_sms("\u201CHello\u201D she said \u2018hi\u2019")
+        assert text == '"Hello" she said \'hi\''
+        assert is_gsm7 is True
+
+    def test_ellipsis_to_three_dots(self):
+        text, is_gsm7 = sms._normalize_for_sms("Wait\u2026")
+        assert text == "Wait..."
+        assert is_gsm7 is True
+
+    def test_backtick_to_apostrophe(self):
+        """Backtick is ASCII 0x60 but NOT in GSM-7 — this specific bug caused
+        the 22-segment 40302 error on 2026-04-18."""
+        text, is_gsm7 = sms._normalize_for_sms("Check the `foo()` function")
+        assert text == "Check the 'foo()' function"
+        assert is_gsm7 is True
+
+    def test_zero_width_chars_stripped(self):
+        # Zero-width joiner/space commonly sneak in from copy-paste
+        text, is_gsm7 = sms._normalize_for_sms("Hello\u200Bworld\u200D!")
+        assert text == "Helloworld!"
+        assert is_gsm7 is True
+
+    def test_non_breaking_space_to_regular(self):
+        text, is_gsm7 = sms._normalize_for_sms("Foo\u00A0bar")
+        assert text == "Foo bar"
+        assert is_gsm7 is True
+
+    def test_copyright_and_trademark(self):
+        text, is_gsm7 = sms._normalize_for_sms("\u00A9 2026 ARIA\u2122")
+        assert text == "(c) 2026 ARIA(TM)"
+        assert is_gsm7 is True
+
+    def test_degree_and_math(self):
+        text, is_gsm7 = sms._normalize_for_sms("45\u00B0F \u00B1 2")
+        assert text == "45degF +/- 2"
+        assert is_gsm7 is True
+
+    def test_arrows_to_ascii(self):
+        text, is_gsm7 = sms._normalize_for_sms("go \u2192 there")
+        assert text == "go -> there"
+        assert is_gsm7 is True
+
+    def test_emoji_survives_as_ucs2(self):
+        """Emoji can't be meaningfully substituted — message stays UCS-2."""
+        text, is_gsm7 = sms._normalize_for_sms("Nice \U0001F525")
+        assert "\U0001F525" in text
+        assert is_gsm7 is False
+
+    def test_cjk_survives_as_ucs2(self):
+        text, is_gsm7 = sms._normalize_for_sms("hello \u4f60\u597d")
+        assert "\u4f60\u597d" in text
+        assert is_gsm7 is False
+
+    def test_the_actual_ble_response_that_failed(self):
+        """Exact reproduction of the 40302-triggering message from 2026-04-18."""
+        body = ("Oh even better then. I peeked at g2code/app/src/input.ts \u2014 "
+                "your Gesture type is literally `'tap' | 'double_tap' | "
+                "'scroll_up' | 'scroll_down'` already")
+        text, is_gsm7 = sms._normalize_for_sms(body)
+        # Em-dash and backticks both substituted
+        assert "\u2014" not in text
+        assert "`" not in text
+        assert is_gsm7 is True
+
+
+class TestSplitSmsWithNormalization:
+    """split_sms auto-picks max_length based on GSM-7-ness after normalization."""
+
+    def test_gsm7_text_uses_1500_default(self):
+        # 1200 chars of ASCII — fits in default GSM-7 budget (1500)
+        body = "a" * 1200
+        result = sms.split_sms(body)
+        assert len(result) == 1
+
+    def test_ucs2_text_uses_600_default(self):
+        # 800 chars with an emoji — forces UCS-2, should split at 600
+        body = "\U0001F525" + "a" * 799  # 800 chars total, forces UCS-2
+        result = sms.split_sms(body)
+        assert len(result) >= 2
+        for chunk in result:
+            assert len(chunk) <= 600
+
+    def test_em_dash_text_stays_gsm7_after_normalization(self):
+        # Long message with em-dashes — would be UCS-2 without normalization,
+        # but substitution brings it back to GSM-7, so 1500 default applies
+        body = "Hello \u2014 " + "text " * 250  # ~1260 chars with em-dashes
+        result = sms.split_sms(body)
+        assert len(result) == 1
+        # Verify substitution actually happened
+        assert "\u2014" not in result[0]
+        assert "-" in result[0]
+
+    def test_explicit_max_length_respected(self):
+        body = "x" * 2000
+        result = sms.split_sms(body, max_length=500)
+        assert len(result) >= 4
+        for chunk in result:
+            assert len(chunk) <= 500
+
+
 class TestSplitSms:
     def test_short_message_no_split(self):
         assert sms.split_sms("Hello there!") == ["Hello there!"]

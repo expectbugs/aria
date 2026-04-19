@@ -29,10 +29,17 @@ async def fetch_feed(name: str, url: str, max_items: int = 3) -> list[dict]:
         return []
 
 
-async def get_news_digest(max_per_feed: int = 3) -> dict[str, list[dict]]:
-    """Fetch headlines from all configured feeds in parallel."""
-    names = list(NEWS_FEEDS.keys())
-    urls = list(NEWS_FEEDS.values())
+async def get_news_digest(max_per_feed: int = 3,
+                          feeds: dict[str, str] | None = None) -> dict[str, list[dict]]:
+    """Fetch headlines from all configured feeds in parallel.
+
+    feeds: optional dict {name: url} — defaults to config.NEWS_FEEDS (Adam's
+    feeds). Pass config.BECKY_NEWS_FEEDS to build a per-user digest.
+    """
+    if feeds is None:
+        feeds = NEWS_FEEDS
+    names = list(feeds.keys())
+    urls = list(feeds.values())
     results = await asyncio.gather(
         *[fetch_feed(n, u, max_per_feed) for n, u in zip(names, urls)]
     )

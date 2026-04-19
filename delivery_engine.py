@@ -67,6 +67,22 @@ def _is_device_connected(device: dict) -> bool:
         return False
 
 
+def _becky_state() -> UserState:
+    """Synthetic UserState for Becky — she has no location/Fitbit/devices in v1.
+
+    Used so log_decision can record Becky's delivery choices without pulling
+    Adam's location/exercise/device data. location='unknown' + activity='available'
+    + channels=['sms'] reflects her actual setup (phone-only, SMS-only).
+    """
+    return UserState(
+        location="unknown",
+        activity="available",
+        channels=["sms"],
+        battery=None,
+        location_fresh=False,
+    )
+
+
 def get_user_state() -> UserState:
     """Infer current user state from location + time + Fitbit + devices."""
     now = datetime.now()
@@ -375,6 +391,7 @@ async def execute_delivery(
     hint: str | None = None,
     sms_target: str | None = None,
     push_voice: bool = True,
+    user_key: str = "adam",
 ) -> dict:
     """Evaluate delivery, execute it, log decision. Single get_user_state() call.
 
@@ -390,11 +407,62 @@ async def execute_delivery(
         sms_target: phone number for SMS delivery (None → owner phone)
         push_voice: True = push audio to phone (proactive/SMS flows)
                     False = return audio bytes only (task flows where phone polls)
+        user_key: "adam" or "becky" — determines routing defaults. For Becky,
+                  SMS is the only channel; MMS (image) is respected for
+                  user-initiated image replies, voice/glasses/defer collapse
+                  to SMS.
 
     Returns: {"method": str, "audio": bytes, "reason": str}
     """
     import os
     import uuid
+
+    # --- Becky short-circuit: SMS-only device, no voice/glasses/defer ---
+    if user_key == "becky":
+        target = sms_target or getattr(config, "BECKY_PHONE_NUMBER", None)
+        if not target:
+            log.error("[DELIVERY] user_key=becky but no BECKY_PHONE_NUMBER configured")
+            decision = DeliveryDecision("dropped",
+                                        "becky routing but no phone configured")
+            log_decision(decision, content_type, source, hint,
+                         _state=_becky_state())
+            return {"method": "dropped", "audio": b"",
+                    "reason": decision.reason}
+
+        # hint="image" → render the response text as an image and MMS it
+        # (analog of Adam's image-push path, but via Telnyx MMS since she
+        # has no Tasker). On any rendering/MMS failure, fall through to SMS.
+        if hint == "image":
+            try:
+                from sms import _render_sms_image, send_image_mms
+                img_path = _render_sms_image(response_text, header="ARIA")
+                try:
+                    send_image_mms(target, img_path, body="")
+                    decision = DeliveryDecision(
+                        "image", "becky: text rendered to MMS image")
+                    log_decision(decision, content_type, source, hint,
+                                 _state=_becky_state())
+                    return {"method": "image", "audio": b"",
+                            "reason": decision.reason}
+                finally:
+                    try:
+                        os.unlink(img_path)
+                    except OSError:
+                        pass
+            except Exception as e:
+                log.error("[DELIVERY] Becky image MMS failed, falling back to SMS: %s", e)
+                # Fall through to SMS below
+
+        # Default: plain SMS
+        try:
+            import sms as _sms
+            _sms.send_long_sms(target, response_text)
+        except Exception as e:
+            log.error("[DELIVERY] Becky SMS failed: %s", e)
+        decision = DeliveryDecision("sms", "becky: SMS-only channel")
+        log_decision(decision, content_type, source, hint,
+                     _state=_becky_state())
+        return {"method": "sms", "audio": b"", "reason": decision.reason}
 
     # Decide — single get_user_state() call shared with log
     state = get_user_state()

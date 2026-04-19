@@ -46,6 +46,7 @@ async def _on_completion(task_id: str, status: str, result_text: str):
     task_data = client.hgetall(f"{prefix}task:{task_id}")
     notify = task_data.get("notify", "1") == "1"
     description = task_data.get("description", "background task")
+    user_key = task_data.get("user_key", "adam")
 
     if not notify:
         log.info("Task %s completed silently (notify=false)", task_id)
@@ -79,7 +80,7 @@ async def _on_completion(task_id: str, status: str, result_text: str):
         response = await ask_haiku(prompt)
 
         # Process any ACTION blocks (execute + strip from response text)
-        result = await process_actions(response)
+        result = await process_actions(response, user_key=user_key)
         response = result.to_response()
 
         # Delivery routing via shared execute_delivery (push voice — no task to poll)
@@ -89,12 +90,15 @@ async def _on_completion(task_id: str, status: str, result_text: str):
             # CLI channel: deliver as image to phone (user is at PC, phone nearby)
             dr = await _de.execute_delivery(
                 response, content_type="task_completion",
-                source="monitor_finding", push_voice=False)
+                source="monitor_finding", push_voice=False,
+                user_key=user_key)
         else:
             dr = await _de.execute_delivery(
                 response, content_type="task_completion",
-                source=task_channel, push_voice=True)
-        log.info("Task %s result delivered via %s", task_id, dr["method"])
+                source=task_channel, push_voice=True,
+                user_key=user_key)
+        log.info("Task %s[%s] result delivered via %s",
+                 task_id, user_key, dr["method"])
 
     except Exception as e:
         log.error("Failed to compose response for task %s: %s", task_id, e)

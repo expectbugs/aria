@@ -14,20 +14,34 @@ import os
 
 import config
 import redis_client
-from system_prompt import build_action_prompt
 
 log = logging.getLogger("aria.action")
 
 
 class ActionAria:
-    """Persistent Claude Code session for complex background tasks."""
+    """Persistent Claude Code session for complex background tasks.
 
-    def __init__(self):
+    One instance per user ("adam" or "becky"). Adam's default uses the
+    standard action prompt; Becky's uses build_becky_action_prompt which
+    defaults delivery to her phone and restricts push_image to explicit
+    cross-user requests.
+    """
+
+    def __init__(self, user_key: str = "adam"):
+        self.user_key = user_key
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
 
     def _is_alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
+
+    def _build_prompt(self, task_id: str) -> str:
+        """Build and return the system prompt for this action worker."""
+        # Lazy import to avoid circular imports at module load time.
+        from system_prompt import build_action_prompt, build_becky_action_prompt
+        if self.user_key == "becky":
+            return build_becky_action_prompt().replace("TASK_ID", task_id)
+        return build_action_prompt().replace("TASK_ID", task_id)
 
     async def _spawn(self, task_id: str):
         """Spawn a fresh Claude Code process with the action prompt.
@@ -39,7 +53,7 @@ class ActionAria:
         env["CLAUDE_CODE_EFFORT_LEVEL"] = "max"
         env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
 
-        prompt = build_action_prompt().replace("TASK_ID", task_id)
+        prompt = self._build_prompt(task_id)
 
         self._proc = await asyncio.create_subprocess_exec(
             config.CLAUDE_CLI,
@@ -56,7 +70,8 @@ class ActionAria:
             env=env,
             limit=16 * 1024 * 1024,  # 16MB readline buffer (images can be 4MB+ base64)
         )
-        log.info("Action ARIA spawned for task %s (pid=%s)", task_id, self._proc.pid)
+        log.info("Action ARIA[%s] spawned for task %s (pid=%s)",
+                 self.user_key, task_id, self._proc.pid)
 
     async def _kill(self):
         """Kill the current process."""
@@ -142,13 +157,17 @@ class ActionAria:
                 return {"result": None, "error": str(e)}
 
 
-# Global singleton
-_action_aria: ActionAria | None = None
+# Per-user registry — one ActionAria instance per user_key
+_ACTION_ARIAS: dict[str, ActionAria] = {}
 
 
-def get_action_aria() -> ActionAria:
-    """Get or create the global Action ARIA instance."""
-    global _action_aria
-    if _action_aria is None:
-        _action_aria = ActionAria()
-    return _action_aria
+def get_action_aria(user_key: str = "adam") -> ActionAria:
+    """Get or create the Action ARIA instance for a specific user.
+
+    Becky and Adam each have their own instance so task isolation is
+    guaranteed at the subprocess level (even though instances run one
+    task at a time, spawning fresh per task).
+    """
+    if user_key not in _ACTION_ARIAS:
+        _ACTION_ARIAS[user_key] = ActionAria(user_key=user_key)
+    return _ACTION_ARIAS[user_key]

@@ -27,8 +27,14 @@ MAX_CHARS_PER_TURN = 3000
 _ACTION_BLOCK = re.compile(r'<!--ACTION::.*?-->', re.DOTALL)
 
 
-def get_recent_turns(n: int | None = None) -> list[dict]:
-    """Pull the last N conversation turns from request_log.
+def get_recent_turns(n: int | None = None,
+                     user_key: str = "adam") -> list[dict]:
+    """Pull the last N conversation turns from request_log for a given user.
+
+    user_key routing (based on the [sms:+N] channel prefix stored in input):
+    - 'adam': everything EXCEPT Becky's SMS prefix. Adam's voice/file/CLI/
+              SMS history all belong to him.
+    - 'becky': ONLY Becky's SMS prefix.
 
     Returns a list of Anthropic API message dicts:
         [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
@@ -40,15 +46,31 @@ def get_recent_turns(n: int | None = None) -> list[dict]:
     if n is None:
         n = getattr(config, "ARIA_HISTORY_TURNS", 10)
 
+    # Build user_key filter. We use config.BECKY_PHONE_NUMBER so a Visible
+    # port (or any future number change) only requires updating config.
+    becky_phone = getattr(config, "BECKY_PHONE_NUMBER", None)
+
+    if user_key == "becky" and becky_phone:
+        user_filter_sql = "AND input LIKE %s"
+        user_filter_arg = (f"[sms:{becky_phone}]%",)
+    elif user_key == "adam" and becky_phone:
+        user_filter_sql = "AND input NOT LIKE %s"
+        user_filter_arg = (f"[sms:{becky_phone}]%",)
+    else:
+        # No Becky configured or unknown user — fall back to all turns
+        user_filter_sql = ""
+        user_filter_arg = ()
+
     with db.get_conn() as conn:
         rows = conn.execute(
-            """SELECT timestamp, input, response FROM request_log
-               WHERE status = 'ok'
-               AND input IS NOT NULL AND input != ''
-               AND response IS NOT NULL AND response != ''
-               ORDER BY timestamp DESC
-               LIMIT %s""",
-            (n,),
+            f"""SELECT timestamp, input, response FROM request_log
+                WHERE status = 'ok'
+                AND input IS NOT NULL AND input != ''
+                AND response IS NOT NULL AND response != ''
+                {user_filter_sql}
+                ORDER BY timestamp DESC
+                LIMIT %s""",
+            user_filter_arg + (n,),
         ).fetchall()
 
     if not rows:

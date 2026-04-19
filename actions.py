@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+import config
 import db
 import calendar_store
 import vehicle_store
@@ -35,7 +36,8 @@ _DESTRUCTIVE_ACTIONS = frozenset({
 })
 
 # Module-level store for pending destructive actions awaiting user confirmation.
-# {confirmation_id: {"action": dict, "created": float, "description": str}}
+# {confirmation_id: {"user_key": str, "action": dict, "created": float, "description": str}}
+# user_key is used to scope get_pending_confirmations and clear_all_pending per-user.
 _pending_confirmations: dict[str, dict] = {}
 
 _PENDING_EXPIRY_SECONDS = 600  # 10 minutes
@@ -137,27 +139,156 @@ def _describe_action(action: dict) -> str:
     return f"{act} (id={aid})"
 
 
-def get_pending_confirmations() -> list[dict]:
-    """Return active (non-expired) pending confirmations for context injection."""
+def get_pending_confirmations(user_key: str = "adam") -> list[dict]:
+    """Return active (non-expired) pending confirmations for a specific user.
+
+    Scoped per-user so Adam's and Becky's pending actions never leak across.
+    Entries missing user_key (legacy) are treated as Adam's for back-compat.
+    """
     _cleanup_expired_pending()
     return [
         {"confirmation_id": k, "description": v["description"],
          "created": v["created"]}
         for k, v in _pending_confirmations.items()
+        if v.get("user_key", "adam") == user_key
     ]
 
 
-async def execute_pending(confirmation_id: str) -> tuple[bool, str]:
+async def _get_target_owner(action: dict) -> str | None:
+    """Return the owner of the target record for a destructive action.
+
+    Used for cross-user delete notifications. Returns None when the store
+    doesn't have an owner column (Adam-only stores — those deletes can only
+    be emitted by Adam anyway since the permission gate blocks non-Adam).
+    """
+    act = action.get("action")
+    aid = action.get("id")
+    if not aid:
+        return None
+    try:
+        if act == "delete_event":
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT owner FROM events WHERE id = %s", (aid,),
+                ).fetchone()
+            return row.get("owner") if row else None
+        if act == "delete_reminder":
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT owner FROM reminders WHERE id = %s", (aid,),
+                ).fetchone()
+            return row.get("owner") if row else None
+    except Exception as e:
+        log.warning("_get_target_owner(%s, %s) failed: %s", act, aid, e)
+        return None
+    # All other destructive actions target Adam-only stores — return "adam"
+    # so a rogue Becky attempt would be flagged (but the permission gate
+    # already blocks her from emitting them in the first place).
+    return "adam"
+
+
+def _notify_cross_user_delete(target_owner: str, requester: str,
+                              descriptions: list[str]) -> bool:
+    """Send ONE SMS to target_owner summarizing deletions by requester.
+
+    Mirrors the consolidated add notification in process_actions. Returns
+    True on success. Non-fatal for the caller.
+    """
+    if target_owner == "adam":
+        phone = config.OWNER_PHONE_NUMBER
+        requester_name = (getattr(config, "BECKY_NAME", "Becky")
+                          if requester == "becky" else requester.title())
+    elif target_owner == "becky":
+        phone = getattr(config, "BECKY_PHONE_NUMBER", None)
+        requester_name = (config.OWNER_NAME
+                          if requester == "adam" else requester.title())
+    else:
+        return False
+    if not phone:
+        return False
+    count = len(descriptions)
+    noun = "thing" if count == 1 else "things"
+    body = (f"{requester_name} removed {count} {noun} from your lists:\n"
+            + "\n".join(f"- {d}" for d in descriptions))
+    try:
+        import sms as _sms
+        _sms.send_long_sms(phone, body)
+        log.info("[CROSS_USER] Notified %s of %d deletions by %s",
+                 phone, count, requester)
+        return True
+    except Exception as e:
+        log.error("[CROSS_USER] Delete notification failed: %s", e)
+        return False
+
+
+async def execute_all_pending(user_key: str = "adam") -> dict:
+    """Execute every pending destructive action for this user.
+
+    Processes in insertion order (oldest first). Continues past failures.
+    Emits ONE consolidated cross-user notification per affected owner if
+    any of the executed actions targeted the OTHER user's data
+    (e.g. Becky deleted Adam's event).
+
+    Returns:
+        {"executed": [description, ...],
+         "failed":   [(description, error_msg), ...],
+         "cross_user": {target_owner: [descriptions]}}
+    """
+    _cleanup_expired_pending()
+    to_execute = [(k, v) for k, v in _pending_confirmations.items()
+                  if v.get("user_key", "adam") == user_key]
+    # Sort by creation time (oldest first) for deterministic order
+    to_execute.sort(key=lambda kv: kv[1].get("created", 0))
+
+    executed: list[str] = []
+    failed: list[tuple[str, str]] = []
+    cross_user_notifications: dict[str, list[str]] = {}
+
+    for conf_id, pending in to_execute:
+        action = pending["action"]
+        desc = pending["description"]
+        target_owner = await _get_target_owner(action)
+
+        ok, msg = await execute_pending(conf_id, user_key=user_key)
+
+        if ok:
+            executed.append(desc)
+            # Cross-user delete: requester removed something the other user owns.
+            if target_owner and target_owner != user_key:
+                cross_user_notifications.setdefault(target_owner, []).append(desc)
+        else:
+            failed.append((desc, msg))
+
+    # Send ONE SMS per affected cross-user owner
+    for owner, descs in cross_user_notifications.items():
+        _notify_cross_user_delete(owner, user_key, descs)
+
+    return {"executed": executed, "failed": failed,
+            "cross_user": cross_user_notifications}
+
+
+async def execute_pending(confirmation_id: str,
+                          user_key: str | None = None) -> tuple[bool, str]:
     """Execute a stored pending destructive action by confirmation ID.
 
     Returns (success, message). The STORED action is executed — not whatever
     ARIA might emit later. This prevents ARIA from modifying the action
     between the block and the confirmation.
+
+    user_key (optional): if provided, the function verifies the pending
+    entry belongs to this user before executing. Defense-in-depth against
+    confirmation_id collision; get_pending_confirmations(user_key) already
+    scopes the list a user can see, so this is belt-and-suspenders.
     """
     _cleanup_expired_pending()
     pending = _pending_confirmations.pop(confirmation_id, None)
     if not pending:
         return False, "No pending action found (may have expired)."
+
+    # Defense-in-depth owner check — put back and reject on mismatch
+    if user_key is not None and pending.get("user_key", "adam") != user_key:
+        _pending_confirmations[confirmation_id] = pending  # restore
+        return False, "That confirmation belongs to another user."
 
     action = pending["action"]
     act = action.get("action")
@@ -215,9 +346,16 @@ async def execute_pending(confirmation_id: str) -> tuple[bool, str]:
         return False, f"Failed: {e}"
 
 
-def clear_all_pending():
-    """Clear all pending actions (used when user cancels)."""
-    _pending_confirmations.clear()
+def clear_all_pending(user_key: str = "adam"):
+    """Clear pending actions for a specific user (used when user cancels).
+
+    Only clears entries belonging to this user. Leaves the other user's
+    pending actions untouched.
+    """
+    to_remove = [k for k, v in _pending_confirmations.items()
+                 if v.get("user_key", "adam") == user_key]
+    for k in to_remove:
+        del _pending_confirmations[k]
 
 
 @dataclass
@@ -550,9 +688,22 @@ def _prevalidate_nutrition_actions(parsed_actions: list[dict]) -> tuple[list[dic
     return cleaned, hard_errors
 
 
+# Actions that only Adam can emit — Becky's Aria is forbidden from writing
+# to these stores. If Becky's session emits one, we reject with a clear error.
+_ADAM_EXCLUSIVE_ACTIONS = frozenset({
+    "log_health", "delete_health_entry",
+    "log_nutrition", "delete_nutrition_entry",
+    "log_vehicle", "delete_vehicle_entry",
+    "log_legal", "delete_legal_entry",
+    "start_exercise", "end_exercise",
+    "send_email", "trash_email", "watch_email", "cancel_watch",
+})
+
+
 async def process_actions(response_text: str, expect_actions: list[str] | None = None,
                           metadata: dict | None = None,
-                          log_fn=None) -> ActionResult:
+                          log_fn=None,
+                          user_key: str = "adam") -> ActionResult:
     """Extract and execute ACTION blocks from Claude's response.
 
     Three-phase pipeline:
@@ -574,6 +725,10 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
     log_fn: optional callable with signature (text, status, **kwargs) for
             audit logging to the request_log table. If None, audit logging
             is skipped (useful in tests).
+    user_key: "adam" (default) or "becky" — determines permissions and
+              default owner for cross-user writes. Becky cannot emit
+              Adam-exclusive writes (log_health, send_email, etc.);
+              those are rejected before execution.
     """
     action_blocks = _extract_action_blocks(response_text)
     action_jsons = [json_str for json_str, _, _ in action_blocks]
@@ -636,10 +791,26 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
     _health_meal_types = []  # collected for tracking
     pending_destructive = []
 
+    # Cross-user writes (Becky → Adam) collected here for consolidated SMS notification.
+    cross_user_writes: list[str] = []
+
     for action in parsed_actions:
         try:
             act = action.get("action")
             action_types_found.append(act)
+
+            # --- Permission gate: Becky cannot write Adam-exclusive stores ---
+            if user_key != "adam" and act in _ADAM_EXCLUSIVE_ACTIONS:
+                failures.append(
+                    f"{user_key} can't emit '{act}' — that's Adam-only. "
+                    f"Offer to relay a message to him via relay_to_adam instead."
+                )
+                log.warning("[PERMISSION] %s blocked from emitting %s",
+                            user_key, act)
+                if log_fn:
+                    log_fn("PERMISSION_DENIED", "blocked",
+                           error=f"{user_key} tried to emit {act}")
+                continue
 
             # --- Destructive action confirmation gate ---
             if act in _DESTRUCTIVE_ACTIONS:
@@ -647,14 +818,15 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
                 conf_id = str(uuid.uuid4())[:8]
                 desc = _describe_action(action)
                 _pending_confirmations[conf_id] = {
+                    "user_key": user_key,
                     "action": action,
                     "created": time.time(),
                     "description": desc,
                 }
                 pending_destructive.append(
                     {"confirmation_id": conf_id, "description": desc})
-                log.info("[GATE] Destructive action blocked: %s → pending %s",
-                         act, conf_id)
+                log.info("[GATE] Destructive action blocked: %s → pending %s (user=%s)",
+                         act, conf_id, user_key)
                 if log_fn:
                     log_fn("DESTRUCTIVE_GATE", "blocked",
                            error=f"{act} blocked, pending={conf_id}: {desc}")
@@ -663,29 +835,62 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
             # --- confirm_destructive: user confirmed via ARIA ---
             if act == "confirm_destructive":
                 conf_id = action.get("confirmation_id", "")
-                ok, msg = await execute_pending(conf_id)
-                if ok:
-                    log.info("[GATE] Confirmed and executed: %s — %s",
-                             conf_id, msg)
+                # "all" or empty confirmation_id → batch-confirm this user's pending
+                if not conf_id or conf_id == "all":
+                    result = await execute_all_pending(user_key=user_key)
+                    total = len(result["executed"]) + len(result["failed"])
+                    log.info("[GATE] Batch-confirmed %d pending (user=%s): "
+                             "%d succeeded, %d failed",
+                             total, user_key, len(result["executed"]),
+                             len(result["failed"]))
+                    for desc, msg in result["failed"]:
+                        failures.append(f"{desc}: {msg}")
                 else:
-                    failures.append(msg)
+                    ok, msg = await execute_pending(conf_id, user_key=user_key)
+                    if ok:
+                        log.info("[GATE] Confirmed and executed: %s — %s",
+                                 conf_id, msg)
+                    else:
+                        failures.append(msg)
                 continue
 
             if act == "add_event":
+                owner = action.get("owner") or user_key
                 await calendar_store.add_event(
                     title=action["title"],
                     event_date=action["date"],
                     time=action.get("time"),
                     notes=action.get("notes"),
+                    owner=owner,
                 )
+                # Cross-user: requester wrote to the OTHER user's store.
+                # Symmetric — covers Becky→Adam AND Adam→Becky direct writes.
+                if user_key != owner:
+                    time_str = f" at {action.get('time')}" if action.get("time") else ""
+                    cross_user_writes.append(
+                        f"Event: {action['title']} on {action['date']}{time_str}"
+                    )
             elif act == "add_reminder":
+                owner = action.get("owner") or user_key
+                # Becky has no location tracking — strip location trigger if she set one
+                location = action.get("location")
+                location_trigger = action.get("location_trigger")
+                if owner == "becky":
+                    location = None
+                    location_trigger = None
                 calendar_store.add_reminder(
                     text=action["text"],
                     due=action.get("due"),
                     recurring=action.get("recurring"),
-                    location=action.get("location"),
-                    location_trigger=action.get("location_trigger"),
+                    location=location,
+                    location_trigger=location_trigger,
+                    owner=owner,
                 )
+                if user_key != owner:
+                    due_str = f" (due {action.get('due')})" if action.get("due") else ""
+                    cross_user_writes.append(
+                        f"Reminder: {action['text']}{due_str}"
+                    )
             elif act == "complete_reminder":
                 if not calendar_store.complete_reminder(action["id"]):
                     failures.append(f"Couldn't complete reminder — no reminder found with that ID.")
@@ -752,13 +957,18 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
                 else:
                     failures.append("Timer needs 'minutes' or 'time' field.")
                     continue
+                owner = action.get("owner") or user_key
                 timer_store.add_timer(
                     label=action.get("label", "Timer"),
                     fire_at=fire_at,
                     delivery=action.get("delivery", "sms"),
                     priority=action.get("priority", "gentle"),
                     message=action.get("message", ""),
+                    owner=owner,
                 )
+                if user_key != owner:
+                    label = action.get("label", "Timer")
+                    cross_user_writes.append(f"Timer: {label} (fires at {fire_at[:16]})")
             elif act == "cancel_timer":
                 if not timer_store.cancel_timer(action["id"]):
                     failures.append("Couldn't cancel timer — no active timer found with that ID.")
@@ -804,6 +1014,7 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
                     "context": action.get("context", ""),
                     "notify": action.get("notify", True),
                     "channel": metadata.get("channel", "voice") if metadata else "voice",
+                    "user_key": user_key,
                 }
                 pushed = redis_client.push_task(task)
                 if pushed:
@@ -835,6 +1046,108 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
                         failures.append(f"No active watch matching '{desc}'.")
                 else:
                     failures.append("cancel_watch needs 'id' or 'description'.")
+            elif act in ("relay_to_adam", "relay_to_becky"):
+                # Cross-user relay — direction determined by action name.
+                # relay_to_adam: requester must be Becky, target Adam.
+                # relay_to_becky: requester must be Adam, target Becky.
+                expected_requester = "becky" if act == "relay_to_adam" else "adam"
+                target_user = "adam" if act == "relay_to_adam" else "becky"
+                target_phone = (config.OWNER_PHONE_NUMBER if target_user == "adam"
+                                else getattr(config, "BECKY_PHONE_NUMBER", None))
+
+                if user_key != expected_requester:
+                    failures.append(
+                        f"{act} requires requester={expected_requester}; "
+                        f"got {user_key}."
+                    )
+                    continue
+                if not target_phone:
+                    failures.append(
+                        f"{act} unavailable: no phone configured for {target_user}."
+                    )
+                    continue
+
+                method = action.get("method", "sms")
+                body = action.get("body", "")
+                sender_name = (config.OWNER_NAME if user_key == "adam"
+                               else getattr(config, "BECKY_NAME", "Becky"))
+                prefix = f"{sender_name}: " if body else f"{sender_name} sent an image"
+
+                if method == "sms":
+                    if not body:
+                        failures.append(f"{act} method=sms requires 'body'.")
+                        continue
+                    try:
+                        import sms as _sms
+                        _sms.send_long_sms(target_phone, f"{sender_name}: {body}")
+                    except Exception as e:
+                        failures.append(f"{act} SMS failed: {e}")
+
+                elif method == "mms":
+                    image_path = action.get("image_path", "")
+                    if not image_path:
+                        failures.append(f"{act} method=mms requires 'image_path'.")
+                        continue
+                    try:
+                        import sms as _sms
+                        _sms.send_image_mms(target_phone, image_path,
+                                            body=prefix)
+                    except Exception as e:
+                        failures.append(f"{act} MMS failed: {e}")
+
+                elif method == "push_image":
+                    # Push to the target's phone via Tasker (on-Tailscale only,
+                    # but we only push_image for Adam — Becky doesn't have Tasker).
+                    if target_user != "adam":
+                        failures.append(
+                            "push_image only works for Adam's phone "
+                            "(Becky has no Tasker HTTP server)."
+                        )
+                        continue
+                    image_path = action.get("image_path", "")
+                    if not image_path:
+                        failures.append(f"{act} method=push_image requires 'image_path'.")
+                        continue
+                    try:
+                        import push_image
+                        push_image.push_image(image_path, caption=prefix)
+                    except Exception as e:
+                        failures.append(f"{act} push_image failed: {e}")
+
+                elif method == "reminder":
+                    due = action.get("due")
+                    text = body or action.get("text", "")
+                    if not text:
+                        failures.append(f"{act} method=reminder requires 'body' or 'text'.")
+                        continue
+                    calendar_store.add_reminder(
+                        text=text, due=due, owner=target_user,
+                    )
+                    # Feed consolidated notification path (Adam or Becky notified at end)
+                    due_str = f" (due {due})" if due else ""
+                    cross_user_writes.append(f"Reminder: {text}{due_str}")
+
+                elif method == "event":
+                    title = action.get("title", body)
+                    date = action.get("date")
+                    evt_time = action.get("time")
+                    if not title or not date:
+                        failures.append(f"{act} method=event requires 'title' and 'date'.")
+                        continue
+                    await calendar_store.add_event(
+                        title=title, event_date=date, time=evt_time,
+                        notes=f"{sender_name} relay",
+                        owner=target_user,
+                    )
+                    time_str = f" at {evt_time}" if evt_time else ""
+                    cross_user_writes.append(f"Event: {title} on {date}{time_str}")
+
+                else:
+                    failures.append(
+                        f"{act} method '{method}' not supported "
+                        f"(use sms/mms/push_image/reminder/event)."
+                    )
+
             elif act == "send_email":
                 try:
                     import google_client
@@ -857,6 +1170,40 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
             if log_fn:
                 log_fn("ACTION", "error", error=str(e))
 
+    # Cross-user notification is sent AFTER nutrition warning wrap (below)
+    # so its failure message doesn't get swallowed by the "Nutrition check:"
+    # prefix. Track the warning text locally here.
+    cross_user_warning: str | None = None
+    if cross_user_writes:
+        if user_key == "becky":
+            notify_phone = config.OWNER_PHONE_NUMBER
+            sender_name = getattr(config, "BECKY_NAME", "Becky")
+        elif user_key == "adam":
+            notify_phone = getattr(config, "BECKY_PHONE_NUMBER", None)
+            sender_name = config.OWNER_NAME
+        else:
+            notify_phone = None
+            sender_name = user_key
+        if notify_phone:
+            count = len(cross_user_writes)
+            noun = "thing" if count == 1 else "things"
+            body_lines = [f"{sender_name} added {count} {noun} to your lists:"]
+            body_lines.extend(f"- {d}" for d in cross_user_writes)
+            try:
+                import sms as _sms
+                _sms.send_long_sms(notify_phone, "\n".join(body_lines))
+                log.info("[CROSS_USER] Notified %s about %d cross-user writes by %s",
+                         notify_phone, count, user_key)
+            except Exception as e:
+                log.error("[CROSS_USER] Notification failed: %s", e)
+                cross_user_warning = (
+                    f"Cross-user notification failed ({e}) — "
+                    f"the writes were saved but the other party wasn't notified."
+                )
+        else:
+            log.warning("[CROSS_USER] %d writes but no target phone configured "
+                        "for notification", len(cross_user_writes))
+
     # Strip action blocks from spoken response using the same balanced-brace
     # spans as extraction — no regex mismatch possible (C2 fix).
     # Code fences are already stripped by _extract_action_blocks, and the spans
@@ -876,6 +1223,14 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
         if log_fn:
             log_fn("NUTRITION_VALIDATION", "warning",
                    error="; ".join(validation_warnings))
+
+    # Append cross-user notification failure as its own top-level warning
+    # (separate from the nutrition-wrapped list so the user sees the raw text).
+    if cross_user_warning:
+        validation_warnings.append(cross_user_warning)
+        if log_fn:
+            log_fn("CROSS_USER_NOTIFICATION", "warning",
+                   error=cross_user_warning)
 
     # Check expected actions
     expect_missing = []
@@ -925,11 +1280,13 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
 
 def process_actions_sync(response_text: str, expect_actions: list[str] | None = None,
                          metadata: dict | None = None,
-                         log_fn=None) -> ActionResult:
+                         log_fn=None,
+                         user_key: str = "adam") -> ActionResult:
     """Sync wrapper for process_actions — for use in tests and sync contexts.
 
     Runs the async process_actions in a new event loop. Calendar and email
     handlers that call Google APIs will work but are slower than the async path.
     """
     import asyncio
-    return asyncio.run(process_actions(response_text, expect_actions, metadata, log_fn))
+    return asyncio.run(process_actions(response_text, expect_actions, metadata,
+                                        log_fn, user_key=user_key))

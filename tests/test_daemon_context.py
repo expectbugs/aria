@@ -499,7 +499,7 @@ class TestGetContextForText:
         with caplog.at_level(logging.INFO, logger="aria"):
             await context._get_context_for_text("Hello")
 
-        assert any("Context:" in r.message and "path=regular" in r.message
+        assert any("Context[" in r.message and "path=regular" in r.message
                     for r in caplog.records)
 
     @pytest.mark.asyncio
@@ -515,7 +515,7 @@ class TestGetContextForText:
         with caplog.at_level(logging.INFO, logger="aria"):
             await context._get_context_for_text("Good morning!")
 
-        assert any("Context:" in r.message and "path=briefing" in r.message
+        assert any("Context[" in r.message and "path=briefing" in r.message
                     for r in caplog.records)
 
 
