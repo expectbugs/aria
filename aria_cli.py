@@ -70,7 +70,7 @@ def _print_trace(entry: dict, debug: bool):
         if debug:
             print(f"  {timestamp} {label}: {detail}")
         else:
-            summary = detail[:100] + ("..." if len(detail) > 100 else "")
+            summary = detail[:1000] + ("..." if len(detail) > 1000 else "")
             print(f"  {timestamp} {label}: {summary}")
 
     elif event == "context":
@@ -156,7 +156,7 @@ def _print_trace(entry: dict, debug: bool):
             for line in str(text_val).split("\n"):
                 print(f"    {DIM}{line}{RESET}")
         else:
-            snippet = str(text_val)[:120]
+            snippet = str(text_val)[:1000]
             print(f"  {timestamp} {label}: {snippet}")
 
     elif event == "tool_call":
@@ -169,8 +169,8 @@ def _print_trace(entry: dict, debug: bool):
             tool_name, tool_input = "?", detail
         if debug:
             input_str = json.dumps(tool_input, default=str)
-            if len(input_str) > 500:
-                input_str = input_str[:500] + "..."
+            if len(input_str) > 1500:
+                input_str = input_str[:1500] + "..."
             print(f"  {timestamp} {label}: {BOLD}{tool_name}{RESET}")
             print(f"    {DIM}input: {input_str}{RESET}")
         else:
@@ -185,8 +185,8 @@ def _print_trace(entry: dict, debug: bool):
             content = detail
         if debug:
             content_str = str(content)
-            if len(content_str) > 800:
-                content_str = content_str[:800] + "..."
+            if len(content_str) > 1800:
+                content_str = content_str[:1800] + "..."
             print(f"  {timestamp} {label}:")
             for line in content_str.split("\n")[:20]:
                 print(f"    {DIM}{line}{RESET}")

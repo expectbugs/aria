@@ -25,7 +25,7 @@ log = logging.getLogger("aria.nutrition")
 # Micronutrient max values use UL (tolerable upper limit) so check_limits()
 # only warns on genuinely excessive intake, not on exceeding the RDA.
 DAILY_TARGETS = {
-    "calories": {"min": 1600, "max": 1900, "unit": "kcal", "label": "Calories"},
+    "calories": {"min": 2000, "max": 2500, "unit": "kcal", "label": "Calories"},
     "protein_g": {"min": 100, "max": 130, "unit": "g", "label": "Protein"},
     "dietary_fiber_g": {"min": 25, "max": 35, "unit": "g", "label": "Fiber"},
     "added_sugars_g": {"min": 0, "max": 10, "warn": 25, "hard_limit": 36,

@@ -306,6 +306,108 @@ class TestConfirmDestructive:
 
 
 # ---------------------------------------------------------------------------
+# cancel_destructive — ARIA-emitted cancellation when the daemon shortcut
+# missed (voice-wrapped, complex phrasing). Parallel to TestConfirmDestructive.
+# ---------------------------------------------------------------------------
+
+class TestCancelDestructive:
+    @pytest.mark.asyncio
+    async def test_cancel_via_action_block(self, mock_stores):
+        """Cancel by specific id pops the pending without executing."""
+        _pending_confirmations["c10"] = {
+            "user_key": "adam",
+            "action": {"action": "delete_reminder", "id": "r5"},
+            "created": time.time(),
+            "description": "Delete reminder: Pay rent",
+        }
+        resp = '<!--ACTION::{"action": "cancel_destructive", "confirmation_id": "c10"}-->'
+        result = await process_actions(resp)
+        assert "c10" not in _pending_confirmations
+        mock_stores["cal"].delete_reminder.assert_not_called()
+        assert len(result.failures) == 0
+
+    @pytest.mark.asyncio
+    async def test_cancel_all_via_action_block(self, mock_stores):
+        """id='all' cancels every pending for the user; nothing executes."""
+        _pending_confirmations["c11"] = {
+            "user_key": "adam",
+            "action": {"action": "delete_event", "id": "e1"},
+            "created": time.time(),
+            "description": "Delete calendar event: Meeting",
+        }
+        _pending_confirmations["c12"] = {
+            "user_key": "adam",
+            "action": {"action": "delete_reminder", "id": "r6"},
+            "created": time.time() + 1,
+            "description": "Delete reminder: Buy milk",
+        }
+        resp = '<!--ACTION::{"action": "cancel_destructive", "confirmation_id": "all"}-->'
+        result = await process_actions(resp)
+        assert "c11" not in _pending_confirmations
+        assert "c12" not in _pending_confirmations
+        mock_stores["cal"].delete_event.assert_not_called()
+        mock_stores["cal"].delete_reminder.assert_not_called()
+        assert len(result.failures) == 0
+
+    @pytest.mark.asyncio
+    async def test_cancel_invalid_id(self, mock_stores):
+        """Cancel of bogus id surfaces failure but doesn't crash."""
+        resp = '<!--ACTION::{"action": "cancel_destructive", "confirmation_id": "bogus"}-->'
+        result = await process_actions(resp)
+        assert any("expired" in f.lower() or "not found" in f.lower()
+                   for f in result.failures)
+
+    @pytest.mark.asyncio
+    async def test_cancel_then_confirm_same_id(self, mock_stores):
+        """Mixed cancel+confirm for same id — first action wins, second fails."""
+        _pending_confirmations["c13"] = {
+            "user_key": "adam",
+            "action": {"action": "delete_reminder", "id": "r7"},
+            "created": time.time(),
+            "description": "Delete reminder: Drop off",
+        }
+        resp = (
+            '<!--ACTION::{"action": "cancel_destructive", "confirmation_id": "c13"}-->'
+            '<!--ACTION::{"action": "confirm_destructive", "confirmation_id": "c13"}-->'
+        )
+        result = await process_actions(resp)
+        # Cancel ran first → pending removed without delete
+        assert "c13" not in _pending_confirmations
+        mock_stores["cal"].delete_reminder.assert_not_called()
+        # Confirm ran second → "not found" failure
+        assert any("expired" in f.lower() or "not found" in f.lower()
+                   for f in result.failures)
+
+    @pytest.mark.asyncio
+    async def test_cancel_does_not_emit_cross_user_sms(self, mock_stores):
+        """Cancel never triggers a cross-user notification SMS."""
+        _pending_confirmations["c14"] = {
+            "user_key": "adam",
+            "action": {"action": "delete_event", "id": "e2"},
+            "created": time.time(),
+            "description": "Delete event: Date night",
+        }
+        resp = '<!--ACTION::{"action": "cancel_destructive", "confirmation_id": "all"}-->'
+        with patch("sms.send_long_sms") as mock_sms:
+            await process_actions(resp)
+        mock_sms.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cancel_expired_pending(self, mock_stores):
+        """Entries past the 600s TTL are reaped before pop, surface as expired."""
+        _pending_confirmations["c15"] = {
+            "user_key": "adam",
+            "action": {"action": "delete_reminder", "id": "r8"},
+            "created": time.time() - _PENDING_EXPIRY_SECONDS - 1,
+            "description": "Delete reminder: Old thing",
+        }
+        resp = '<!--ACTION::{"action": "cancel_destructive", "confirmation_id": "c15"}-->'
+        result = await process_actions(resp)
+        assert any("expired" in f.lower() or "not found" in f.lower()
+                   for f in result.failures)
+
+
+# ---------------------------------------------------------------------------
 # to_response() includes confirmation prompt
 # ---------------------------------------------------------------------------
 
@@ -364,6 +466,21 @@ class TestConfirmationDetection:
     def test_long_text_not_cancellation(self):
         from daemon import _is_cancellation
         assert _is_cancellation("no I meant delete the other event instead") is False
+
+    @pytest.mark.asyncio
+    async def test_delete_claim_without_action_detected(self, mock_stores):
+        """Hallucination detector catches delete-claim phrases when no
+        confirm_destructive ACTION was emitted (the v0.9.7 Becky failure)."""
+        for hallucinated in (
+            "Done. Clean slate. Now go to bed.",
+            "I deleted that for you.",
+            "I've removed it.",
+            "Clean slate, all gone.",
+        ):
+            result = await process_actions(hallucinated)
+            assert result.claims_without_actions, (
+                f"Detector missed delete-claim: {hallucinated!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -441,3 +558,67 @@ class TestDestructiveActionsSet:
 
     def test_complete_reminder_not_in_set(self):
         assert "complete_reminder" not in _DESTRUCTIVE_ACTIONS
+
+    def test_cancel_destructive_not_in_set(self):
+        """cancel_destructive itself is not destructive — must not recurse the gate."""
+        assert "cancel_destructive" not in _DESTRUCTIVE_ACTIONS
+
+    def test_confirm_destructive_not_in_set(self):
+        """Sanity: confirm_destructive also not in the gate set."""
+        assert "confirm_destructive" not in _DESTRUCTIVE_ACTIONS
+
+
+# ---------------------------------------------------------------------------
+# Prompt-content guards — lock the wording that determines ARIA's behavior
+# when she sees pending in context. If these fail, the v0.9.7 silent-failure
+# bug has regressed.
+# ---------------------------------------------------------------------------
+
+class TestPromptContentGuards:
+    def test_adam_prompt_mentions_cancel_destructive(self):
+        from system_prompt import build_primary_prompt
+        assert "cancel_destructive" in build_primary_prompt()
+
+    def test_adam_prompt_mentions_confirm_destructive(self):
+        from system_prompt import build_primary_prompt
+        assert "confirm_destructive" in build_primary_prompt()
+
+    def test_adam_prompt_no_longer_says_dont_emit_anything(self):
+        from system_prompt import build_primary_prompt
+        assert "don't need to emit anything" not in build_primary_prompt()
+
+    def test_becky_prompt_mentions_cancel_destructive(self):
+        from system_prompt import build_becky_primary_prompt
+        assert "cancel_destructive" in build_becky_primary_prompt()
+
+    def test_becky_prompt_mentions_confirm_destructive(self):
+        from system_prompt import build_becky_primary_prompt
+        assert "confirm_destructive" in build_becky_primary_prompt()
+
+    def test_becky_prompt_no_longer_says_dont_emit_anything(self):
+        from system_prompt import build_becky_primary_prompt
+        assert "don't need to emit anything" not in build_becky_primary_prompt()
+
+    def test_context_block_mentions_cancel_destructive(self):
+        """When pending is rendered into ARIA's context, both ACTION schemas
+        are referenced so she knows the cancel path exists."""
+        import time as _time
+        actions._pending_confirmations.clear()
+        actions._pending_confirmations["xxctx001"] = {
+            "user_key": "adam",
+            "action": {"action": "delete_reminder", "id": "rctx"},
+            "created": _time.time(),
+            "description": "Delete reminder: Test",
+        }
+        try:
+            from context import gather_always_context
+            with patch("context.calendar_store") as mock_cal:
+                mock_cal.get_reminders.return_value = []
+                with patch("context.timer_store") as mock_t:
+                    mock_t.get_active.return_value = []
+                    ctx = gather_always_context(user_key="adam")
+            assert "cancel_destructive" in ctx
+            assert "confirm_destructive" in ctx
+            assert "PENDING ACTIONS" in ctx
+        finally:
+            actions._pending_confirmations.clear()

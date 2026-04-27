@@ -75,6 +75,30 @@ async def _session_watchdog():
             log.error("Session watchdog error: %s", e)
 
 
+async def _warm_whisper():
+    """Pre-load the Whisper model so the first transcription doesn't pay
+    cold-load latency. Runs as a background task so daemon startup is not
+    blocked. Failures are non-fatal — whisper will load on demand instead.
+    """
+    if not getattr(config, "ENABLE_WHISPER", False):
+        return
+    try:
+        import whisper_engine
+        engine = whisper_engine.get_engine()
+        log.info("Warming Whisper engine (%s on %s, %s)...",
+                 engine.model_name, engine.device, engine.compute_type)
+        t0 = time.time()
+
+        def _load_under_lock():
+            with engine._lock:
+                engine._ensure_model()
+
+        await asyncio.to_thread(_load_under_lock)
+        log.info("Whisper warmup completed in %.2fs", time.time() - t0)
+    except Exception as e:
+        log.warning("Whisper warmup failed (non-fatal): %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and clean up resources."""
@@ -92,6 +116,7 @@ async def lifespan(app: FastAPI):
     for user_key in sorted(trusted_user_keys):
         await get_session_pool(user_key).start()
     _watchdog_task = asyncio.create_task(_session_watchdog())
+    asyncio.create_task(_warm_whisper())  # fire-and-forget Whisper preload
     yield
     if _watchdog_task and not _watchdog_task.done():
         _watchdog_task.cancel()
@@ -200,6 +225,28 @@ _CANCELLATION_PHRASES = frozenset({
 })
 
 
+_VOICE_WRAPPER_RE = re.compile(
+    r'\[Voice message \([^)]*\):\s*"([^"]*)"\]'
+)
+
+
+def _unwrap_voice_transcripts(text: str) -> str:
+    """Strip [Voice message (…): "…"] framing for confirmation matching.
+
+    SMS audio attachments arrive wrapped to give ARIA provenance, but that
+    framing pushes a spoken "yes" past the < 40-char gate in _is_confirmation.
+    Only unwrap when the input is *purely* voice wrappers — if there's any
+    accompanying body text, it's not a simple confirmation, leave it alone.
+    """
+    transcripts = _VOICE_WRAPPER_RE.findall(text)
+    if not transcripts:
+        return text
+    leftover = _VOICE_WRAPPER_RE.sub("", text).strip()
+    if leftover:
+        return text
+    return " ".join(t.strip() for t in transcripts).strip()
+
+
 def _is_confirmation(text: str) -> bool:
     """Detect simple, unambiguous user confirmation of a pending action.
 
@@ -267,7 +314,9 @@ async def _check_pending_confirmation(text: str,
     if not pending:
         return None
 
-    if _is_cancellation(text):
+    match_text = _unwrap_voice_transcripts(text)
+
+    if _is_cancellation(match_text):
         n = len(pending)
         clear_all_pending(user_key=user_key)
         word = "action" if n == 1 else "actions"
@@ -275,7 +324,7 @@ async def _check_pending_confirmation(text: str,
             text=f"Cancelled — {n} pending {word}. No changes made.",
             tool_calls=[])
 
-    if _is_confirmation(text):
+    if _is_confirmation(match_text):
         result = await execute_all_pending(user_key=user_key)
         return SessionResponse(
             text=_compose_confirm_summary(result),
@@ -1589,6 +1638,7 @@ async def _process_sms(from_number: str, body: str,
     try:
         start = time.time()
         file_blocks = []
+        voice_transcripts: list[str] = []
 
         # Download and process any MMS media attachments
         for media_url, content_type in media_urls:
@@ -1610,6 +1660,59 @@ async def _process_sms(from_number: str, body: str,
                         saved_path = inbox / f"{ts}_sms_{filename}"
                         saved_path.write_bytes(resp.content)
 
+                        # Audio attachments → transcribe with Whisper and inject
+                        # the transcript into user_text so Claude sees it as a
+                        # regular text message. Falls back to opaque-file
+                        # treatment on transcription failure or timeout.
+                        is_audio = bool(
+                            (content_type and content_type.startswith("audio/"))
+                            or Path(filename).suffix.lower() in (
+                                ".m4a", ".mp3", ".wav", ".ogg", ".aac",
+                                ".flac", ".opus", ".mp4",
+                            )
+                        )
+                        if is_audio and getattr(config, "ENABLE_WHISPER", False):
+                            try:
+                                import whisper_engine
+                                engine = whisper_engine.get_engine()
+                                result = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        engine.transcribe_bytes, resp.content
+                                    ),
+                                    timeout=120.0,
+                                )
+                                transcript = (result.text or "").strip()
+                                if transcript:
+                                    voice_transcripts.append(
+                                        f"[Voice message ({result.duration:.1f}s, "
+                                        f"language={result.language}): "
+                                        f"\"{transcript}\"]"
+                                    )
+                                    log.info(
+                                        "SMS voice transcribed: %.1fs audio "
+                                        "→ %d chars (%s)",
+                                        result.duration, len(transcript),
+                                        result.language,
+                                    )
+                                    continue  # skip opaque file_block fallback
+                                log.warning(
+                                    "SMS voice transcription returned empty text"
+                                )
+                            except asyncio.TimeoutError:
+                                log.error(
+                                    "SMS voice transcription timed out (120s)"
+                                )
+                                voice_transcripts.append(
+                                    f"[Voice message ({len(resp.content)} bytes) "
+                                    f"received but transcription timed out]"
+                                )
+                                continue
+                            except Exception as e:
+                                log.exception(
+                                    "SMS voice transcription failed: %s", e
+                                )
+                                # fall through to opaque file_block treatment
+
                         file_blocks.extend(
                             build_file_content(resp.content, filename, content_type)
                         )
@@ -1617,7 +1720,15 @@ async def _process_sms(from_number: str, body: str,
                 log.error("Failed to download MMS media: %s", e)
 
         # Build context — same unified context as voice/file, plus SMS channel note
-        user_text = body if body else "The user sent a file via SMS."
+        user_text = body or ""
+        if voice_transcripts:
+            transcript_block = "\n".join(voice_transcripts)
+            user_text = (
+                f"{user_text}\n\n{transcript_block}".strip()
+                if user_text else transcript_block
+            )
+        if not user_text:
+            user_text = "The user sent a file via SMS."
 
         # Destructive action confirmation shortcut (scoped to this user)
         shortcut = await _check_pending_confirmation(user_text, user_key=user_key)

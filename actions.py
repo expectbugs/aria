@@ -346,8 +346,47 @@ async def execute_pending(confirmation_id: str,
         return False, f"Failed: {e}"
 
 
+def cancel_pending(confirmation_id: str,
+                   user_key: str | None = None) -> tuple[bool, str]:
+    """Pop a pending action by id without executing it.
+
+    Mirrors execute_pending's user_key check + restore-on-mismatch. Used
+    when ARIA emits cancel_destructive after the daemon shortcut missed.
+    """
+    _cleanup_expired_pending()
+    pending = _pending_confirmations.pop(confirmation_id, None)
+    if not pending:
+        return False, "No pending action found (may have expired)."
+    if user_key is not None and pending.get("user_key", "adam") != user_key:
+        _pending_confirmations[confirmation_id] = pending
+        return False, "That confirmation belongs to another user."
+    return True, pending["description"]
+
+
+def cancel_all_pending(user_key: str = "adam") -> dict:
+    """Cancel every pending action for this user. Returns descriptions so
+    the caller (process_actions on a cancel_destructive id="all") can
+    surface what was cancelled.
+
+    Distinct from clear_all_pending — this returns a result dict; that one
+    silently wipes and returns None for the daemon's typed-"no" shortcut.
+    """
+    _cleanup_expired_pending()
+    to_cancel = [(k, v) for k, v in _pending_confirmations.items()
+                 if v.get("user_key", "adam") == user_key]
+    to_cancel.sort(key=lambda kv: kv[1].get("created", 0))
+    cancelled: list[str] = []
+    for conf_id, pending in to_cancel:
+        del _pending_confirmations[conf_id]
+        cancelled.append(pending["description"])
+    return {"cancelled": cancelled, "failed": []}
+
+
 def clear_all_pending(user_key: str = "adam"):
-    """Clear pending actions for a specific user (used when user cancels).
+    """Silently wipe pending actions for a specific user. Used by the
+    daemon's typed-"no" shortcut where the SMS reply is composed by
+    daemon code, not by ARIA. For the ARIA-emitted cancel path, use
+    cancel_all_pending which returns descriptions.
 
     Only clears entries belonging to this user. Leaves the other user's
     pending actions untouched.
@@ -854,6 +893,22 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
                         failures.append(msg)
                 continue
 
+            # --- cancel_destructive: user cancelled via ARIA ---
+            if act == "cancel_destructive":
+                conf_id = action.get("confirmation_id", "")
+                if not conf_id or conf_id == "all":
+                    result = cancel_all_pending(user_key=user_key)
+                    log.info("[GATE] Batch-cancelled %d pending (user=%s)",
+                             len(result["cancelled"]), user_key)
+                else:
+                    ok, msg = cancel_pending(conf_id, user_key=user_key)
+                    if ok:
+                        log.info("[GATE] Cancelled pending: %s — %s",
+                                 conf_id, msg)
+                    else:
+                        failures.append(msg)
+                continue
+
             if act == "add_event":
                 owner = action.get("owner") or user_key
                 await calendar_store.add_event(
@@ -1250,7 +1305,14 @@ async def process_actions(response_text: str, expect_actions: list[str] | None =
             r"|"
             r"(?:logged|stored|saved|recorded|tracked|added to|captured) your\b"
             r"|"
-            r"\bnoted and logged\b",
+            r"\bnoted and logged\b"
+            r"|"
+            # Delete-claim hallucinations (e.g. "Done. Clean slate." with no
+            # confirm_destructive ACTION block — the v0.9.7 Becky failure mode).
+            r"(?:I've |I have |I )"
+            r"(?:deleted|removed|cleared|trashed|cancelled|wiped)"
+            r"|"
+            r"\bclean slate\b|\ball gone\b",
             clean_response, re.IGNORECASE
         )
         nutrient_terms = re.findall(

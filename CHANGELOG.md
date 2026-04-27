@@ -6,6 +6,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: major phase
 
 ---
 
+## [0.9.8] — 2026-04-27
+
+### Fixed
+
+- **Voice confirmations stranded the destructive gate (Becky's grocery-list failure, 2026-04-26)** — when Becky replied with a voice message ("Yes, please clear.") to a destructive-action confirmation, the daemon's typed-yes/typed-no shortcut (`_check_pending_confirmation`) failed because the voice transcript was wrapped as `[Voice message (4.0s, language=en): "Yes, please clear."]` — 51 chars, exceeding the 40-char gate, and not in `_CONFIRMATION_PHRASES` even after voice-unwrap (v0.9.7's hotfix). The request fell through to ARIA, but both system prompts contained the line "*A plain 'yes' or 'no' automatically confirms/cancels ALL pending actions at once — you don't need to emit anything in that case.*" — instructing ARIA to stay silent. ARIA correctly followed her prompt, replied "Done. Clean slate." with no `confirm_destructive` ACTION, and the reminder was never deleted. The hallucination detector at `actions.py:1247` should have caught it but its regex only matched additive verbs (`logged|stored|added|noted`), not delete-claims.
+- **`clear_all_pending` was the silent-wipe used by the daemon shortcut on typed "no"** — it returned None, so its descriptions weren't available to compose a richer SMS reply when ARIA-emitted cancellation needed them. Kept it in place (callers depend on the silent wipe) and added a sibling `cancel_all_pending` that returns `{"cancelled": [...], "failed": []}` for the ARIA path.
+
+### Added
+
+- **`cancel_destructive` ACTION** — symmetric primitive to `confirm_destructive`. Schema: `{"action": "cancel_destructive", "confirmation_id": "<id>" | "all"}`. Pops the pending entry without executing the underlying delete. Mirrors `execute_pending`'s belt-and-suspenders user_key check + entry-restore-on-mismatch (`actions.cancel_pending`). Batch form via `cancel_all_pending(user_key)` returns descriptions for ARIA's response composition. NOT added to `_DESTRUCTIVE_ACTIONS` (would recurse).
+- **ARIA-as-authoritative-fallback architecture** — the destructive-confirmation system is now two-tier: (1) daemon shortcut catches typed `yes`/`no` for the 90% case, (2) when the shortcut misses, ARIA reads the pending block in her injected context and emits `confirm_destructive` or `cancel_destructive` herself. Both prompts (Adam, Becky) rewritten to make ARIA the resolver: explicit intent classification (approval / cancellation / mixed-asks), inline ACTION schemas, "never claim Done/Cleared without an ACTION block" rule. `context.py` pending block reframed as a short reminder pointing at the prompt rule.
+- **Hallucination detector closes the back door** — `actions.py:1247` regex extended to match delete-claim hallucinations: `(?:I've |I have |I )(?:deleted|removed|cleared|trashed|cancelled|wiped)` plus the unique phrases `\bclean slate\b` and `\ball gone\b`. Detector remains gated on zero ACTION blocks, so false-positive cost is one retry (no data loss). Catches Becky's exact failure phrasing ("Done. Clean slate.").
+
+### Tests
+
+- **15 new tests** across `test_destructive_gate.py` and `test_beckaning.py`:
+  - `TestCancelDestructive` × 6 — single-id cancel, batch-cancel, invalid id, cancel+confirm-same-id (first-wins), no cross-user SMS triggered, expired pending
+  - `TestConfirmationDetection::test_delete_claim_without_action_detected` — detector catches "Done. Clean slate.", "I deleted that.", "I've removed it.", "Clean slate, all gone."
+  - `TestPromptContentGuards` × 7 — both prompts mention `cancel_destructive` and `confirm_destructive`, neither still says "don't need to emit anything", context block surfaces both ACTION schemas
+  - `TestDestructiveActionsSet::test_cancel_destructive_not_in_set` + `test_confirm_destructive_not_in_set` — locks the no-recursion invariant
+  - `TestCancelMultiuser` × 3 — cross-user attack rejected with restore, batch cancel scoped per user, positive cancel-own
+  - `TestVoiceFallthroughToAria` × 2 — recreates Becky's failed voice path end-to-end (shortcut returns None, ARIA's confirm_destructive ACTION fires the delete) AND symmetric apostrophe-less cancel ("No, dont do that please." → ARIA's cancel_destructive)
+
+### Trade-offs noted
+
+- `cancel_all_pending` (new) and `clear_all_pending` (existing silent-wipe) coexist with distinct semantics. Distinct docstrings document the difference; a future cleanup PR could rename `clear_all_pending` → `wipe_all_pending` to remove the conceptual overlap.
+- Detector regex flags any zero-action response containing "I deleted" / "I've cleared" / "clean slate". Phrases like "I cleared my throat" in a no-action response would trigger an unnecessary retry — wasted turn, no data loss. Acceptable for the silent-failure mode it closes.
+- Prompt cache invalidation: the rewrite adds ~300 tokens combined across both prompts. First request after deploy pays one cache miss; steady-state restored thereafter.
+
+### Riders (collected from in-flight working tree)
+
+- **Whisper warmup at daemon startup** (`daemon._warm_whisper`) — pre-loads the `large-v3` model in a fire-and-forget task during lifespan startup, so the first transcription doesn't pay cold-load latency. Logs `Whisper warmup completed in N.Ns` (real load is ~2.2s on this hardware). Failures non-fatal — Whisper falls back to on-demand load.
+- **`aria_cli.py` trace-limit raises** — bumped per-event truncation limits in `_print_trace`: short-summary 100→1000 chars, snippet 120→1000, debug tool-input 500→1500, debug tool-result 800→1800. Existing layout preserved; the tail is still elided with `...`. Makes log inspection actually useful for non-trivial responses.
+- **Nutrition daily calorie target** (`nutrition_store.DAILY_TARGETS`) — bumped from 1600–1900 kcal to 2000–2500 kcal to reflect Adam's current intake target. Affects daily-totals warnings only (no DB schema change).
+- **Untracked utilities now in repo**: `aria_interactive.sh` (raw-ARIA-brain Claude Code launcher for personality debugging), `cleanup_calendar.py` (one-shot junk-event purge using calendar_store.delete_event so Google sync stays consistent), `scripts/boot_notify.py` (one-shot boot SMS to Adam after reboot, flag-armed via `data/boot_notify.flag`), `docs/overhaul.md` (architecture roadmap from 2026-04-24).
+- **`.gitignore`** — added `.backups/` and `outputs/` (generated image-gen artifacts).
+
+---
+
 ## [0.9.7] — 2026-04-18
 
 ### Fixed

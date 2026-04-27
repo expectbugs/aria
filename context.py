@@ -245,15 +245,11 @@ def gather_always_context(user_key: str = "adam") -> str:
             for p in pending:
                 parts.append(f"  - [{p['confirmation_id']}] {p['description']}")
             parts.append(
-                "If the user says a simple 'yes' or 'no' alone, the system "
-                "automatically confirms or cancels ALL pending actions at "
-                "once — you don't need to emit anything in that case. "
-                "For selective confirmation (e.g. 'yes to the delete but keep "
-                "the reminder'), emit one confirm_destructive ACTION per "
-                "approved item: "
-                '<!--ACTION::{"action": "confirm_destructive", '
-                '"confirmation_id": "<id>"}--> '
-                '(or use confirmation_id "all" to confirm every pending.)')
+                "If the user's current message replies to these (yes/no/"
+                "clear/cancel in any form), emit confirm_destructive or "
+                "cancel_destructive per the system prompt rule. Use "
+                "confirmation_id 'all' for batch or a specific id for "
+                "selective. Without an ACTION block, nothing happens.")
     except Exception:
         pass
 

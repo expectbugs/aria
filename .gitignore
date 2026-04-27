@@ -43,3 +43,7 @@ docs/beckaning.md
 # Editor
 *.swp
 *.swo
+.backups/
+
+# Generated image artifacts (dispatch_action image-gen output)
+outputs/

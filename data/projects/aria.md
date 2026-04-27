@@ -1,9 +1,10 @@
 # ARIA — Project Status
 
 ## Current Version
-v0.9.7 (2026-04-18)
+v0.9.8 (2026-04-27)
 
 ## What's Working
+- **Robust two-tier confirmation gate** (v0.9.8): the destructive-confirmation flow no longer strands actions when the daemon shortcut misses. Daemon `_check_pending_confirmation` is the fast path for typed `yes`/`no`; when it bows out (voice-wrapped transcripts, "yeah do it", apostrophe-less Whisper output, anything > 40 chars or off-whitelist), pending confirmations are surfaced in ARIA's context and she resolves them via `confirm_destructive` or the new symmetric `cancel_destructive` ACTION. Prompts (Adam + Becky) rewritten to make ARIA the authoritative resolver: explicit intent classification, "never claim Done/Cleared without an ACTION block." Hallucination detector regex extended to catch delete-claim phrases ("Done. Clean slate.", "I deleted it.") so silent failures trigger a retry. Fixes the 2026-04-26 Becky failure where her voice "Yes, please clear." stranded a grocery-list reminder. 15 new tests.
 - **Webhook robustness + GSM-7 SMS normalization** (v0.9.7): `/sms` webhook now returns 200 for all error paths (invalid signature, malformed JSON, unknown events) to prevent Telnyx retry storms. Idempotency uses atomic `INSERT ON CONFLICT` instead of racy SELECT-then-INSERT. HELP handler validates `from_number` before sending. `sms._normalize_for_sms()` substitutes 49 non-GSM-7 characters (em-dash, smart quotes, backticks, bullets, ©/®/™/°, math, arrows, zero-width) with ASCII equivalents before send; `split_sms` auto-picks 1500-char chunks for GSM-7 vs 600 for UCS-2. Prevents the 22-segment 40302 silent-drop bug.
 - **Multi-confirmation** (v0.9.6): single "yes"/"no" now confirms/cancels ALL pending destructive actions for the speaker (not just the first). Cross-user deletes trigger ONE consolidated SMS to the affected owner. `confirm_destructive` accepts `"confirmation_id": "all"` for batch-confirm via ACTION.
 - **Beckaning polish** (v0.9.6): fixed 4 bugs found in audit — Becky's `set_delivery: image` now actually delivers MMS; unknown-owner reminders no longer silently consumed; cross-user write notification symmetric (Adam→Becky works); `query.py --user` removed from Adam-only subcommands (errors instead of silently returning Adam's data).

@@ -145,6 +145,73 @@ class TestPendingConfirmationsMultiuser:
 
 
 # ---------------------------------------------------------------------------
+# Per-user cancel_destructive — symmetric to TestPendingConfirmationsMultiuser
+# but exercising the new ARIA-emitted cancel path.
+# ---------------------------------------------------------------------------
+
+class TestCancelMultiuser:
+    def setup_method(self):
+        actions._pending_confirmations.clear()
+
+    def teardown_method(self):
+        actions._pending_confirmations.clear()
+
+    def test_becky_cannot_cancel_adams_pending_by_id(self):
+        """Defense-in-depth: Becky guessing Adam's id gets rejected and the
+        pending entry is restored to the dict (not silently lost)."""
+        import time as _time
+        actions._pending_confirmations["adam_a1"] = {
+            "user_key": "adam",
+            "action": {"action": "delete_event", "id": "e1"},
+            "created": _time.time(),
+            "description": "Delete event: Doctor",
+        }
+        ok, msg = actions.cancel_pending("adam_a1", user_key="becky")
+        assert ok is False
+        assert "belongs to another user" in msg
+        # Entry MUST be restored — losing it would let an attacker silently
+        # disrupt the other user's confirmation flow.
+        assert "adam_a1" in actions._pending_confirmations
+
+    def test_cancel_all_scoped_for_becky(self):
+        """cancel_all_pending(user_key='becky') leaves Adam's pending intact."""
+        import time as _time
+        actions._pending_confirmations["adam_a2"] = {
+            "user_key": "adam",
+            "action": {"action": "delete_event", "id": "e2"},
+            "created": _time.time(),
+            "description": "Delete event: Adam thing",
+        }
+        actions._pending_confirmations["becky_b2"] = {
+            "user_key": "becky",
+            "action": {"action": "delete_reminder", "id": "r2"},
+            "created": _time.time(),
+            "description": "Delete reminder: Becky thing",
+        }
+        result = actions.cancel_all_pending(user_key="becky")
+        assert result == {
+            "cancelled": ["Delete reminder: Becky thing"],
+            "failed": [],
+        }
+        assert "adam_a2" in actions._pending_confirmations
+        assert "becky_b2" not in actions._pending_confirmations
+
+    def test_becky_can_cancel_her_own_pending(self):
+        """Symmetric positive case — same user_key clears successfully."""
+        import time as _time
+        actions._pending_confirmations["becky_b3"] = {
+            "user_key": "becky",
+            "action": {"action": "delete_reminder", "id": "r3"},
+            "created": _time.time(),
+            "description": "Delete reminder: Becky's grocery list",
+        }
+        ok, msg = actions.cancel_pending("becky_b3", user_key="becky")
+        assert ok is True
+        assert msg == "Delete reminder: Becky's grocery list"
+        assert "becky_b3" not in actions._pending_confirmations
+
+
+# ---------------------------------------------------------------------------
 # Permission gate: Becky can't emit Adam-exclusive writes
 # ---------------------------------------------------------------------------
 
@@ -790,3 +857,99 @@ class TestUnknownOwnerReminder:
 
         mock_complete.assert_not_called()
         mock_sms.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# v0.9.8 — Voice-confirmation fallthrough to ARIA. Recreates the Becky
+# failure where "Yes, please clear." was wrapped as a voice transcript that
+# missed the daemon shortcut. With option 3, the shortcut still bows out
+# but ARIA now resolves via confirm_destructive emitted from her prompt.
+# ---------------------------------------------------------------------------
+
+class TestVoiceFallthroughToAria:
+    @pytest.mark.asyncio
+    async def test_yes_please_clear_voice_resolves_via_aria(self):
+        from daemon import _check_pending_confirmation
+
+        actions._pending_confirmations.clear()
+        conf_id = _seed_pending(
+            "becky",
+            {"action": "delete_reminder", "id": "r_becky_grocery"},
+            "Delete reminder: dryer sheets, case of water, 2 Glad refills",
+        )
+
+        # Step 1 — daemon shortcut bows out for wrapped voice that's longer
+        # than 40 chars and not in the whitelist.
+        wrapped_voice = (
+            '[Voice message (4.0s, language=en): "Yes, please clear."]'
+        )
+        shortcut = await _check_pending_confirmation(
+            wrapped_voice, user_key="becky"
+        )
+        assert shortcut is None
+
+        # Step 2 — ARIA's prompt-driven response emits confirm_destructive
+        # because pending was injected into her context. Drive process_actions
+        # with that ACTION block and assert the actual delete fires.
+        aria_response = (
+            'Got it — clearing your grocery list.'
+            '<!--ACTION::{"action": "confirm_destructive", '
+            '"confirmation_id": "all"}-->'
+        )
+
+        async def _mock_owner(action):
+            return "becky"
+
+        with patch("actions._get_target_owner", side_effect=_mock_owner), \
+             patch("calendar_store.delete_reminder", return_value=True) as mock_del:
+            result = await actions.process_actions(
+                aria_response, user_key="becky"
+            )
+
+        mock_del.assert_called_once_with("r_becky_grocery")
+        assert conf_id not in actions._pending_confirmations
+        assert len(result.failures) == 0
+
+        actions._pending_confirmations.clear()
+
+    @pytest.mark.asyncio
+    async def test_voice_no_dont_routes_to_cancel_via_aria(self):
+        """Symmetric path for cancellation: a voice 'no' that misses the
+        whitelist (apostrophe-less Whisper) gets resolved through ARIA's
+        cancel_destructive emit."""
+        from daemon import _check_pending_confirmation
+
+        actions._pending_confirmations.clear()
+        conf_id = _seed_pending(
+            "adam",
+            {"action": "delete_event", "id": "e_dinner"},
+            "Delete event: Dinner with parents",
+        )
+
+        # Whisper drops the apostrophe → wrapped voice phrase falls outside
+        # _CANCELLATION_PHRASES.
+        wrapped_voice = (
+            '[Voice message (3.0s, language=en): "No, dont do that please."]'
+        )
+        shortcut = await _check_pending_confirmation(
+            wrapped_voice, user_key="adam"
+        )
+        assert shortcut is None
+
+        aria_response = (
+            'Cancelled.'
+            '<!--ACTION::{"action": "cancel_destructive", '
+            '"confirmation_id": "all"}-->'
+        )
+        with patch("calendar_store.delete_event",
+                   new_callable=AsyncMock) as mock_del:
+            result = await actions.process_actions(
+                aria_response, user_key="adam"
+            )
+
+        # Cancel must NOT execute the underlying delete.
+        mock_del.assert_not_called()
+        assert conf_id not in actions._pending_confirmations
+        assert len(result.failures) == 0
+
+        actions._pending_confirmations.clear()
